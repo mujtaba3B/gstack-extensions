@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Remove only the symlinks under ~/.claude/skills/ that point into this repo.
+# Leaves gstack and any unrelated skills untouched.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+TARGET="$HOME/.claude/skills"
+
+removed=0
+for link in "$TARGET"/*; do
+  [[ -L "$link" ]] || continue
+  target="$(readlink "$link")"
+  case "$target" in
+    "$REPO"/*)
+      rm "$link"
+      echo "removed: $link"
+      removed=$((removed + 1))
+      ;;
+  esac
+done
+
+echo
+echo "Removed $removed symlink(s)."
