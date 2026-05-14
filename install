@@ -1,23 +1,40 @@
 #!/usr/bin/env bash
-# Symlink every skill in skills/* into ~/.claude/skills/ so Claude Code
-# discovers them. Idempotent: re-run after pulling updates.
+# Symlink every skill in skills/* AND every sub-skill in plugins/*/skills/*
+# into ~/.claude/skills/ so Claude Code discovers them.
+# Idempotent: re-run after pulling updates.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 TARGET="$HOME/.claude/skills"
 mkdir -p "$TARGET"
 
-# Forward-link skills
-for skill in "$REPO"/skills/*/; do
-  name="$(basename "$skill")"
-  link="$TARGET/$name"
+link_skill() {
+  local skill="$1"
+  local name; name="$(basename "$skill")"
+  local link="$TARGET/$name"
   if [[ -e "$link" && ! -L "$link" ]]; then
     echo "skip: $link exists and is not a symlink (manual cleanup required)"
-    continue
+    return
   fi
   ln -sfn "$skill" "$link"
   echo "linked: /$name -> $skill"
-done
+}
+
+# Forward-link standalone skills
+if compgen -G "$REPO/skills/*/" >/dev/null; then
+  for skill in "$REPO"/skills/*/; do
+    link_skill "$skill"
+  done
+fi
+
+# Forward-link plugin sub-skills (plugins/<plugin>/skills/<skill>/).
+# Plugins keep their own shared/ files; sub-skills reference them as
+# "shared/core.md from the plugin root", which resolves through the symlink.
+if compgen -G "$REPO/plugins/*/skills/*/" >/dev/null; then
+  for skill in "$REPO"/plugins/*/skills/*/; do
+    link_skill "$skill"
+  done
+fi
 
 # Clean stale symlinks pointing into this repo whose targets no longer exist
 # (e.g. after renaming or deleting a skill directory).
