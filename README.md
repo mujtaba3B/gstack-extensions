@@ -14,7 +14,7 @@ Then restart your Claude Code session. Skills become invokable as `/pr-watcher`,
 
 ## What's included
 
-- **`/pr-watcher`** — Foreground watcher that polls a GitHub PR for CodeRabbit feedback, classifies findings, and spawns triage subagents to apply fixes. Invoke manually after `/ship`.
+- **`/pr-watcher`** — Foreground watcher that pairs the main agent (dispatcher and fix-applier) with a passive polling subagent (sensor): the sensor blocks silently in one Agent call until CodeRabbit posts a settled round of feedback, then returns a single JSON blob; the main agent classifies, fixes, tests, commits, pushes, and replies on the PR before spawning the next sensor. Invoke manually after `/ship`.
 - **`/qa-headless`** — Systematic QA testing of backend features that have no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines).
 
 ## How it works

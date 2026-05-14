@@ -1,29 +1,25 @@
 ---
 name: pr-watcher
-description: Foreground watcher that polls a GitHub PR for CodeRabbit feedback, waits for each CR review to finish posting, then dispatches the entire batch to ONE Claude subagent that works through findings sequentially in a single working tree (read file, edit, run tests, commit, push, reply on the PR). Blocks the current session; never detaches; never merges; never resolves conversations; never pushes without passing tests; never touches files outside the PR's own diff; never parallelizes fixes on the same branch. Use when asked to "watch the PR", "watch coderabbit", "pr watch", or invoked manually as `/pr-watcher <PR_URL>` after /ship.
+description: Foreground watcher that pairs the main agent (dispatcher and fix-applier) with a passive polling subagent (sensor) to handle CodeRabbit feedback on a GitHub PR. The sensor blocks silently in one Agent call until CR posts a settled round of feedback, then returns a single JSON blob. The main agent classifies, applies fixes, runs tests, commits, pushes, and replies on the PR itself, then spawns the next sensor. Never merges; never resolves conversations; never pushes without passing tests; never touches files outside the PR's own diff; never parallelizes fixes. Use when asked to "watch the PR", "watch coderabbit", "pr watch", or invoked manually as `/pr-watcher <PR_URL>` after /ship.
 ---
 
 # pr-watcher
 
-You are running the `/pr-watcher` skill. It watches a single PR for CodeRabbit (`coderabbitai[bot]`) activity and applies fixes the user approves in the watcher's contract.
+You are running the `/pr-watcher` skill. It watches a single PR for CodeRabbit (`coderabbitai[bot]`) activity and applies fixes within the watcher's contract.
 
-## How this skill executes
+## Architecture: dispatcher + sensor
 
-The skill alternates between two phases until the PR is closed/merged or a wall-clock timeout fires:
+This skill splits work between two roles:
 
-1. **POLL** — one Bash call that runs an inner loop of `gh` queries, sleeping ~60s between rounds. Actionable items accumulate into `inbox.json` across iterations. The loop exits early only when CodeRabbit's review has finished posting (see "Review-completion detection" below), when the PR is no longer OPEN, or after ~9 minutes. Idle minutes produce zero conversation turns.
-2. **HANDLE** — when POLL exits with a non-empty inbox, dispatch the **entire batch** to a single triage subagent via the Agent tool. That subagent owns the working tree exclusively, processes findings sequentially, commits each fix atomically, and reports a list of results. Only one subagent is ever running at a time, so concurrent edits on the same branch are impossible.
+- **Main agent (you) = dispatcher + gate + fix-applier.** You read the sensor's JSON, classify each finding, apply fixes with Edit/Write, run tests, commit, push, and post PR replies. You hold all user-facing decisions.
+- **Sensor subagent = pure polling sensor.** Spawned via the Agent tool, it blocks for up to 30 minutes waiting for CR to post AND settle a new round of feedback, then returns ONE JSON blob. It never edits files, never runs git, never writes on the PR.
 
-You re-enter POLL after every HANDLE phase. The loop ends when POLL reports `STATE=closed`, `STATE=merged`, or `STATE=timeout`.
+Loop: spawn sensor, await return, process batch in the main turn, spawn the next sensor with updated baseline IDs. Repeat until merged / closed / user stops / sensor returns `idle_timeout` and you decide to stop.
 
-### Review-completion detection
-
-CodeRabbit posts a placeholder comment first, then edits/finalizes its review over several seconds. Acting on partial output causes the subagent to fix a moving target. Wait for completion. The watcher considers a review "complete" when **either** signal fires:
-
-- **Definitive marker.** A review record exists whose body matches `^Actionable comments posted:` (CR posts this once it has finished walking the diff). All inline review_comments tied to the same `submitted_at` window are then stable.
-- **Quiet period.** At least 120 seconds have passed since the most recent new-or-edited CodeRabbit comment across all three streams, AND the inbox contains at least one unhandled actionable item.
-
-Whichever fires first triggers POLL exit. If neither has fired within the 9-minute inner deadline, POLL exits with `STATE=idle_with_inbox` and you immediately re-invoke it — the inbox carries over.
+Why this shape:
+- One Agent call can wait up to 30 minutes for real signal, instead of the main agent re-entering a 9-minute Bash poll every cycle.
+- Main context absorbs one short JSON per cycle, not minutes of "tick" lines.
+- One sensor at a time + main-owned git = zero risk of concurrent edits on the branch.
 
 ## What this skill WILL NOT do
 
@@ -34,13 +30,13 @@ Whichever fires first triggers POLL exit. If neither has fired within the 9-minu
 - Change architecture, scope, or design decisions locked before this watch began
 - Run in the background after the session exits
 
-If a finding requires any of the above, mark it seen with `status=needs_user_input`, log it to `escalations.jsonl`, and continue.
+If a finding requires any of the above, mark it seen with reason `needs_user_input`, log to `escalations.jsonl`, and continue.
 
 ---
 
-## Step 0: Parse arguments and resolve the PR
+## Step 0: Resolve the PR
 
-Determine the PR URL from the user's invocation. If they passed a full GitHub URL, use it. If they passed `#123` or `123`, resolve against the current repo. If they passed nothing, use `gh pr view --json url -q .url` on the current branch.
+Determine the PR URL from the user's invocation. Full GitHub URL → use as-is. `#123` or `123` → resolve against the current repo. Empty → `gh pr view --json url -q .url` on the current branch.
 
 ```bash
 set -euo pipefail
@@ -57,25 +53,19 @@ else
 fi
 [[ -z "$PR_URL" ]] && { echo "ERROR: could not resolve PR. Pass a URL or run from a branch with an open PR." >&2; exit 2; }
 
-# Parse owner / repo / number
 if [[ "$PR_URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
   OWNER="${BASH_REMATCH[1]}"
   REPO="${BASH_REMATCH[2]}"
   PR_NUM="${BASH_REMATCH[3]}"
 else
-  echo "ERROR: PR_URL does not look like a GitHub PR URL: $PR_URL" >&2
-  exit 2
+  echo "ERROR: PR_URL does not look like a GitHub PR URL: $PR_URL" >&2; exit 2
 fi
 
 KEY="${OWNER}__${REPO}__${PR_NUM}"
 STATE_DIR="$HOME/.cache/pr-watcher/$KEY"
 mkdir -p "$STATE_DIR"
-echo "PR=$PR_URL"
-echo "KEY=$KEY"
-echo "STATE_DIR=$STATE_DIR"
+echo "PR=$PR_URL"; echo "KEY=$KEY"; echo "STATE_DIR=$STATE_DIR"
 ```
-
-If `PR_URL` cannot be resolved, stop and tell the user.
 
 ## Step 1: Verify prerequisites
 
@@ -87,12 +77,11 @@ gh auth status >/dev/null 2>&1 || { echo "ERROR: gh not authenticated. Run: gh a
 
 ## Step 2: Discover config
 
-The watcher needs three pieces of config: **fix scope** (which files it may edit), **test command** (what to run before pushing a fix), and **timeout** (when to give up).
+Three pieces of config: **fix scope** (files you may edit), **test command** (what to run before pushing), and **timeout** (when to give up).
 
-Fix scope defaults to the set of files currently changed in this PR. The watcher will refresh this list on every POLL so newly-touched files come into scope automatically.
+Fix scope defaults to the set of files currently changed in this PR. Refresh on every cycle so newly-touched files come into scope.
 
 ```bash
-# Test command: prefer CLAUDE.md "## Testing" section, fall back to package.json scripts.test, fall back to ask.
 TEST_CMD=""
 if [[ -f CLAUDE.md ]]; then
   TEST_CMD=$(awk '/^## Testing/{flag=1;next} /^## /{flag=0} flag && /^[ \t]*`/{gsub(/^[ \t]*`|`[ \t]*$/,""); print; exit}' CLAUDE.md 2>/dev/null || true)
@@ -108,15 +97,29 @@ echo "TIMEOUT_SECONDS=$TIMEOUT_SECONDS"
 echo "WATCH_STARTED=$(date +%s)" > "$STATE_DIR/started"
 ```
 
-If `TEST_CMD` resolved to `<unknown>`, ask the user once via AskUserQuestion: "What's the test command for this repo? (e.g., `bun test`, `pytest`, `make test`)" Save their answer to `$STATE_DIR/test_cmd`.
+If `TEST_CMD` is `<unknown>`, ask the user once via AskUserQuestion: "What's the test command for this repo? (e.g., `bun test`, `pytest`, `make test`)" Save to `$STATE_DIR/test_cmd`.
 
-Initialize seen-fingerprint stores if absent:
+Initialize the per-PR baseline ID stores if absent. Baselines hold IDs the main agent has already processed (or, on a fresh watch, all currently-existing CR comments so the first sensor only returns truly new ones).
 
 ```bash
 for f in issue_comments reviews review_comments; do
-  [[ -f "$STATE_DIR/$f.seen.json" ]] || echo '{}' > "$STATE_DIR/$f.seen.json"
+  [[ -f "$STATE_DIR/baseline_${f}.json" ]] || echo '[]' > "$STATE_DIR/baseline_${f}.json"
 done
 : > "$STATE_DIR/escalations.jsonl"
+
+# On a fresh watch (no prior baselines), seed with all existing CR IDs so we
+# only react to genuinely NEW activity going forward.
+if [[ "$(jq 'length' "$STATE_DIR/baseline_reviews.json")" == "0" ]]; then
+  gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
+    > "$STATE_DIR/baseline_issue_comments.json"
+  gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
+    > "$STATE_DIR/baseline_reviews.json"
+  gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
+    > "$STATE_DIR/baseline_review_comments.json"
+fi
 ```
 
 Print a one-line start banner:
@@ -125,304 +128,200 @@ Print a one-line start banner:
 🐇 Watching PR #<NUM> (<owner>/<repo>). Tests: <TEST_CMD>. Timeout: <hours>h. Ctrl-C to stop.
 ```
 
-## Step 3: POLL — one inner-loop bash call
+## Step 3: SENSE — spawn one passive polling subagent
 
-Run this Bash with `timeout: 570000` (9.5 minutes). The inner loop accumulates actionable items into `inbox.json` across polls and only exits with `STATE=actionable` once CodeRabbit's review is detected complete. **Re-invoke this same block after every HANDLE phase** until `STATE` reports `closed`, `merged`, or `timeout`.
+This is the single Agent call per cycle. Read current baselines, capture the latest pushed SHA for log clarity, then spawn the sensor and await its return. The main agent stays silent until the sensor returns — no per-minute output in the transcript.
+
+Resolve the inputs:
 
 ```bash
-set -euo pipefail
-PR_NUM="<resolved in Step 0>"
-OWNER="<resolved>"
-REPO="<resolved>"
-STATE_DIR="$HOME/.cache/pr-watcher/${OWNER}__${REPO}__${PR_NUM}"
-STARTED=$(cat "$STATE_DIR/started" | cut -d= -f2)
-TIMEOUT_SECONDS=28800   # or value resolved in Step 2
-QUIET_PERIOD=120        # seconds of no CR activity to consider a review settled
-
-INNER_DEADLINE=$(( $(date +%s) + 540 ))
-
-# Inbox carries over between POLL invocations until HANDLE consumes it.
-[[ -f "$STATE_DIR/inbox.json" ]] || echo '[]' > "$STATE_DIR/inbox.json"
-
-# Completion-signal state carries over too. Reset on each successful HANDLE.
-[[ -f "$STATE_DIR/last_cr_activity_at" ]] || echo 0 > "$STATE_DIR/last_cr_activity_at"
-[[ -f "$STATE_DIR/completion_marker_seen" ]] || echo "false" > "$STATE_DIR/completion_marker_seen"
-
-while : ; do
-  NOW=$(date +%s)
-  if (( NOW > STARTED + TIMEOUT_SECONDS )); then
-    echo "STATE=timeout"
-    break
-  fi
-  if (( NOW > INNER_DEADLINE )); then
-    # Hand control back to the parent so we don't hit the Bash tool timeout.
-    # Parent re-invokes POLL; inbox + state files persist.
-    echo "STATE=idle_with_inbox"
-    echo "INBOX_SIZE=$(jq 'length' "$STATE_DIR/inbox.json")"
-    break
-  fi
-
-  PR_STATE=$(gh pr view "$PR_NUM" --repo "$OWNER/$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
-  case "$PR_STATE" in
-    MERGED) echo "STATE=merged"; break ;;
-    CLOSED) echo "STATE=closed"; break ;;
-    OPEN)   ;;
-    *)      echo "WARN: pr-state=$PR_STATE, treating as transient"; sleep 30; continue ;;
-  esac
-
-  ISSUE_JSON=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" 2>/dev/null || echo "[]")
-  REVIEWS_JSON=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100" 2>/dev/null || echo "[]")
-  RCOMMENTS_JSON=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100" 2>/dev/null || echo "[]")
-
-  # Update last_cr_activity_at from the newest CR updated_at across all streams,
-  # whether or not we've seen it before. Activity = "CR is still typing."
-  LATEST_CR_TS=$(
-    { echo "$ISSUE_JSON"; echo "$REVIEWS_JSON"; echo "$RCOMMENTS_JSON"; } \
-      | jq -r '.[] | select(.user.login == "coderabbitai[bot]") | (.updated_at // .submitted_at)' \
-      | sort -r | head -1
-  )
-  if [[ -n "$LATEST_CR_TS" ]]; then
-    LATEST_CR_EPOCH=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$LATEST_CR_TS" +%s 2>/dev/null \
-                     || date -d "$LATEST_CR_TS" +%s 2>/dev/null || echo 0)
-    PREV_EPOCH=$(cat "$STATE_DIR/last_cr_activity_at")
-    if (( LATEST_CR_EPOCH > PREV_EPOCH )); then
-      echo "$LATEST_CR_EPOCH" > "$STATE_DIR/last_cr_activity_at"
-    fi
-  fi
-
-  # Completion marker: any review whose body starts with "Actionable comments posted:"
-  if echo "$REVIEWS_JSON" | jq -e '.[] | select(.user.login == "coderabbitai[bot]") | select(.body | test("^Actionable comments posted:"))' >/dev/null 2>&1; then
-    echo "true" > "$STATE_DIR/completion_marker_seen"
-  fi
-
-  # Process each stream: classify, mark non-actionable seen immediately,
-  # append new actionable items to inbox.json. Idempotent — items already
-  # in inbox (by id+fingerprint) are not added twice.
-  process_stream() {
-    local kind="$1" json="$2"
-    local seen_file="$STATE_DIR/${kind}.seen.json"
-    echo "$json" | jq -c --arg kind "$kind" '
-      .[] | select(.user.login == "coderabbitai[bot]") |
-      { id: (.id|tostring),
-        kind: $kind,
-        url: (.html_url // .pull_request_url),
-        updated_at: (.updated_at // .submitted_at),
-        body,
-        path: (.path // null),
-        line: (.line // .original_line // null) }
-    ' | while read -r item; do
-      local id fp prev body class
-      id=$(echo "$item" | jq -r .id)
-      fp=$(echo "$item" | jq -r '.updated_at + "\n" + .body' | shasum -a 256 | cut -d' ' -f1)
-      prev=$(jq -r --arg id "$id" '.[$id] // ""' "$seen_file")
-      [[ "$fp" == "$prev" ]] && continue
-      body=$(echo "$item" | jq -r .body)
-      if echo "$body" | grep -qE '^(<!-- This is an auto-generated.*-->|🐰|Currently processing|Review triggered|Walkthrough by CodeRabbit|## Summary by CodeRabbit|<details>.*<summary>.*Walkthrough)'; then
-        class="status_ping"
-      elif echo "$body" | grep -qE '^Actionable comments posted: 0\b'; then
-        class="nitpick_only"
-      else
-        class="actionable"
-      fi
-      if [[ "$class" != "actionable" ]]; then
-        tmp=$(mktemp)
-        jq --arg id "$id" --arg fp "$fp" '. + {($id): $fp}' "$seen_file" > "$tmp" && mv "$tmp" "$seen_file"
-        continue
-      fi
-      # Append to inbox if not already present by (kind,id,fingerprint)
-      tmp=$(mktemp)
-      jq --argjson new "$(jq -n --argjson item "$item" --arg fp "$fp" '$item + {fingerprint: $fp}')" '
-        if any(.[]; .kind == $new.kind and .id == $new.id and .fingerprint == $new.fingerprint)
-        then .
-        else . + [$new]
-        end
-      ' "$STATE_DIR/inbox.json" > "$tmp" && mv "$tmp" "$STATE_DIR/inbox.json"
-    done
-  }
-
-  process_stream issue_comments "$ISSUE_JSON"
-  process_stream reviews         "$REVIEWS_JSON"
-  process_stream review_comments "$RCOMMENTS_JSON"
-
-  INBOX_SIZE=$(jq 'length' "$STATE_DIR/inbox.json")
-  COMPLETION_MARKER=$(cat "$STATE_DIR/completion_marker_seen")
-  LAST_ACTIVITY=$(cat "$STATE_DIR/last_cr_activity_at")
-  QUIET_FOR=$(( NOW - LAST_ACTIVITY ))
-
-  # Trigger HANDLE when inbox non-empty AND (completion marker seen OR quiet period elapsed)
-  if (( INBOX_SIZE > 0 )) && \
-     { [[ "$COMPLETION_MARKER" == "true" ]] || (( QUIET_FOR >= QUIET_PERIOD )); }; then
-    echo "STATE=actionable"
-    echo "COUNT=$INBOX_SIZE"
-    echo "TRIGGER=$([[ "$COMPLETION_MARKER" == "true" ]] && echo marker || echo quiet)"
-    break
-  fi
-
-  sleep 60
-done
+BASE_ISSUE=$(cat "$STATE_DIR/baseline_issue_comments.json")
+BASE_REVIEW=$(cat "$STATE_DIR/baseline_reviews.json")
+BASE_RCOMMENT=$(cat "$STATE_DIR/baseline_review_comments.json")
+HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 ```
 
-After this block returns to you:
-
-- `STATE=merged` or `STATE=closed` → say `PR is <state>. Watcher exiting.` and stop. End of skill.
-- `STATE=timeout` → say `Watch timed out after <h> hours. Stopping.` and stop. End of skill.
-- `STATE=idle_with_inbox` → CR is mid-review or no activity yet; inner deadline hit. Re-run Step 3 immediately. The inbox persists.
-- `STATE=actionable` with `COUNT=N` and `TRIGGER=marker|quiet` → proceed to Step 4 with the full batch in `$STATE_DIR/inbox.json`.
-
-## Step 4: HANDLE — dispatch the full batch to ONE subagent
-
-Call the Agent tool exactly once with the entire `inbox.json` as input. One subagent processes every finding sequentially inside a single working tree. This is the correctness boundary: two subagents racing on the same branch will collide on `git push`, on test state, on partially-applied edits. Never split the batch.
-
-Dispatch contract:
+Spawn the sensor via the Agent tool:
 
 - `subagent_type`: `"general-purpose"`
-- `description`: `"pr-watcher: triage N CR findings on PR #<NUM>"`
-- `prompt`: the template below, with placeholders filled in
+- `description`: `"pr-watcher sensor: PR #<NUM>"`
 - `run_in_background`: omit (must default to false)
+- `prompt`: the sensor template below, with placeholders substituted verbatim
 
-Before invoking, capture the fix scope once and embed it in the prompt:
+### Sensor prompt template (paste verbatim, substitute bracketed values)
+
+```
+You are a passive polling sensor for the /pr-watcher skill. Your only job is to
+wait for CodeRabbit (coderabbitai[bot]) to post a new round of feedback on
+PR [PR_URL], then return a short summary. You do NOT edit code, push commits,
+or reply on the PR.
+
+Treat these IDs as already-known baseline (do NOT report them as new):
+- issue_comments:  [BASE_ISSUE]
+- reviews:         [BASE_REVIEW]
+- review_comments: [BASE_RCOMMENT]
+
+Most recent pushed commit (for log context only): [HEAD_SHA]
+
+Polling protocol:
+1. Every 60 seconds, check `gh pr view [PR_NUM] --repo [OWNER]/[REPO] --json state -q .state`.
+   If MERGED or CLOSED, return outcome: pr_closed immediately.
+2. Fetch all three CR streams via gh api:
+     gh api "repos/[OWNER]/[REPO]/issues/[PR_NUM]/comments?per_page=100"
+     gh api "repos/[OWNER]/[REPO]/pulls/[PR_NUM]/reviews?per_page=100"
+     gh api "repos/[OWNER]/[REPO]/pulls/[PR_NUM]/comments?per_page=100"
+   Filter to user.login == "coderabbitai[bot]" and to IDs not in the baseline.
+3. Track latest_cr_updated_at across all new items (use updated_at, falling back
+   to submitted_at).
+4. Return outcome: new_cr_feedback when there is at least one new CR item AND
+   either:
+     (a) a new review body matches ^Actionable comments posted:, OR
+     (b) a new comment/review body contains the literal sentinel
+         "<!-- This is an auto-generated comment by CodeRabbit for review status -->", OR
+     (c) 180 seconds have passed since latest_cr_updated_at with no further
+         changes detected in a subsequent poll.
+5. After 1800 seconds (30 minutes) with zero new CR activity, return
+   outcome: idle_timeout.
+
+Emit EXACTLY ONE JSON object as your final message. No prose before or after.
+Full bodies, no truncation, so the dispatcher does not need a second API call.
+
+Schema:
+{
+  "outcome": "new_cr_feedback" | "pr_closed" | "idle_timeout",
+  "polled_for_seconds": <int>,
+  "ticks": <int>,
+  "new_issue_comments":  [{"id":"...","updated_at":"...","body":"..."}, ...],
+  "new_reviews":         [{"id":"...","state":"...","submitted_at":"...","body":"..."}, ...],
+  "new_review_comments": [{"id":"...","path":"...","line":N,"updated_at":"...","body":"..."}, ...],
+  "settled_via": "marker" | "quiet_period" | "n/a"
+}
+
+Hard limits:
+- No file edits. No git commands. No PR writes (no gh pr comment, no gh api -X POST).
+- Maximum 30 minutes wall-clock.
+- One JSON object as your final message, nothing else.
+```
+
+After the sensor returns, branch on `outcome`:
+
+- `"pr_closed"` → print `PR is closed/merged. Watcher exiting.` and end the skill.
+- `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: keep watching. If they choose stop, end the skill.
+- `"new_cr_feedback"` → proceed to Step 4.
+
+If the sensor fails to return parseable JSON, count it as a sensor failure. After **three consecutive sensor failures**, print an error and stop.
+
+## Step 4: PROCESS — classify, fix, push, reply (in the main turn)
+
+You are now back in the main agent with a JSON blob describing every new CR item. The fix work runs **here**, in the dispatcher, not in a subagent.
+
+### 4a. Refresh fix scope
 
 ```bash
 FIX_SCOPE=$(gh pr diff "$PR_NUM" --repo "$OWNER/$REPO" --name-only)
-INBOX=$(cat "$STATE_DIR/inbox.json")
 ```
 
-**Subagent prompt template** (fill in the bracketed values verbatim):
+You may edit only files in `FIX_SCOPE`. Anything else is `out_of_scope`.
 
-```
-You are a triage subagent spawned by the /pr-watcher skill. You have a batch of
-CodeRabbit findings to work through ON A SINGLE BRANCH. You are the only agent
-touching this working tree for the duration of this run.
+### 4b. Classify each finding
 
-PR: [PR_URL]
-Repo root: [absolute path to repo]
-Test command: [TEST_CMD]
-Fix scope (you may ONLY edit files matching this list — refuse anything else):
-[FIX_SCOPE]
+For every item across `new_issue_comments`, `new_reviews`, `new_review_comments`, classify as exactly one of:
 
-Findings to triage (JSON array):
-[INBOX]
+- `status_ping` — CR's placeholder / walkthrough / "currently processing" body. Bodies starting with `<!-- This is an auto-generated`, `🐰`, `Currently processing`, `Review triggered`, `Walkthrough by CodeRabbit`, `## Summary by CodeRabbit`, or a `<details><summary>…Walkthrough` block. Ignore (mark baseline, no reply).
+- `nitpick_only` — review body starts with `Actionable comments posted: 0`. Mark baseline, no reply.
+- `valid_actionable` — concrete fix you can make inside fix scope.
+- `already_fixed` — issue resolved on HEAD (verify by reading the cited file before declaring).
+- `false_positive` — CR is wrong; you can explain why.
+- `out_of_scope` — valid suggestion but outside fix scope, or architectural / cross-cutting.
+- `needs_user_input` — ambiguous, requires human judgment.
 
-Each finding has: kind (issue_comments|reviews|review_comments), id, url,
-path, line, body, fingerprint.
+Apply the project's coding principles when filtering. Reject suggestions that introduce single-use abstractions, speculative error handling, or "cleanup" outside the task.
 
-Process findings ONE AT A TIME, in array order. For each finding:
+### 4c. Surface ambiguous items to the user before acting
 
-1. Classify as exactly one of:
-   - valid_actionable    : a concrete fix you can make within fix scope
-   - already_fixed       : the issue is already resolved on HEAD (verify by reading the file)
-   - false_positive      : CodeRabbit is wrong; explain why
-   - out_of_scope        : valid suggestion but outside fix scope or architectural
-   - needs_user_input    : ambiguous, requires human judgment, or affects unrelated files
+For each item that lands in `needs_user_input` or where you're between `valid_actionable` and `false_positive`, ask the user one question at a time (per the global "one question at a time" rule, with the `❓ QUESTION` blockquote format). Skip this step for clear-cut items.
 
-2. For valid_actionable:
-   a. Read the cited file. Apply the smallest possible fix.
-   b. Run the test command exactly as given.
-   c. If any test fails: REVERT your edit (`git checkout -- <files>`), reclassify
-      as needs_user_input with the failure output in evidence, and CONTINUE TO
-      THE NEXT FINDING. Do not push. Do not abort the batch.
-   d. If tests pass: stage only the file(s) you edited, commit with:
-        Address CodeRabbit: <one-line summary>
+### 4d. Apply fixes — atomic commit per finding
 
-        Comment: <url>
-      Then `git push`. Capture the commit SHA. Move to the next finding from
-      the new HEAD (subsequent findings see your fix as already-applied).
-   e. Reply on the PR. For inline review_comments:
-        gh api -X POST repos/<owner>/<repo>/pulls/<PR>/comments/<id>/replies \
-          -f body="Addressed in <SHA>."
-      For issue_comments and reviews:
-        gh pr comment <PR> --body "Addressed CodeRabbit comment <url> in <SHA>."
+For each `valid_actionable` finding, in the order returned by the sensor:
 
-3. For already_fixed: post a reply citing the existing commit/line. No edits.
-4. For false_positive: post a reply with a one-paragraph explanation. No edits.
-5. For out_of_scope or needs_user_input: do NOT post on the PR. No edits.
+1. Read the cited file.
+2. Apply the minimal fix using Edit/Write.
+3. Run the test command exactly as configured. If any test fails:
+   - `git checkout -- <files you touched>` to revert.
+   - Reclassify as `needs_user_input` with the failure output as evidence.
+   - Continue to the next finding. Do not push. Do not abort the batch.
+4. If tests pass:
+   - Stage only the files you edited.
+   - Commit with: `Address CodeRabbit: <one-line summary>` followed by a blank line and `Comment: <url>`.
+   - `git push`. Capture the commit SHA.
+   - Subsequent findings start from the new HEAD (so they may see prior fixes as `already_fixed`).
 
-Between findings: do a quick sanity check. Run `git status` — the tree must be
-clean before starting the next finding. If it is not clean (failed mid-fix,
-unstaged changes from a revert), run `git checkout -- .` to reset and skip the
-next finding as needs_user_input with reason "working tree was dirty".
+If `git push` is rejected (concurrent push by a human):
+- `git pull --rebase` once and retry.
+- If the rebase conflicts, `git reset --hard HEAD~1` then `git pull --rebase`, reclassify the finding as `needs_user_input` (reason: "concurrent push conflict"), continue.
 
-If `git push` is rejected (human pushed concurrently): run `git pull --rebase`
-once and retry. If the rebase has conflicts, revert your last commit
-(`git reset --hard HEAD~1` then `git pull --rebase`), reclassify that finding
-as needs_user_input with reason "concurrent push conflict", and continue.
+Before starting each finding's fix, verify `git status` is clean. If not, `git checkout -- .` and skip the current finding as `needs_user_input` (reason: "working tree was dirty").
 
-Hard limits you must respect:
-- Never edit files outside fix scope.
-- Never push without passing tests.
-- Never merge the PR. Never resolve conversations. Never close the PR.
-- Never change architecture or rewrite unrelated code.
-- Never touch the test command's config to make it pass.
-- Never run more than one finding's git operations concurrently — you are
-  strictly sequential within this run.
-- If anything is unclear on a given finding, return needs_user_input for that
-  finding and continue. Do not abort the whole batch over one ambiguous item.
+### 4e. Reply on the PR
 
-End by emitting EXACTLY ONE JSON object as your final message (no surrounding
-prose), with one result entry per input finding, in input order:
+Reply on every finding the user expects feedback on:
 
-{
-  "results": [
-    {
-      "id": "<id>",
-      "kind": "<kind>",
-      "fingerprint": "<fingerprint from input>",
-      "classification": "valid_actionable|already_fixed|false_positive|out_of_scope|needs_user_input",
-      "commit_sha": "<sha or null>",
-      "replied": true|false,
-      "reason": "<short string>",
-      "evidence": "<test output, file excerpt, or empty string>"
-    },
-    ...
-  ],
-  "summary": {
-    "total": N,
-    "fixed": N,
-    "already_fixed": N,
-    "false_positive": N,
-    "escalated": N
-  }
-}
-```
+- Inline review_comments (have `path` + `line`): thread the reply under CR's comment.
+  ```bash
+  gh api -X POST "repos/$OWNER/$REPO/pulls/$PR_NUM/comments/<ID>/replies" \
+    -f body="Addressed in <SHA>."
+  ```
+- Issue comments and review-level comments: post a top-level PR comment.
+  ```bash
+  gh pr comment "$PR_NUM" --body "Addressed CodeRabbit comment <URL> in <SHA>."
+  ```
 
-After the subagent returns, parse the final JSON. For each entry in `results`:
+For `already_fixed`: post a reply citing the existing commit/line.
+For `false_positive`: post a one-paragraph explanation.
+For `out_of_scope` / `needs_user_input`: do NOT reply on the PR. Log to `$STATE_DIR/escalations.jsonl` instead.
 
-- If `classification` is `valid_actionable | already_fixed | false_positive`:
-  - Mark the item seen using its fingerprint:
-    ```bash
-    tmp=$(mktemp)
-    jq --arg id "$ID" --arg fp "$FP" '. + {($id): $fp}' \
-       "$STATE_DIR/${KIND}.seen.json" > "$tmp" && mv "$tmp" "$STATE_DIR/${KIND}.seen.json"
-    ```
-  - Print: `✅ <kind> <id> → <classification> (<commit_sha or "no commit">)`.
-- If `classification` is `out_of_scope | needs_user_input`:
-  - Append to `$STATE_DIR/escalations.jsonl` (timestamp, id, url, classification, reason, evidence).
-  - Mark seen so it does not re-fire.
-  - Print: `⚠️  <kind> <id> needs you — see $STATE_DIR/escalations.jsonl`.
-
-After all `results` are processed:
+Capture the IDs of replies you just posted so the next sensor cycle does not see them as "new":
 
 ```bash
-echo '[]' > "$STATE_DIR/inbox.json"            # batch consumed
-echo "false" > "$STATE_DIR/completion_marker_seen"   # next CR review starts fresh
+# After each reply, append the new comment ID to the appropriate baseline list.
+# gh pr comment prints the URL; parse the ID. For gh api -X POST on /replies,
+# the response JSON has the new comment's id.
 ```
 
-Print the summary line: `🐇 batch done: <fixed> fixed, <already_fixed> already-fixed, <false_positive> false-positive, <escalated> escalated.`
+### 4f. Update baselines
 
-If the subagent failed to return parseable JSON, or returned fewer results than findings: leave inbox.json untouched (items remain unseen) and the next POLL will re-trigger HANDLE. After 3 consecutive failures on the same batch, escalate all items and clear the inbox.
+For each CR item handled (any classification, including `status_ping` and `nitpick_only`), append its ID to the matching baseline file:
 
-When HANDLE completes, **re-enter Step 3 (POLL)**.
+```bash
+for kind in issue_comments reviews review_comments; do
+  tmp=$(mktemp)
+  jq --argjson new "$NEW_IDS_JSON_ARRAY" '. + $new | unique' \
+    "$STATE_DIR/baseline_${kind}.json" > "$tmp" && mv "$tmp" "$STATE_DIR/baseline_${kind}.json"
+done
+```
+
+Also append any reply IDs you just posted (issue_comments for top-level replies, review_comments for inline replies).
+
+### 4g. Print a batch summary
+
+```
+🐇 batch done: <fixed> fixed, <already_fixed> already-fixed, <false_positive> false-positive, <escalated> escalated.
+```
+
+Then return to Step 3 and spawn the next sensor.
 
 ## Stop conditions
 
 The skill exits when any of:
 
-- PR state is `MERGED` or `CLOSED` (clean exit, status code 0).
-- Wall-clock timeout reached (default 8h, override via `PR_WATCHER_TIMEOUT` env var).
+- Sensor returns `outcome: pr_closed`.
+- Sensor returns `outcome: idle_timeout` and the user chooses to stop.
+- Wall-clock timeout reached (default 8h, override via `PR_WATCHER_TIMEOUT`).
 - User interrupts the session (Ctrl-C, /exit).
-- Three consecutive POLL bash calls fail (auth lost, network gone, etc.).
+- Three consecutive sensor failures (malformed JSON, agent errors, etc.).
 
-On exit, print a one-line summary:
+On exit, print:
 
 ```
 🐇 pr-watcher stopped. PR <state>. Handled <N> items, <M> escalated. State: $STATE_DIR
@@ -432,40 +331,34 @@ On exit, print a one-line summary:
 
 ```
 ~/.cache/pr-watcher/<owner>__<repo>__<pr>/
-  started                       # WATCH_STARTED=<epoch>
-  test_cmd                      # if user was asked
-  issue_comments.seen.json      # { "<id>": "<fp>", ... }
-  reviews.seen.json
-  review_comments.seen.json
-  inbox.json                    # actionable items accumulating across polls; consumed by HANDLE
-  last_cr_activity_at           # epoch of most recent CR comment/review, used for quiet-period detection
-  completion_marker_seen        # "true" if CR posted "Actionable comments posted:" since last HANDLE
-  escalations.jsonl             # append-only, one JSON per line
+  started                          # WATCH_STARTED=<epoch>
+  test_cmd                         # if user was asked
+  baseline_issue_comments.json     # JSON array of CR comment IDs already processed
+  baseline_reviews.json
+  baseline_review_comments.json
+  escalations.jsonl                # append-only, one JSON per line
 ```
 
-State is per-PR and persists across sessions. If you re-invoke `/pr-watcher` on the same PR after `/exit`, it picks up where it left off, never re-processing items it already marked seen.
+State is per-PR and persists across sessions. Re-invoking `/pr-watcher` on the same PR after `/exit` resumes from the saved baselines, never re-processing items already handled.
 
 ## Failure handling
 
 | Failure | Response |
 |---|---|
-| `gh` rate-limited (HTTP 403 with `X-RateLimit-Remaining: 0`) | Inner loop sleeps until reset time reported by header, then resumes. |
+| `gh` rate-limited (HTTP 403 with `X-RateLimit-Remaining: 0`) | Sensor sleeps until the reset time reported by the header, then resumes. |
 | `gh` returns 401 | Print `ERROR: gh auth expired. Run gh auth login.` Exit with status 1. |
-| Test command fails after a fix | Subagent reverts, reclassifies as `needs_user_input`. Watcher continues. |
-| Human pushed a commit concurrently | Subagent's `git push` will reject; subagent runs `git pull --rebase` once, retries; on conflict, reverts and escalates. |
-| CodeRabbit edits its placeholder | Fingerprint changes; item reappears as new. Correct behavior. |
-| PR force-pushed (head SHA changed) | Inline review comment IDs may become stale; on next POLL, delete `review_comments.seen.json` and re-sync. Add a one-line check at the start of each POLL: `gh pr view --json headRefOid` and compare to a stored value. |
-| Subagent returns malformed JSON | Print error, leave unseen, retry next POLL. After 3 consecutive failures on the same id, escalate and mark seen. |
+| Test command fails after a fix | Revert the edit, reclassify as `needs_user_input`, continue. |
+| Concurrent push by a human | `git pull --rebase` once and retry; on conflict, revert and escalate that finding. |
+| PR force-pushed (head SHA changed) | Inline review comment IDs may become stale. On the next cycle, clear `baseline_review_comments.json` and re-seed from the current CR comments. |
+| Sensor returns malformed JSON | Count as a sensor failure. After 3 consecutive failures, exit. |
 
 ## What you (the running session) actually do
 
-In order:
-
-1. Run Step 0 → resolve PR.
-2. Run Step 1 → verify prereqs.
-3. Run Step 2 → discover config (ask about test command if unknown).
+1. Step 0 → resolve PR.
+2. Step 1 → verify prereqs.
+3. Step 2 → discover config (ask about test command if unknown). Seed baselines on first run.
 4. Print the start banner.
-5. Enter the alternation: POLL (accumulating into inbox) → wait for completion → HANDLE entire batch via ONE Agent call → POLL → ...
+5. Loop: spawn ONE sensor subagent (Step 3) → await its JSON → process the batch yourself (Step 4) → spawn the next sensor.
 6. On any stop condition, print the summary and end.
 
-Do not silently skip the test command. Do not call Agent with `run_in_background: true`. Do not split the batch across multiple subagents — concurrent subagents on the same branch is the failure mode this design exists to prevent. Do not edit files yourself; fixes are the subagent's job; you are the dispatcher and the gate.
+Do not edit files in a sensor subagent. Do not call Agent with `run_in_background: true`. Do not spawn more than one sensor at a time. Do not skip the test command before pushing. Do not merge the PR. Do not resolve conversations.
