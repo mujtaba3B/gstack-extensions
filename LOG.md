@@ -6,6 +6,13 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-16
+
+### `[skill][qa-quincey-browser]` New skill: visible Chromium with "QA Quincey | …" tab-title prefix
+User wanted to visually distinguish a QA-mode browser window from regular dogfood browsing. The clean fix would be a one-time CDP `Page.addScriptToEvaluateOnNewDocument` injection, but gstack browse's CDP allowlist is deny-default and that method isn't on it. Rather than patch gstack core (which `/gstack-upgrade` would clobber), the skill connects the headed browser the same way `/open-gstack-browser` does, then spawns a tiny background bash loop that re-applies the prefix to the active tab every 2 seconds via `browse js`. PID lands at `~/.gstack/qa-quincey-title.pid` so the next invocation's pre-flight can kill stale loops. One gotcha worth recording: `document.title` getter strips trailing whitespace per HTML spec, so a `startsWith("QA Quincey | ")` check (with trailing space) returns false against the trimmed string and the poller re-prefixes infinitely (`"QA Quincey | QA Quincey | …"`). The shipped script uses a regex that strips any number of leading `QA Quincey |…` runs and re-adds exactly one, making the poll idempotent regardless of starting state. Verified live: prefix persists across `goto` calls (Hesco → Hacker News → admin/login).
+
+---
+
 ## 2026-05-14
 
 ### `[meta][schema]` Bootstrapped the project schema (CLAUDE.md / LOG.md / INDEX.md)
