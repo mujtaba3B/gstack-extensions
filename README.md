@@ -18,6 +18,7 @@ Standalone skills (`skills/`):
 
 - **`/pr-watcher`** . Foreground watcher that pairs the main agent (dispatcher and fix-applier) with a passive polling subagent (sensor): the sensor blocks silently in one Agent call until CodeRabbit posts a settled round of feedback, then returns a single JSON blob; the main agent classifies, fixes, tests, commits, pushes, and replies on the PR before spawning the next sensor. Invoke manually after `/ship`.
 - **`/qa-headless`** . Systematic QA testing of backend features that have no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines).
+- **`/qa-quincey-browser`** . Visible Chromium with "QA Quincey | <page title>" prefix on every tab, kept in place across navigations by a small background poll loop. Same connect flow as `/open-gstack-browser`; the prefix makes the QA window visually distinct from regular dogfood browsing.
 
 Plugins (`plugins/`) . skill bundles that share common context files:
 

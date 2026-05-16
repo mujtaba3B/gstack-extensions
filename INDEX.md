@@ -28,6 +28,7 @@ Per `CLAUDE.md`: keep this updated when artifacts are created, renamed, or depre
 |---|---|
 | `skills/pr-watcher/` | `/pr-watcher` — Foreground watcher for CodeRabbit feedback on a GitHub PR. Dispatcher (main agent) + sensor (polling subagent). Main applies fixes, runs tests, commits, pushes, replies. v2 architecture (see skill's CHANGELOG.md). |
 | `skills/qa-headless/` | `/qa-headless` — Systematic QA for backend features with no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines). |
+| `skills/qa-quincey-browser/` | `/qa-quincey-browser` — Visible Chromium with "QA Quincey \| <page title>" prefix on every tab. Same connect flow as `/open-gstack-browser` plus a background poll loop (PID at `~/.gstack/qa-quincey-title.pid`) that keeps the prefix in place across navigations, so the QA window is visually distinct from regular dogfood browsing. |
 
 ## Plugins (bundles with shared context)
 
