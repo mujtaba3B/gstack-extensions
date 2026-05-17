@@ -150,9 +150,19 @@ Spawn the sensor via the Agent tool:
 
 ### Sensor prompt template (paste verbatim, substitute bracketed values)
 
+The sensor uses CodeRabbit's **commit status** (legacy GitHub Statuses API) as its
+primary signal: CR posts a `CodeRabbit` context status on each new HEAD commit
+that transitions `pending` → `success`/`failure` when its review pass finishes.
+That single endpoint is cheap to poll and gives a clear "review just finished"
+edge. Comment-stream fetches happen only when the status transitions.
+
+If a repo's CR setup does not post a commit status (some self-hosted or older
+installs), the sensor falls back to comment-stream polling at the original 60s
+cadence so the watcher still works.
+
 ```
 You are a passive polling sensor for the /pr-watcher skill. Your only job is to
-wait for CodeRabbit (coderabbitai[bot]) to post a new round of feedback on
+wait for CodeRabbit (coderabbitai[bot]) to finish a review pass on
 PR [PR_URL], then return a short summary. You do NOT edit code, push commits,
 or reply on the PR.
 
@@ -161,40 +171,105 @@ Treat these IDs as already-known baseline (do NOT report them as new):
 - reviews:         [BASE_REVIEW]
 - review_comments: [BASE_RCOMMENT]
 
-Most recent pushed commit (for log context only): [HEAD_SHA]
+Most recent pushed commit at watch start (for log context only): [HEAD_SHA]
+
+Primary signal — CodeRabbit commit status:
+CR posts a legacy commit status with context "CodeRabbit", creator
+coderabbitai[bot], state pending → success (or failure). Each new push to the
+PR head triggers a fresh pending → terminal transition. The endpoint is
+GET /repos/[OWNER]/[REPO]/commits/<head_sha>/statuses and is cheap, so the
+sensor polls it at a tight cadence and only fetches comment streams when the
+status flips.
 
 Polling protocol:
-1. Every 60 seconds, check `gh pr view [PR_NUM] --repo [OWNER]/[REPO] --json state -q .state`.
-   If MERGED or CLOSED, return outcome: pr_closed immediately.
-2. Fetch all three CR streams via gh api:
+0. Init pass (run ONCE before the 15s loop, immediately on spawn):
+   a. Resolve current PR head:
+      gh pr view [PR_NUM] --repo [OWNER]/[REPO] --json state,headRefOid
+      If state is MERGED or CLOSED, return outcome: pr_closed immediately.
+      Let CURRENT_SHA = headRefOid.
+   b. Fetch the commit status list for CURRENT_SHA (same endpoint and filter as
+      step 2b below). Let INIT_CR_STATUS = (state, updated_at) of the latest
+      CodeRabbit entry, or null if absent.
+   c. Fetch the three comment streams once and filter to coderabbitai[bot]
+      items NOT in the baseline (same as step 3). Call the result INIT_NEW.
+   d. If INIT_CR_STATUS is terminal (success/failure/error) AND INIT_NEW is
+      empty across all three streams, CR is already caught up on this HEAD.
+      Return outcome: already_settled IMMEDIATELY with cr_status_state =
+      INIT_CR_STATUS.state, cr_status_updated_at = INIT_CR_STATUS.updated_at,
+      settled_via: "n/a", and empty new_* arrays. Do NOT wait 30 minutes.
+   e. If INIT_NEW is non-empty (CR has new items the dispatcher has not yet
+      processed, regardless of status state), return outcome: new_cr_feedback
+      IMMEDIATELY with settled_via: "status_transition" if INIT_CR_STATUS is
+      terminal, else "marker" / "quiet_period" / "n/a" as best fits. Do NOT
+      wait. The dispatcher needs to drain the backlog before we resume polling.
+   f. Otherwise (status is pending or absent, no new items): set
+      last_terminal_status_updated_at = (INIT_CR_STATUS.updated_at if state
+      is terminal, else null) and proceed to the 15s loop. Note: when status
+      is terminal but seeding-baselines-from-current produced an empty INIT_NEW,
+      we will have already returned via 0d above.
+1. Initialize fallback_tick_counter = 0.
+2. Every 15 seconds:
+   a. Resolve current PR head via
+      gh pr view [PR_NUM] --repo [OWNER]/[REPO] --json state,headRefOid
+      If state is MERGED or CLOSED, return outcome: pr_closed immediately.
+      Let CURRENT_SHA = headRefOid.
+   b. Fetch the commit status list for CURRENT_SHA:
+      gh api "repos/[OWNER]/[REPO]/commits/$CURRENT_SHA/statuses?per_page=100"
+      Filter to context == "CodeRabbit" AND creator.login == "coderabbitai[bot]"
+      (creator may be missing on some entries; treat that as a match too if the
+      context is "CodeRabbit"). Take the entry with the latest updated_at.
+      Call its (state, updated_at) the LATEST_CR_STATUS.
+   c. If LATEST_CR_STATUS is present and state in ("success", "failure", "error")
+      and updated_at > last_terminal_status_updated_at, this is a fresh review
+      transition. Proceed to step 3.
+   d. If LATEST_CR_STATUS is absent (no CR status on this SHA at all),
+      increment fallback_tick_counter. Every 4th tick (every ~60s), fall
+      through to step 4 (comment-stream poll) so we still notice activity in
+      repos where CR does not post a commit status.
+   e. Otherwise sleep until the next 15s tick.
+3. Status just transitioned to terminal. Set
+   last_terminal_status_updated_at = LATEST_CR_STATUS.updated_at.
+   Wait 5 seconds to let CR's comment writes settle (status sometimes flips
+   slightly before the last review_comment write is visible to the API), then
+   fetch all three streams once:
      gh api "repos/[OWNER]/[REPO]/issues/[PR_NUM]/comments?per_page=100"
      gh api "repos/[OWNER]/[REPO]/pulls/[PR_NUM]/reviews?per_page=100"
      gh api "repos/[OWNER]/[REPO]/pulls/[PR_NUM]/comments?per_page=100"
-   Filter to user.login == "coderabbitai[bot]" and to IDs not in the baseline.
-3. Track latest_cr_updated_at across all new items (use updated_at, falling back
-   to submitted_at).
-4. Return outcome: new_cr_feedback when there is at least one new CR item AND
-   either:
+   Filter each to user.login == "coderabbitai[bot]" and to IDs not in the
+   baseline. If any new items are present, return outcome: new_cr_feedback with
+   settled_via: "status_transition". If zero new items (status flipped to
+   success but CR posted nothing actionable, e.g. a 0-finding pass), still
+   return new_cr_feedback so the dispatcher can mark the round seen; the
+   dispatcher will classify everything as nitpick_only / status_ping and move
+   on.
+4. Fallback: same comment-stream fetch as step 3, plus a freshness check using
+   the original quiet_period logic — return new_cr_feedback when there is at
+   least one new CR item AND either:
      (a) a new review body matches ^Actionable comments posted:, OR
      (b) a new comment/review body contains the literal sentinel
          "<!-- This is an auto-generated comment by CodeRabbit for review status -->", OR
-     (c) 180 seconds have passed since latest_cr_updated_at with no further
-         changes detected in a subsequent poll.
-5. After 1800 seconds (30 minutes) with zero new CR activity, return
-   outcome: idle_timeout.
+     (c) 180 seconds have passed since the latest new item's updated_at with
+         no further changes in a subsequent poll.
+   Reset fallback_tick_counter to 0 after each fallback fetch.
+5. After 1800 seconds (30 minutes) wall-clock with no terminal status
+   transition and no qualifying fallback activity, return outcome:
+   idle_timeout.
 
 Emit EXACTLY ONE JSON object as your final message. No prose before or after.
-Full bodies, no truncation, so the dispatcher does not need a second API call.
+Full comment bodies, no truncation.
 
 Schema:
 {
-  "outcome": "new_cr_feedback" | "pr_closed" | "idle_timeout",
+  "outcome": "new_cr_feedback" | "pr_closed" | "idle_timeout" | "already_settled",
   "polled_for_seconds": <int>,
   "ticks": <int>,
+  "head_sha_at_return": "<sha>",
+  "cr_status_state": "pending" | "success" | "failure" | "error" | null,
+  "cr_status_updated_at": "<iso8601 | null>",
+  "settled_via": "status_transition" | "marker" | "quiet_period" | "n/a",
   "new_issue_comments":  [{"id":"...","updated_at":"...","body":"..."}, ...],
   "new_reviews":         [{"id":"...","state":"...","submitted_at":"...","body":"..."}, ...],
-  "new_review_comments": [{"id":"...","path":"...","line":N,"updated_at":"...","body":"..."}, ...],
-  "settled_via": "marker" | "quiet_period" | "n/a"
+  "new_review_comments": [{"id":"...","path":"...","line":N,"updated_at":"...","body":"..."}, ...]
 }
 
 Hard limits:
@@ -206,7 +281,8 @@ Hard limits:
 After the sensor returns, branch on `outcome`:
 
 - `"pr_closed"` → print `PR is closed/merged. Watcher exiting.` and end the skill.
-- `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: keep watching. If they choose stop, end the skill.
+- `"already_settled"` → CodeRabbit's review on the current HEAD is already terminal and there are no unprocessed CR items. Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: <state>). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
+- `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: **stop** (long silence after watcher start almost always means CR is done; the user can re-invoke /pr-watcher when there is new activity). If they choose to keep watching, spawn another sensor.
 - `"new_cr_feedback"` → proceed to Step 4.
 
 If the sensor fails to return parseable JSON, count it as a sensor failure. After **three consecutive sensor failures**, print an error and stop.
@@ -309,6 +385,24 @@ Also append any reply IDs you just posted (issue_comments for top-level replies,
 🐇 batch done: <fixed> fixed, <already_fixed> already-fixed, <false_positive> false-positive, <escalated> escalated.
 ```
 
+### 4h. All-clear exit check
+
+The loop's exit condition is "CodeRabbit has nothing left for us." Detect that here, before spawning the next sensor, so the watcher does not spin a 30-minute idle_timeout waiting for a transition that will never come.
+
+Exit the skill (do NOT spawn another sensor) when ALL of the following hold for the batch you just processed:
+
+- `pushed_commits_this_batch == 0` (no `valid_actionable` finding made it through tests + commit + push this batch). If you pushed even once, CR will re-review the new HEAD, so do not exit.
+- The sensor returned `cr_status_state == "success"` AND `settled_via == "status_transition"`. (CR's terminal pass on the current HEAD finished cleanly. `failure`/`error` is also "done" in CR's sense, but signals a CR-side problem worth keeping the watcher alive for a human to inspect, so do not auto-exit on those.)
+- All findings in the batch classified as `status_ping`, `nitpick_only`, `already_fixed`, or `false_positive` (no `valid_actionable` or `needs_user_input` left in flight).
+
+When the condition is met, print:
+
+```
+🐇 CodeRabbit's review on HEAD <sha> is clean (Actionable comments posted: 0). Watcher exiting.
+```
+
+and end the skill.
+
 Then return to Step 3 and spawn the next sensor.
 
 ## Stop conditions
@@ -316,6 +410,8 @@ Then return to Step 3 and spawn the next sensor.
 The skill exits when any of:
 
 - Sensor returns `outcome: pr_closed`.
+- Sensor returns `outcome: already_settled` (CR already done on the current HEAD at sensor spawn).
+- Step 4h all-clear check fires (CR's terminal pass on the current HEAD posted nothing actionable and we did not push during the batch).
 - Sensor returns `outcome: idle_timeout` and the user chooses to stop.
 - Wall-clock timeout reached (default 8h, override via `PR_WATCHER_TIMEOUT`).
 - User interrupts the session (Ctrl-C, /exit).
