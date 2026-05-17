@@ -77,27 +77,15 @@ gh auth status >/dev/null 2>&1 || { echo "ERROR: gh not authenticated. Run: gh a
 
 ## Step 2: Discover config
 
-Three pieces of config: **fix scope** (files you may edit), **test command** (what to run before pushing), and **timeout** (when to give up).
+Two pieces of config: **fix scope** (files you may edit) and **timeout** (when to give up). Test command is intentionally NOT part of the watcher's contract — it added friction for repos without a test framework and a wrong default is worse than no gate.
 
 Fix scope defaults to the set of files currently changed in this PR. Refresh on every cycle so newly-touched files come into scope.
 
 ```bash
-TEST_CMD=""
-if [[ -f CLAUDE.md ]]; then
-  TEST_CMD=$(awk '/^## Testing/{flag=1;next} /^## /{flag=0} flag && /^[ \t]*`/{gsub(/^[ \t]*`|`[ \t]*$/,""); print; exit}' CLAUDE.md 2>/dev/null || true)
-fi
-if [[ -z "$TEST_CMD" && -f package.json ]]; then
-  TEST_CMD=$(jq -r '.scripts.test // empty' package.json 2>/dev/null)
-  [[ -n "$TEST_CMD" ]] && TEST_CMD="npm test"
-fi
-echo "TEST_CMD=${TEST_CMD:-<unknown>}"
-
 TIMEOUT_SECONDS="${PR_WATCHER_TIMEOUT:-28800}"  # default 8 hours
 echo "TIMEOUT_SECONDS=$TIMEOUT_SECONDS"
 echo "WATCH_STARTED=$(date +%s)" > "$STATE_DIR/started"
 ```
-
-If `TEST_CMD` is `<unknown>`, ask the user once via AskUserQuestion: "What's the test command for this repo? (e.g., `bun test`, `pytest`, `make test`)" Save to `$STATE_DIR/test_cmd`.
 
 Initialize the per-PR baseline ID stores if absent. Baselines hold IDs the main agent has already processed (or, on a fresh watch, all currently-existing CR comments so the first sensor only returns truly new ones).
 
@@ -125,7 +113,7 @@ fi
 Print a one-line start banner:
 
 ```
-🐇 Watching PR #<NUM> (<owner>/<repo>). Tests: <TEST_CMD>. Timeout: <hours>h. Ctrl-C to stop.
+🐇 Watching PR #<NUM> (<owner>/<repo>). Timeout: <hours>h. Ctrl-C to stop.
 ```
 
 ## Step 3: SENSE — spawn one passive polling subagent
@@ -362,15 +350,10 @@ For each `valid_actionable` finding, in the order returned by the sensor:
 
 1. Read the cited file.
 2. Apply the minimal fix using Edit/Write.
-3. Run the test command exactly as configured. If any test fails:
-   - `git checkout -- <files you touched>` to revert.
-   - Reclassify as `needs_user_input` with the failure output as evidence.
-   - Continue to the next finding. Do not push. Do not abort the batch.
-4. If tests pass:
-   - Stage only the files you edited.
-   - Commit with: `Address CodeRabbit: <one-line summary>` followed by a blank line and `Comment: <url>`.
-   - `git push`. Capture the commit SHA.
-   - Subsequent findings start from the new HEAD (so they may see prior fixes as `already_fixed`).
+3. Stage only the files you edited.
+4. Commit with: `Address CodeRabbit: <one-line summary>` followed by a blank line and `Comment: <url>`.
+5. `git push`. Capture the commit SHA.
+6. Subsequent findings start from the new HEAD (so they may see prior fixes as `already_fixed`).
 
 If `git push` is rejected (concurrent push by a human):
 - `git pull --rebase` once and retry.
@@ -467,7 +450,6 @@ On exit, print:
 ```
 ~/.cache/pr-watcher/<owner>__<repo>__<pr>/
   started                          # WATCH_STARTED=<epoch>
-  test_cmd                         # if user was asked
   baseline_issue_comments.json     # JSON array of CR comment IDs already processed
   baseline_reviews.json
   baseline_review_comments.json
@@ -482,7 +464,6 @@ State is per-PR and persists across sessions. Re-invoking `/pr-watcher` on the s
 |---|---|
 | `gh` rate-limited (HTTP 403 with `X-RateLimit-Remaining: 0`) | Sensor sleeps until the reset time reported by the header, then resumes. |
 | `gh` returns 401 | Print `ERROR: gh auth expired. Run gh auth login.` Exit with status 1. |
-| Test command fails after a fix | Revert the edit, reclassify as `needs_user_input`, continue. |
 | Concurrent push by a human | `git pull --rebase` once and retry; on conflict, revert and escalate that finding. |
 | PR force-pushed (head SHA changed) | Inline review comment IDs may become stale. On the next cycle, clear `baseline_review_comments.json` and re-seed from the current CR comments. |
 | Sensor returns malformed JSON | Count as a sensor failure. After 3 consecutive failures, exit. |
@@ -491,9 +472,9 @@ State is per-PR and persists across sessions. Re-invoking `/pr-watcher` on the s
 
 1. Step 0 → resolve PR.
 2. Step 1 → verify prereqs.
-3. Step 2 → discover config (ask about test command if unknown). Seed baselines on first run.
+3. Step 2 → discover config (timeout, baselines). Seed baselines on first run.
 4. Print the start banner.
 5. Loop: spawn ONE sensor subagent (Step 3) → await its JSON → process the batch yourself (Step 4) → spawn the next sensor.
 6. On any stop condition, print the summary and end.
 
-Do not edit files in a sensor subagent. Do not call Agent with `run_in_background: true`. Do not spawn more than one sensor at a time. Do not skip the test command before pushing. Do not merge the PR. Do not resolve conversations.
+Do not edit files in a sensor subagent. Do not call Agent with `run_in_background: true`. Do not spawn more than one sensor at a time. Do not merge the PR. Do not resolve conversations.

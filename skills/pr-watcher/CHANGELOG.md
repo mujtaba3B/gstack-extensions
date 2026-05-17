@@ -1,5 +1,13 @@
 # pr-watcher changelog
 
+## Unreleased
+
+- Dropped the test-command gate from the skill contract. The watcher no longer
+  asks for or runs a test command before pushing a CR-induced fix. Friction
+  against repos without a configured test framework (docs / bash / config-only
+  repos) outweighed the protection. Atomic per-finding commits + CR's own
+  re-review on the new HEAD provide the remaining safety net.
+
 ## v3 — status-driven sensor + clean exit on "CR is done"
 
 Sensor's primary signal is now CodeRabbit's legacy commit status (`context: CodeRabbit`, creator: `coderabbitai[bot]`) on the PR head SHA. The status transitions `pending` → `success`/`failure` exactly once per review pass, giving a clear "review just finished" edge. Polled every 15s (cheap single endpoint) instead of fetching three comment streams every 60s; the three streams are fetched once when the status flips. Comment-stream polling is retained as a fallback every ~60s for repos whose CR setup does not post a commit status.

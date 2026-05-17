@@ -8,6 +8,9 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ## 2026-05-17
 
+### `[skill][pr-watcher]` Dropped the test-command gate from the skill contract
+Removed Step 2's TEST_CMD discovery + AskUserQuestion fallback, Step 4d's "run tests before push" step, the test-failure row in the failure-handling table, and the "do not skip the test command before pushing" rule at the bottom. Test gating was there to prevent the watcher from pushing a CR-induced fix that broke the suite, but in practice it caused friction on every invocation against a repo without a configured test framework: the watcher asked for a command, then if the answer was a no-op like `true` it was theatre, and if the answer was a real command in a repo with no tests it never resolved. The user hit this on the first run against `mutwo` (a docs + bash repo with no tests) and the workflow halted on the question. Trade-off accepted: CR-induced fixes now push without an automated verification step. The mitigation is that CR's own re-review on the new HEAD will catch a regression on the next cycle, and the change-per-finding atomicity (one commit per CR comment with a clear `Address CodeRabbit: ...` subject) makes any post-merge revert surgical. Skill version not bumped because the contract is strictly looser, no caller has to change anything.
+
 ### `[skill][pr-watcher]` v3 staleness fixes: sensor init pass, all-clear exit, cr_failure, fallback hardening
 Shipped via PR #3 squash-merge to main as commit `136f821`. Three original causes of the 30-minute stale-wait, plus five robustness gaps surfaced over four `/codex review` iterations, all closed.
 
