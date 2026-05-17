@@ -251,11 +251,15 @@ Polling protocol:
       treating null as "no prior terminal seen," the first terminal status
       that lands during polling would never trigger a transition, exactly
       reproducing the 30-minute stale-wait this version was meant to kill.)
-   d. If LATEST_CR_STATUS is absent (no CR status on this SHA at all),
-      increment fallback_tick_counter. Every 4th tick (every ~60s), fall
-      through to step 4 (comment-stream poll) so we still notice activity in
-      repos where CR does not post a commit status.
-   e. Otherwise sleep until the next 15s tick.
+   d. If LATEST_CR_STATUS is absent (no CR status on this SHA at all) OR is
+      present-but-non-terminal (state == "pending"), increment
+      fallback_tick_counter. Every 4th tick (every ~60s), fall through to
+      step 4 (comment-stream poll) so we still notice activity when CR
+      doesn't post a commit status AND when CR posts a `pending` status that
+      never transitions (rare CR-side hang where comments may still arrive
+      via the streams even though the status is stuck).
+   e. Otherwise (status is terminal but not a fresh transition since
+      last_terminal_status_updated_at) sleep until the next 15s tick.
 3. Status just transitioned to terminal. Set
    last_terminal_status_updated_at = LATEST_CR_STATUS.updated_at.
    Wait 5 seconds to let CR's comment writes settle (status sometimes flips
