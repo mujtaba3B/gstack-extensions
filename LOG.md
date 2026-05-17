@@ -6,6 +6,13 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-17
+
+### `[skill][pr-watcher]` v3 staleness fixes: sensor init pass, post-batch all-clear, idle_timeout default flip
+Symptom: after switching to commit-status polling, the watcher would sit silently for a full 30 minutes after starting (or after CR posted its final clean review) and then ask "keep watching?" with default yes, so the user had to manually stop it. Three independent causes, all fixed in this version. (1) The sensor initialized `last_terminal_status_updated_at = null` and then required `current_updated_at > null` to fire, which is always false; any time CR's terminal status was already in place when the sensor spawned, no transition would ever be detected. Fixed by adding an init pass that runs once before the 15s loop: if the status is already terminal AND no unprocessed CR items exist, return a new outcome `already_settled` immediately. If there are unprocessed items, return them immediately too. Only if the status is pending/absent does the sensor fall through to the 15s loop. (2) After a "round of nitpicks only, no fixes pushed" batch, the dispatcher would spawn another sensor that had nothing to wait for (no new HEAD, CR already terminal). Added Step 4h: if the batch pushed zero commits AND CR's status came back `success` via `status_transition` AND nothing classified as `valid_actionable`/`needs_user_input`, the dispatcher exits cleanly with the "CR's review on HEAD <sha> is clean" message. This is the explicit "loop until CR has nothing for us" exit. (3) Flipped the `idle_timeout` AskUserQuestion default from "keep watching" to "stop", since 30 minutes of silence after start is overwhelmingly "CR is done"; the user can re-invoke /pr-watcher when there is new activity. Schema and CHANGELOG updated in `skills/pr-watcher/`. Not yet committed: left on local working tree for the user to review with `git diff skills/pr-watcher/`.
+
+---
+
 ## 2026-05-16
 
 ### `[skill][qa-quincey-browser]` New skill: visible Chromium with "QA Quincey | …" tab-title prefix
