@@ -389,15 +389,15 @@ Also append any reply IDs you just posted (issue_comments for top-level replies,
 
 The loop's exit condition is "CodeRabbit has nothing left for us." Detect that here, before spawning the next sensor, so the watcher does not spin a 30-minute idle_timeout waiting for a transition that will never come.
 
-Exit the skill (do NOT spawn another sensor) when ALL of the following hold for the batch you just processed:
+Exit the skill (do NOT spawn another sensor) when ALL the following hold for the batch you just processed:
 
 - `pushed_commits_this_batch == 0` (no `valid_actionable` finding made it through tests + commit + push this batch). If you pushed even once, CR will re-review the new HEAD, so do not exit.
 - The sensor returned `cr_status_state == "success"` AND `settled_via == "status_transition"`. (CR's terminal pass on the current HEAD finished cleanly. `failure`/`error` is also "done" in CR's sense, but signals a CR-side problem worth keeping the watcher alive for a human to inspect, so do not auto-exit on those.)
-- All findings in the batch classified as `status_ping`, `nitpick_only`, `already_fixed`, or `false_positive` (no `valid_actionable` or `needs_user_input` left in flight).
+- All findings in the batch classified as `status_ping`, `nitpick_only`, `already_fixed`, or `false_positive` (no `valid_actionable`, `out_of_scope`, or `needs_user_input` left in flight). `out_of_scope` and `needs_user_input` items both escalate to `escalations.jsonl` rather than being replied to on the PR (see Step 4e), so leaving them unresolved means there is still pending human work; the watcher should keep the loop alive so the user can see them when they return.
 
 When the condition is met, print:
 
-```
+```text
 🐇 CodeRabbit's review on HEAD <sha> is clean (Actionable comments posted: 0). Watcher exiting.
 ```
 
