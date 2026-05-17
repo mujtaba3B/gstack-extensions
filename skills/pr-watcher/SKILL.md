@@ -196,11 +196,17 @@ Polling protocol:
       three streams, CR is already caught up cleanly on this HEAD. Return
       outcome: already_settled IMMEDIATELY with cr_status_state = "success",
       cr_status_updated_at = INIT_CR_STATUS.updated_at, settled_via: "n/a",
-      and empty new_* arrays. Do NOT wait 30 minutes. (Terminal
-      "failure"/"error" states are explicitly NOT treated as already_settled
-      here, even with INIT_NEW empty: they signal a CR-side problem that
-      deserves human inspection. Fall through to step 0f and enter the 15s
-      loop so the watcher stays alive for the user to see the failure.)
+      and empty new_* arrays. Do NOT wait 30 minutes.
+   d2. If INIT_CR_STATUS.state in ("failure", "error") AND INIT_NEW is empty
+      across all three streams, CR's review on the current HEAD ended in
+      failure with no actionable comments to drain. Return outcome:
+      cr_failure IMMEDIATELY with cr_status_state set to the failure state
+      and cr_status_updated_at = INIT_CR_STATUS.updated_at. Do NOT silently
+      fall into the 15s loop: CR has emitted its final word on this HEAD and
+      no new transition will arrive without a new push, so polling would idle
+      to timeout. The dispatcher surfaces the failure to the user and ends
+      the skill (see the dispatcher branch table below). If a new push is
+      made later, the user can re-invoke /pr-watcher to start a fresh watch.
    e. If INIT_NEW is non-empty AND at least one settling condition holds for
       INIT_NEW, return outcome: new_cr_feedback IMMEDIATELY so the dispatcher
       can drain the backlog. The settling conditions are the same ones the
@@ -271,8 +277,13 @@ Polling protocol:
      (a) a new review body matches ^Actionable comments posted:, OR
      (b) a new comment/review body contains the literal sentinel
          "<!-- This is an auto-generated comment by CodeRabbit for review status -->", OR
-     (c) 180 seconds have passed since the latest new item's updated_at with
-         no further changes in a subsequent poll.
+     (c) 180 seconds have passed since the latest new item's effective
+         timestamp with no further changes in a subsequent poll. Effective
+         timestamp = `updated_at` if present, else `submitted_at` (the field
+         GitHub review objects expose) as a fallback. For repos that don't
+         post a CR commit status, batches containing only a review object
+         depend on this fallback path; without the submitted_at fallback the
+         age calculation never resolves and the watcher misses the settling.
    Reset fallback_tick_counter to 0 after each fallback fetch.
 5. After 1800 seconds (30 minutes) wall-clock with no terminal status
    transition and no qualifying fallback activity, return outcome:
@@ -283,7 +294,7 @@ Full comment bodies, no truncation.
 
 Schema:
 {
-  "outcome": "new_cr_feedback" | "pr_closed" | "idle_timeout" | "already_settled",
+  "outcome": "new_cr_feedback" | "pr_closed" | "idle_timeout" | "already_settled" | "cr_failure",
   "polled_for_seconds": <int>,
   "ticks": <int>,
   "head_sha_at_return": "<sha>",
@@ -304,7 +315,8 @@ Hard limits:
 After the sensor returns, branch on `outcome`:
 
 - `"pr_closed"` → print `PR is closed/merged. Watcher exiting.` and end the skill.
-- `"already_settled"` → CodeRabbit's review on the current HEAD is terminal `success` and there are no unprocessed CR items. (Sensor only returns this for `success`, not `failure`/`error` — those keep the watcher alive in the 15s loop.) Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: success). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
+- `"already_settled"` → CodeRabbit's review on the current HEAD is terminal `success` and there are no unprocessed CR items. (Sensor returns this only for `success`, never for `failure`/`error`.) Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: success). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
+- `"cr_failure"` → CodeRabbit's review on the current HEAD ended in `failure` or `error` and there are no actionable comments to drain. CR has emitted its final word and no new transition will arrive without a new push. Print `⚠️ CodeRabbit review on HEAD <sha> ended in <state> (updated_at: <ts>). No comments were posted; this typically indicates a CR-side problem (rate limit, internal error, repo config). Watcher exiting — please inspect the PR and re-invoke /pr-watcher after the next push.` and end the skill. Do NOT loop; another sensor would reproduce this outcome.
 - `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: **stop** (long silence after watcher start almost always means CR is done; the user can re-invoke /pr-watcher when there is new activity). If they choose to keep watching, spawn another sensor.
 - `"new_cr_feedback"` → proceed to Step 4.
 
