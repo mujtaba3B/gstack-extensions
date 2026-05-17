@@ -160,7 +160,7 @@ If a repo's CR setup does not post a commit status (some self-hosted or older
 installs), the sensor falls back to comment-stream polling at the original 60s
 cadence so the watcher still works.
 
-```
+```text
 You are a passive polling sensor for the /pr-watcher skill. Your only job is to
 wait for CodeRabbit (coderabbitai[bot]) to finish a review pass on
 PR [PR_URL], then return a short summary. You do NOT edit code, push commits,
