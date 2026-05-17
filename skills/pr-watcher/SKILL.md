@@ -192,11 +192,15 @@ Polling protocol:
       CodeRabbit entry, or null if absent.
    c. Fetch the three comment streams once and filter to coderabbitai[bot]
       items NOT in the baseline (same as step 3). Call the result INIT_NEW.
-   d. If INIT_CR_STATUS is terminal (success/failure/error) AND INIT_NEW is
-      empty across all three streams, CR is already caught up on this HEAD.
-      Return outcome: already_settled IMMEDIATELY with cr_status_state =
-      INIT_CR_STATUS.state, cr_status_updated_at = INIT_CR_STATUS.updated_at,
-      settled_via: "n/a", and empty new_* arrays. Do NOT wait 30 minutes.
+   d. If INIT_CR_STATUS.state == "success" AND INIT_NEW is empty across all
+      three streams, CR is already caught up cleanly on this HEAD. Return
+      outcome: already_settled IMMEDIATELY with cr_status_state = "success",
+      cr_status_updated_at = INIT_CR_STATUS.updated_at, settled_via: "n/a",
+      and empty new_* arrays. Do NOT wait 30 minutes. (Terminal
+      "failure"/"error" states are explicitly NOT treated as already_settled
+      here, even with INIT_NEW empty: they signal a CR-side problem that
+      deserves human inspection. Fall through to step 0f and enter the 15s
+      loop so the watcher stays alive for the user to see the failure.)
    e. If INIT_NEW is non-empty (CR has new items the dispatcher has not yet
       processed, regardless of status state), return outcome: new_cr_feedback
       IMMEDIATELY with settled_via: "status_transition" if INIT_CR_STATUS is
@@ -220,8 +224,15 @@ Polling protocol:
       context is "CodeRabbit"). Take the entry with the latest updated_at.
       Call its (state, updated_at) the LATEST_CR_STATUS.
    c. If LATEST_CR_STATUS is present and state in ("success", "failure", "error")
-      and updated_at > last_terminal_status_updated_at, this is a fresh review
-      transition. Proceed to step 3.
+      AND (last_terminal_status_updated_at is null OR
+      LATEST_CR_STATUS.updated_at > last_terminal_status_updated_at), this is
+      a fresh review transition. Proceed to step 3. (The null check is
+      load-bearing: when the watcher enters the 15s loop with a pending or
+      absent status at init, last_terminal_status_updated_at starts as null,
+      and `updated_at > null` is falsy in every common runtime. Without
+      treating null as "no prior terminal seen," the first terminal status
+      that lands during polling would never trigger a transition, exactly
+      reproducing the 30-minute stale-wait this version was meant to kill.)
    d. If LATEST_CR_STATUS is absent (no CR status on this SHA at all),
       increment fallback_tick_counter. Every 4th tick (every ~60s), fall
       through to step 4 (comment-stream poll) so we still notice activity in
@@ -281,7 +292,7 @@ Hard limits:
 After the sensor returns, branch on `outcome`:
 
 - `"pr_closed"` → print `PR is closed/merged. Watcher exiting.` and end the skill.
-- `"already_settled"` → CodeRabbit's review on the current HEAD is already terminal and there are no unprocessed CR items. Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: <state>). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
+- `"already_settled"` → CodeRabbit's review on the current HEAD is terminal `success` and there are no unprocessed CR items. (Sensor only returns this for `success`, not `failure`/`error` — those keep the watcher alive in the 15s loop.) Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: success). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
 - `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: **stop** (long silence after watcher start almost always means CR is done; the user can re-invoke /pr-watcher when there is new activity). If they choose to keep watching, spawn another sensor.
 - `"new_cr_feedback"` → proceed to Step 4.
 
