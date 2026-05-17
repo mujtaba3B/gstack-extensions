@@ -437,6 +437,14 @@ On exit, print:
 
 State is per-PR and persists across sessions. Re-invoking `/pr-watcher` on the same PR after `/exit` resumes from the saved baselines, never re-processing items already handled.
 
+## Debugging: inspect the current escalations log
+
+```bash
+PR=2
+cat ~/.cache/pr-watcher/owner__repo__$PR/escalations.jsonl | grep needs_user_input | wc -l
+```
+
+
 ## Failure handling
 
 | Failure | Response |
