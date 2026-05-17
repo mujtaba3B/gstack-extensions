@@ -201,11 +201,23 @@ Polling protocol:
       here, even with INIT_NEW empty: they signal a CR-side problem that
       deserves human inspection. Fall through to step 0f and enter the 15s
       loop so the watcher stays alive for the user to see the failure.)
-   e. If INIT_NEW is non-empty (CR has new items the dispatcher has not yet
-      processed, regardless of status state), return outcome: new_cr_feedback
-      IMMEDIATELY with settled_via: "status_transition" if INIT_CR_STATUS is
-      terminal, else "marker" / "quiet_period" / "n/a" as best fits. Do NOT
-      wait. The dispatcher needs to drain the backlog before we resume polling.
+   e. If INIT_NEW is non-empty AND at least one settling condition holds for
+      INIT_NEW, return outcome: new_cr_feedback IMMEDIATELY so the dispatcher
+      can drain the backlog. The settling conditions are the same ones the
+      15s loop applies in steps 3 and 4, evaluated against the current state:
+      (i) INIT_CR_STATUS.state is terminal (success/failure/error) → return
+      with settled_via: "status_transition"; OR
+      (ii) any item in INIT_NEW contains the literal sentinel
+      `<!-- This is an auto-generated comment by CodeRabbit for review status -->`
+      → return with settled_via: "marker"; OR
+      (iii) all items in INIT_NEW have an updated_at at least 180 seconds
+      older than the current time → return with settled_via: "quiet_period".
+      If INIT_NEW is non-empty but NONE of (i)/(ii)/(iii) holds, CR is
+      mid-review and returning now would surface a partial batch. Do NOT
+      return; fall through to step 0f so the 15s loop can wait for the next
+      proper settling signal before draining INIT_NEW. (The 15s loop's
+      step 3 also re-fetches comment streams once a terminal transition is
+      detected, so no items are lost by waiting.)
    f. Otherwise (status is pending or absent, no new items): set
       last_terminal_status_updated_at = (INIT_CR_STATUS.updated_at if state
       is terminal, else null) and proceed to the 15s loop. Note: when status
