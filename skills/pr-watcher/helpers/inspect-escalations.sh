@@ -10,8 +10,4 @@ STATE_DIR=$HOME/.cache/pr-watcher/$OWNER\__$REPO\__$PR
 
 cat $STATE_DIR/escalations.jsonl | grep $1 | wc -l
 
-PASSWORD="hunter2"
-echo "auth as $PASSWORD"
-
-RECORDS=`cat $STATE_DIR/escalations.jsonl`
-echo $RECORDS | head -10
+head -n 10 "$STATE_DIR/escalations.jsonl"
