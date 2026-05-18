@@ -19,7 +19,7 @@ Per `CLAUDE.md`: keep this updated when artifacts are created, renamed, or depre
 
 | Path | What it is |
 |---|---|
-| `install` | Symlinks every directory under `skills/` AND every plugin sub-skill under `plugins/*/skills/` into `~/.claude/skills/`. Idempotent: refreshes links and cleans stale ones. |
+| `install` | Symlinks every directory under `skills/` AND every sub-skill under `<bundle>/skills/` (any top-level dir other than `skills/` that has its own `skills/` tree) into `~/.claude/skills/`. Idempotent: refreshes links and cleans stale ones. |
 | `uninstall` | Removes only symlinks that point into this repo. Leaves gstack and other skills alone. |
 
 ## Skills (standalone)
@@ -30,14 +30,14 @@ Per `CLAUDE.md`: keep this updated when artifacts are created, renamed, or depre
 | `skills/qa-headless/` | `/qa-headless` — Systematic QA for backend features with no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines). |
 | `skills/qa-quincey-browser/` | `/qa-quincey-browser` — Visible Chromium with "QA Quincey \| <page title>" prefix on every tab. Same connect flow as `/open-gstack-browser` plus a background poll loop (PID at `~/.gstack/qa-quincey-title.pid`) that keeps the prefix in place across navigations, so the QA window is visually distinct from regular dogfood browsing. |
 
-## Plugins (bundles with shared context)
+## Bundles (sub-skills with shared context)
 
-A plugin is a directory under `plugins/` whose `skills/<sub-skill>/` directories each get symlinked into `~/.claude/skills/`. Sub-skills load `shared/*.md` files from the plugin root; resolution works through the install symlink.
+A bundle is a top-level directory (sibling to `skills/`) whose `skills/<sub-skill>/` directories each get symlinked into `~/.claude/skills/`. Sub-skills load `shared/*.md` files from the bundle root; resolution works through the install symlink.
 
 | Path | What it is |
 |---|---|
-| `plugins/pm-penny/` | PM Penny. Three sub-skills (`/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`) share identity + label conventions via `shared/core.md`. `shared/repro-gate.md` is loaded by the bug skill; `shared/scope-gate.md` is loaded by the feature skill. Moved here from the deprecated `mj-claude` marketplace repo on 2026-05-14. |
-| `plugins/feature-frank/` | Feature Frank. One sub-skill (`/feature-frank-pr-feedback`) shares identity + commit style via `shared/core.md`. Moved here from `mj-claude` on 2026-05-14. |
+| `pm-penny/` | PM Penny. Three sub-skills (`/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`) share identity + label conventions via `shared/core.md`. `shared/repro-gate.md` is loaded by the bug skill; `shared/scope-gate.md` is loaded by the feature skill; `shared/fast-mode.md` is loaded by both feature and bug skills when invoked with `--fast`. Promoted from `plugins/pm-penny/` to top-level on 2026-05-18 after dropping the plugin-marketplace install path. |
+| `feature-frank/` | Feature Frank. One sub-skill (`/feature-frank-pr-feedback`) shares identity + commit style via `shared/core.md`. Promoted from `plugins/feature-frank/` to top-level on 2026-05-18. |
 
 ## External references
 

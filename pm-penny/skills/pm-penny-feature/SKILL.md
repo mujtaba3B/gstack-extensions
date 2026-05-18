@@ -4,14 +4,16 @@ description: >
   This skill should be used whenever the user wants to create a GitHub issue for
   a new feature, enhancement, or improvement. Trigger when the user says
   "feature issue", "new feature", "I want to build", "add this to the backlog",
-  "scope this out", "/pm-penny-feature", or describes a capability they want the
+  "scope this out", "/pm-penny-feature", "/pm-penny-feature --fast", or describes a capability they want the
   product to have. Use this skill — not pm-penny-bug — when the work is net-new
   functionality rather than fixing something broken.
 ---
 
 # PM Penny — Feature
 
-**Read first:** Load `shared/core.md` from the plugin root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling. Everything below is specific to feature issues.
+**Read first:** Load `shared/core.md` from the bundle root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling. Everything below is specific to feature issues.
+
+**Fast mode short-circuit.** If the user invoked this skill with `--fast` followed by a description (e.g. `/pm-penny-feature --fast add a "remind me later" button to the verify-phone screen`), load `shared/fast-mode.md` and follow it instead of the normal discovery flow below. Fast mode skips the scope gate, the discovery questions, and the preview, files the issue immediately, then learns from any post-file correction. Everything else in this file is the normal (interactive) flow.
 
 **Then load `shared/scope-gate.md`** and run the scope gate **before** the discovery questions below. The gate decides whether this should be one issue or an epic + sequential child issues. Skip the gate only if the caller passed in an `epic_context` blob — in that case you are already a child invocation; honor the context per the gate's "Sequential child invocations" section and proceed with normal discovery, seeding the title and scope from `epic_context.this_child` and appending the epic linkage line to `## Context` before filing.
 

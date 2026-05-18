@@ -6,6 +6,19 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-18
+
+### `[repo][layout]` Promoted bundles out of `plugins/`, dropped plugin-marketplace install path
+Restructured `plugins/pm-penny/` and `plugins/feature-frank/` to top-level `pm-penny/` and `feature-frank/`, removed the now-empty `plugins/` dir, and deleted both `.claude-plugin/plugin.json` manifests. The Claude Code plugin marketplace install path (`enabledPlugins: pm-penny@mj-claude` pointing at `/Users/mujtaba/dev/claude`) was already orphaned: that source directory no longer exists, and `~/.claude/plugins/cache/local-agents/pm-penny/` was marked `.orphaned_at`. The live install has been via `./install` symlinks for some time, so the plugin shape was dead weight. Decided not to commit to a `bundles/` wrapper directory either: a category dir that only ever has two members is more clutter than the word "plugin" was. Generalized the install script to walk any top-level dir (other than `skills/`) that has its own `skills/<sub-skill>/` tree. Renamed "plugin root" to "bundle root" across the 4 SKILL.md files and the README/INDEX so the language matches the install model. Decision validated via `/second-opinion panel` (Claude/Codex/Gemini) — all three converged on "don't flatten the sub-skills, keep `shared/` co-located"; the steelman of the consensus (promote bundles to top level without a wrapper dir) is what we picked.
+
+### `[skill][pm-penny]` Added `--fast` mode to pm-penny-feature and pm-penny-bug
+New `shared/fast-mode.md` in pm-penny. Triggered by `/pm-penny-feature --fast <description>` or `/pm-penny-bug --fast <description>`. Skips discovery, scope gate (feature), repro gate (bug, marks reproduction as waived), and the pre-creation preview. Calibrates by reading the past 30 issues in the repo plus a learnings log at `~/.claude/pm-penny/fast-learnings.md`. Files immediately, shows the rendered body. If the user requests a change in the next turn, applies the edit on GitHub via `gh issue edit` and appends a one-line rule to `fast-learnings.md` under an H2 keyed on `owner/repo`. The learnings log is user-scoped, not in any repo, and grows by correction. Why both fast mode and the layout migration in one session: the `--fast` work surfaced the misleading "plugin" name during discussion, which led to the restructure.
+
+### `[skill][pm-penny]` Consolidated user-scoped state into `~/.claude/pm-penny/`
+Penny's state was split across two dirs: `~/.claude/plugins/pm-penny/config.json` (issue-source config used by pm-penny-next-issue) and `~/.claude/pm-penny/<repo>.json` (per-repo project-board cache used by `shared/core.md`). Moved the lone outlier to `~/.claude/pm-penny/config.json`, removed the empty `~/.claude/plugins/pm-penny/` dir, updated the two path references in `pm-penny-next-issue/SKILL.md`. New flat layout under `~/.claude/pm-penny/`: `config.json` (global), `<repo>.json` (per-repo cache), `fast-learnings.md` (fast-mode log). Added a "State location rule" guardrail to `shared/core.md` and a parallel note in `shared/fast-mode.md` instructing future Claude never to write Penny state inside a project repo. Also added `/pm-penny/*.json` and `/pm-penny/fast-learnings.md` to `.gitignore` as belt-and-suspenders against a stray write into the in-repo `pm-penny/` bundle dir (which now shares its basename with the user-scoped state dir).
+
+---
+
 ## 2026-05-17
 
 ### `[skill][pr-watcher]` Dropped the test-command gate from the skill contract

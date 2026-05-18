@@ -1,8 +1,0 @@
-{
-  "name": "feature-frank",
-  "version": "0.1.0",
-  "description": "Feature Frank — engineer-side skills for closing the loop on shipped work. feature-frank-pr-feedback triages PR review comments, fixes the code, and captures durable lessons into AGENTS.md and tooling so the same mistake isn't made twice.",
-  "author": {
-    "name": "Mujtaba"
-  }
-}

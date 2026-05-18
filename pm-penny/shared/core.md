@@ -98,6 +98,8 @@ PM Penny works across many repos. Some have a GitHub Project (roadmap / queue) a
 
 ### Per-repo cache
 
+**State location rule.** All of Penny's user-scoped state lives under `~/.claude/pm-penny/` (absolute path, expanded from `$HOME`). Never read or write Penny state inside a project repo, even if the working directory happens to match a repo name. The flat layout is: `~/.claude/pm-penny/config.json` (global), `~/.claude/pm-penny/<repo>.json` (per-repo project cache), `~/.claude/pm-penny/fast-learnings.md` (fast-mode corrections).
+
 Penny keeps a per-repo cache at `~/.claude/pm-penny/<repo>.json` (just the bare repo name, no owner prefix; this machine has one GitHub owner). The cache holds everything needed to add an item and set its status without re-fetching IDs.
 
 Cache schema:

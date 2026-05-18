@@ -1,8 +1,0 @@
-{
-  "name": "pm-penny",
-  "version": "0.2.0",
-  "description": "PM Penny — specialized skills for managing GitHub issues: pm-penny-feature for scoping new features with pencil.dev mockups, pm-penny-bug for filing bugs with clear reproduction steps and screenshots, and pm-penny-next-issue for triaging the backlog and recommending what to pick up next.",
-  "author": {
-    "name": "Mujtaba"
-  }
-}
