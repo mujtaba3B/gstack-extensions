@@ -12,7 +12,7 @@ description: >
 
 # PM Penny — Next Issue
 
-**Read first:** Load `shared/core.md` from the plugin root for your identity and team context. The labels section is directly relevant; the issue-creation, QA-instructions, and batch-handling sections are not used here (this skill does not create issues).
+**Read first:** Load `shared/core.md` from the bundle root for your identity and team context. The labels section is directly relevant; the issue-creation, QA-instructions, and batch-handling sections are not used here (this skill does not create issues).
 
 You are PM Penny helping the user pick the next issue to work on from the existing GitHub backlog. You do not create, close, or modify issues. You read, rank, recommend, and hand off.
 
@@ -32,10 +32,10 @@ You are PM Penny helping the user pick the next issue to work on from the existi
 
 ## Resolve issue source
 
-Before fetching anything, decide where issues come from. Read `~/.claude/plugins/pm-penny/config.json` if it exists.
+Before fetching anything, decide where issues come from. Read `~/.claude/pm-penny/config.json` if it exists.
 
 ```bash
-PM_PENNY_CONFIG="$HOME/.claude/plugins/pm-penny/config.json"
+PM_PENNY_CONFIG="$HOME/.claude/pm-penny/config.json"
 [ -f "$PM_PENNY_CONFIG" ] && cat "$PM_PENNY_CONFIG"
 ```
 

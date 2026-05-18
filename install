@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Symlink every skill in skills/* AND every sub-skill in plugins/*/skills/*
+# Symlink every skill in skills/* AND every sub-skill in <bundle>/skills/*
 # into ~/.claude/skills/ so Claude Code discovers them.
+# A "bundle" is any top-level directory (other than skills/) that has its own
+# skills/<sub-skill>/ tree plus helper files (e.g. shared/*.md) at the bundle
+# root, which sub-skills load via relative paths resolved through the symlink.
 # Idempotent: re-run after pulling updates.
 set -euo pipefail
 
@@ -27,14 +30,17 @@ if compgen -G "$REPO/skills/*/" >/dev/null; then
   done
 fi
 
-# Forward-link plugin sub-skills (plugins/<plugin>/skills/<skill>/).
-# Plugins keep their own shared/ files; sub-skills reference them as
-# "shared/core.md from the plugin root", which resolves through the symlink.
-if compgen -G "$REPO/plugins/*/skills/*/" >/dev/null; then
-  for skill in "$REPO"/plugins/*/skills/*/; do
+# Forward-link bundle sub-skills (<bundle>/skills/<sub-skill>/).
+# Bundles keep their own shared/ files; sub-skills reference them as
+# "shared/core.md from the bundle root", which resolves through the symlink.
+for bundle in "$REPO"/*/; do
+  name="$(basename "$bundle")"
+  [[ "$name" == "skills" ]] && continue
+  compgen -G "${bundle}skills/*/" >/dev/null || continue
+  for skill in "${bundle}skills"/*/; do
     link_skill "$skill"
   done
-fi
+done
 
 # Clean stale symlinks pointing into this repo whose targets no longer exist
 # (e.g. after renaming or deleting a skill directory).

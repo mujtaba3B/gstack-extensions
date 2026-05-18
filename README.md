@@ -20,14 +20,14 @@ Standalone skills (`skills/`):
 - **`/qa-headless`** . Systematic QA testing of backend features that have no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines).
 - **`/qa-quincey-browser`** . Visible Chromium with "QA Quincey | <page title>" prefix on every tab, kept in place across navigations by a small background poll loop. Same connect flow as `/open-gstack-browser`; the prefix makes the QA window visually distinct from regular dogfood browsing.
 
-Plugins (`plugins/`) . skill bundles that share common context files:
+Bundles (top-level dirs with their own `skills/` and `shared/`), skill groups that share common context files:
 
-- **PM Penny** (`plugins/pm-penny/`): `/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`. Product manager who turns ideas, bug reports, and "what should I work on next?" into well-structured GitHub issues. Shares identity and label conventions across the three sub-skills via `pm-penny/shared/core.md`.
-- **Feature Frank** (`plugins/feature-frank/`): `/feature-frank-pr-feedback`. Engineer who works through PR review comments, patches the code, and captures durable lessons.
+- **PM Penny** (`pm-penny/`): `/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`. Product manager who turns ideas, bug reports, and "what should I work on next?" into well-structured GitHub issues. Shares identity, label conventions, scope/repro gates, and fast-mode logic across the three sub-skills via `pm-penny/shared/*.md`.
+- **Feature Frank** (`feature-frank/`): `/feature-frank-pr-feedback`. Engineer who works through PR review comments, patches the code, and captures durable lessons.
 
 ## How it works
 
-`./install` symlinks every directory under `skills/` AND every plugin sub-skill under `plugins/*/skills/` into `~/.claude/skills/`. Claude Code scans that directory at session start and discovers any directory containing a `SKILL.md`. Plugin sub-skills resolve their shared files (e.g. `shared/core.md`) relative to the plugin root, which works through the symlink.
+`./install` symlinks every directory under `skills/` AND every sub-skill under `<bundle>/skills/` into `~/.claude/skills/`. Claude Code scans that directory at session start and discovers any directory containing a `SKILL.md`. Bundle sub-skills resolve their shared files (e.g. `shared/core.md`) relative to the bundle root, which works through the symlink.
 
 This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never touches it. gstack and these extensions coexist as peers in the flat `~/.claude/skills/` namespace.
 
@@ -55,8 +55,8 @@ For a standalone skill:
 2. Run `./install`.
 3. Restart Claude Code.
 
-For a plugin (a bundle of sub-skills that share `shared/*.md` context):
+For a bundle (a group of sub-skills that share `shared/*.md` context):
 
-1. Create `plugins/<plugin>/skills/<sub-skill>/SKILL.md` for each sub-skill.
-2. Put shared context in `plugins/<plugin>/shared/`; sub-skills reference it as "from the plugin root".
-3. Run `./install`. Each sub-skill is symlinked into `~/.claude/skills/` directly (no plugin-name prefix on the invocation).
+1. Create `<bundle>/skills/<sub-skill>/SKILL.md` for each sub-skill at the repo top level (sibling to `skills/`).
+2. Put shared context in `<bundle>/shared/`; sub-skills reference it as "from the bundle root".
+3. Run `./install`. Each sub-skill is symlinked into `~/.claude/skills/` directly (no bundle-name prefix on the invocation).

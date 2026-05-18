@@ -1,1 +1,8 @@
 .DS_Store
+
+# Defense-in-depth: pm-penny user-scoped state lives at ~/.claude/pm-penny/,
+# but the in-repo bundle dir shares its basename. These globs ensure that
+# any stray write into ./pm-penny/<repo>.json or ./pm-penny/fast-learnings.md
+# stays out of git. (The real defense is absolute paths in the skill code.)
+/pm-penny/*.json
+/pm-penny/fast-learnings.md
