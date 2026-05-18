@@ -9,7 +9,7 @@ Activate when the user invokes the skill with `--fast` followed by a free-text d
 - `/pm-penny-feature --fast <description>`
 - `/pm-penny-bug --fast <description>`
 
-If `--fast` is passed with no description, do not silently fall back. Ask once: "Fast mode needs a description in the same message. Want to give me one, or drop the flag and use the normal flow?" Then proceed based on the answer.
+If `--fast` is passed with no description, do not silently fall back. Use `AskUserQuestion` with two options: A) "Drop `--fast` and use the normal interactive flow", B) "Cancel; I'll re-invoke with a description in one message". Do not ask this as prose. Then proceed based on the answer.
 
 ## What fast mode skips
 
@@ -23,7 +23,18 @@ If `--fast` is passed with no description, do not silently fall back. Ask once: 
 - Live collaborator + project board cache lookups, used as silent defaults.
 - README startup behavior from `shared/core.md` (still need repo context to draft well).
 - Labels, title prefix conventions, issue templates from `shared/core.md` + the per-skill SKILL.md.
-- Mockup generation for features with UI: produce a best-guess `.pen` frame, export PNG, embed, no questions asked. If the description is purely backend, skip the mockup.
+
+## Mockups in fast mode
+
+Fast mode does NOT generate a `.pen` mockup, even for UI features. The normal flow's "Mockups are mandatory for UI changes" rule does not apply here, because mockup generation requires judgment calls (which frame to extend, which patterns to mirror) that the user opted out of by choosing fast mode.
+
+For UI features, the `## Mockup` section in the filed issue contains the literal text:
+
+```
+_No mockup attached (filed via --fast). Run /design-shotgun or re-invoke the normal flow if a mockup is needed before implementation._
+```
+
+If a mockup is later required, the user can invoke `/design-shotgun` against the issue or ask Penny to add one in a follow-up message.
 
 ## Calibration step (run before drafting)
 
