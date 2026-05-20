@@ -87,28 +87,99 @@ echo "TIMEOUT_SECONDS=$TIMEOUT_SECONDS"
 echo "WATCH_STARTED=$(date +%s)" > "$STATE_DIR/started"
 ```
 
-Initialize the per-PR baseline ID stores if absent. Baselines hold IDs the main agent has already processed (or, on a fresh watch, all currently-existing CR comments so the first sensor only returns truly new ones).
+Initialize the per-PR baseline ID stores if absent. Baselines hold IDs the main agent has already processed and intentionally skipped.
 
 ```bash
 for f in issue_comments reviews review_comments; do
   [[ -f "$STATE_DIR/baseline_${f}.json" ]] || echo '[]' > "$STATE_DIR/baseline_${f}.json"
 done
 : > "$STATE_DIR/escalations.jsonl"
+```
 
-# On a fresh watch (no prior baselines), seed with all existing CR IDs so we
-# only react to genuinely NEW activity going forward.
-if [[ "$(jq 'length' "$STATE_DIR/baseline_reviews.json")" == "0" ]]; then
-  gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" \
-    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
-    > "$STATE_DIR/baseline_issue_comments.json"
-  gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100" \
-    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
-    > "$STATE_DIR/baseline_reviews.json"
-  gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100" \
-    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | .id | tostring]' \
-    > "$STATE_DIR/baseline_review_comments.json"
+On a fresh watch (state dir just created, all three baselines are empty arrays), seed baselines with **only the CR items that already look addressed**. "Addressed" means a human has weighed in on the item, either by replying inside the CR thread or by referencing the CR comment's URL in another PR comment. Unaddressed items get left out of the baseline so the first sensor cycle returns them and the dispatcher processes them in Step 4.
+
+Why this shape: a CR comment with no human follow-up is exactly the case the watcher should pick up, whether the PR is brand-new or a month old. A CR comment that already has a reply (the watcher's own "Addressed in <sha>...", your manual "skipping because X", a teammate's "won't fix") is signal that someone already decided, and the watcher should not re-litigate. The "skipping because X" reply pattern doubles as the manual opt-out: if you don't want a specific CR comment processed, reply to it with your reason and the next fresh watch will baseline it.
+
+```bash
+# Fresh-watch detection: all three baselines are empty arrays.
+IS_FRESH=1
+for f in issue_comments reviews review_comments; do
+  [[ "$(jq 'length' "$STATE_DIR/baseline_${f}.json")" == "0" ]] || { IS_FRESH=0; break; }
+done
+
+if [[ "$IS_FRESH" == "1" ]]; then
+  # Note on pagination: every gh-api call below caps at per_page=100 and the
+  # GraphQL reviewThreads query caps at first:100 / first:50 comments per
+  # thread. On a PR with >100 CR items across one stream (or a thread with
+  # >50 comments), older items past the cap will be missed during baseline
+  # init and re-processed on cycle one. This is intentional. Pagination
+  # would add complexity for a case that doesn't happen on real-world PRs;
+  # if it ever does, Step 4b's status_ping / nitpick_only auto-classification
+  # absorbs the noise without making edits.
+
+  # Pull all CR items from each stream (id + html_url for URL-reference detection).
+  CR_ISSUE_COMMENTS=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | {id:(.id|tostring), html_url}]')
+  CR_REVIEWS=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | {id:(.id|tostring), html_url}]')
+  CR_REVIEW_COMMENTS=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100" \
+    | jq '[.[] | select(.user.login == "coderabbitai[bot]") | {id:(.id|tostring), html_url}]')
+
+  # Concatenate every non-CR PR comment body. Used as a haystack for URL-reference
+  # detection: any CR item whose html_url appears here counts as addressed.
+  HUMAN_BODIES=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" \
+    | jq -r '[.[] | select(.user.login != "coderabbitai[bot]") | .body // ""] | join("\n---\n")')
+
+  # GraphQL: reviewThreads expose the inline-comment thread structure. A CR
+  # review_comment is "addressed" if any non-CR author also commented in its
+  # thread. The bot login under .author.login is "coderabbitai" (no [bot]).
+  ADDRESSED_INLINE_IDS=$(gh api graphql -f query='
+    query($owner:String!,$repo:String!,$pr:Int!){
+      repository(owner:$owner,name:$repo){
+        pullRequest(number:$pr){
+          reviewThreads(first:100){
+            nodes{
+              comments(first:50){
+                nodes{ databaseId author{ login } }
+              }
+            }
+          }
+        }
+      }
+    }' -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUM" 2>/dev/null \
+    | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+           | select(any(.comments.nodes[]; .author.login != "coderabbitai"))
+           | .comments.nodes[]
+           | select(.author.login == "coderabbitai")
+           | .databaseId | tostring] | unique')
+  [[ -z "$ADDRESSED_INLINE_IDS" || "$ADDRESSED_INLINE_IDS" == "null" ]] && ADDRESSED_INLINE_IDS='[]'
+
+  # Helper: given a CR-items JSON array, return the subset whose html_url
+  # appears in $HUMAN_BODIES. The `.html_url as $url` bind is load-bearing:
+  # inside `$bodies | contains(.html_url)`, the `.html_url` would otherwise
+  # be re-evaluated against the $bodies string and jq errors with
+  # "Cannot index string with string html_url".
+  filter_url_referenced() {
+    jq --arg bodies "$HUMAN_BODIES" '
+      [.[] | .html_url as $url | select($bodies | contains($url)) | .id] | unique
+    ' <<<"$1"
+  }
+
+  # review_comments: addressed if in inline-reply set OR url-referenced.
+  URL_REF_REVIEW_COMMENTS=$(filter_url_referenced "$CR_REVIEW_COMMENTS")
+  jq -n --argjson a "$ADDRESSED_INLINE_IDS" --argjson b "$URL_REF_REVIEW_COMMENTS" \
+    '$a + $b | unique' > "$STATE_DIR/baseline_review_comments.json"
+
+  # issue_comments and review bodies: addressed iff url-referenced. Note that
+  # CR's walkthrough/summary and "Actionable comments posted: 0" review bodies
+  # are auto-classified as status_ping / nitpick_only in Step 4b, so leaving
+  # them unbaselined here is cheap (one cycle to silently classify them).
+  filter_url_referenced "$CR_ISSUE_COMMENTS" > "$STATE_DIR/baseline_issue_comments.json"
+  filter_url_referenced "$CR_REVIEWS"        > "$STATE_DIR/baseline_reviews.json"
 fi
 ```
+
+If any of the API calls above fail (auth, rate limit, network), the helper steps fall back to empty baselines for that stream and the first cycle will see those CR items as new. That is acceptable: the dispatcher's classification step (4b) catches CR noise (`status_ping`, `nitpick_only`) without making fixes, so the worst case is one extra processing cycle, not an unwanted edit.
 
 Print a one-line start banner:
 
