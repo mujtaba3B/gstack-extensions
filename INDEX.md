@@ -26,10 +26,8 @@ Per `CLAUDE.md`: keep this updated when artifacts are created, renamed, or depre
 
 | Path | What it does |
 |---|---|
-| `skills/pr-watcher/` | `/pr-watcher` — Foreground watcher for CodeRabbit feedback on a GitHub PR. Dispatcher (main agent) + sensor (polling subagent). Main applies fixes, runs tests, commits, pushes, replies. v2 architecture (see skill's CHANGELOG.md). |
-| `skills/qa-headless/` | `/qa-headless` — Systematic QA for backend features with no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines). |
-| `skills/qa-quincey-browser/` | `/qa-quincey-browser` — Visible Chromium with "QA Quincey \| <page title>" prefix on every tab. Same connect flow as `/open-gstack-browser` plus a background poll loop (PID at `~/.gstack/qa-quincey-title.pid`) that keeps the prefix in place across navigations, so the QA window is visually distinct from regular dogfood browsing. |
-| `skills/coderabbit-config/` | `/coderabbit-config` — Generates a tailored `.coderabbit.yaml` for the current repo. Detects languages, monorepo shape, generated/vendored dirs, lifts conventions from CLAUDE.md/AGENTS.md. Wraps the `coderabbit` CLI for optional live validation. |
+| `skills/pr-watcher/` | `/pr-watcher`. Foreground watcher for CodeRabbit feedback on a GitHub PR. Dispatcher (main agent) + sensor (polling subagent). Main applies fixes, runs tests, commits, pushes, replies. v2 architecture (see skill's CHANGELOG.md). |
+| `skills/coderabbit-config/` | `/coderabbit-config`. Generates a tailored `.coderabbit.yaml` for the current repo. Detects languages, monorepo shape, generated/vendored dirs, lifts conventions from CLAUDE.md/AGENTS.md. Wraps the `coderabbit` CLI for optional live validation. |
 
 ## Bundles (sub-skills with shared context)
 
@@ -39,6 +37,7 @@ A bundle is a top-level directory (sibling to `skills/`) whose `skills/<sub-skil
 |---|---|
 | `pm-penny/` | PM Penny. Three sub-skills (`/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`) share identity + label conventions via `shared/core.md`. `shared/repro-gate.md` is loaded by the bug skill; `shared/scope-gate.md` is loaded by the feature skill; `shared/fast-mode.md` is loaded by both feature and bug skills when invoked with `--fast`. Promoted from `plugins/pm-penny/` to top-level on 2026-05-18 after dropping the plugin-marketplace install path. |
 | `feature-frank/` | Feature Frank. One sub-skill (`/feature-frank-pr-feedback`) shares identity + commit style via `shared/core.md`. Promoted from `plugins/feature-frank/` to top-level on 2026-05-18. |
+| `qa-quincey/` | QA Quincey. Two sub-skills share identity, deviation vocabulary, plan/report storage, and reconcile-loop conventions via `shared/core.md`. `/qa-quincey-manual-browser-testing` is the flagship: AI-autonomous defined-flow browser QA against Pencil mockups with AI narrative visual diff. `/qa-quincey-manual-headless-testing` is the migrated qa-headless skill: backend-feature QA for crons, workers, notifiers, CLIs, pipelines. Bundle created 2026-05-20; absorbed and replaced the prior standalone `skills/qa-quincey-browser/` (labeled-Chromium-only, now subsumed) and `skills/qa-headless/` (moved in, renamed, version 2.0.0). |
 
 ## External references
 
