@@ -6,6 +6,19 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-20
+
+### `[skill][pr-watcher]` Fresh-watch baselines now filter to addressed CR items only
+Old behavior was dead on arrival in the common case: `/ship` opens a PR, CodeRabbit posts a review, user invokes `/pr-watcher`, the skill silently baselined every existing CR comment ("watch from now forward only"), the sensor returned `already_settled`, and the user had to address the comments by hand anyway. The "watch forward" framing made sense for long-lived PRs with backlogs the user had already triaged, but that case turned out to be hypothetical: the user always either replies to a CR comment when triaging or pushes a commit referencing its URL.
+
+New behavior: on a fresh watch (all three baseline files are empty arrays), only baseline CR items that already look addressed. "Addressed" means either (a) the item is an inline `review_comment` in a thread where any non-CR author also commented (uses GraphQL `reviewThreads`, since REST doesn't expose thread structure), or (b) the item's `html_url` appears in some other PR comment body (the watcher's own "Addressed in `<sha>`" template and most manual triage replies both include the URL). Unaddressed items get left out of the baseline so the first sensor cycle returns them and Step 4 processes them normally. The opt-out for "I decided not to fix this" becomes uniform with the rest of the skill: reply with the reason and the next fresh watch baselines it.
+
+API failures during seeding fall back to empty baselines for that stream. The dispatcher's `status_ping` / `nitpick_only` classification in Step 4b absorbs CR's walkthrough and "Actionable comments posted: 0" noise without making edits, so the worst case is one extra processing cycle, not an unwanted commit. PR #6 carried the change; addressed both CR nitpicks (per_page pagination tradeoff documented inline, `FRESH` variable renamed to `IS_FRESH` with positive logic) and merged via squash same session.
+
+Dogfood bug found and shipped in the same PR: the original `filter_url_referenced` helper used `select($bodies | contains(.html_url))`, which jq evaluates with the current input being the piped-in `$bodies` string, not the iterated object. Substring check fails with `Cannot index string with string "html_url"`. Fix: bind the URL first (`.html_url as $url | select($bodies | contains($url))`). Worth remembering: inside a `pipe | function(.field)` shape, jq re-evaluates `.field` against the piped value, not the outer iteration context.
+
+---
+
 ## 2026-05-18
 
 ### `[repo][layout]` Promoted bundles out of `plugins/`, dropped plugin-marketplace install path
