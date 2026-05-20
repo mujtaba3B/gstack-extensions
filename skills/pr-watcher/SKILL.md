@@ -155,10 +155,13 @@ if [[ "$IS_FRESH" == "1" ]]; then
   [[ -z "$ADDRESSED_INLINE_IDS" || "$ADDRESSED_INLINE_IDS" == "null" ]] && ADDRESSED_INLINE_IDS='[]'
 
   # Helper: given a CR-items JSON array, return the subset whose html_url
-  # appears in $HUMAN_BODIES.
+  # appears in $HUMAN_BODIES. The `.html_url as $url` bind is load-bearing:
+  # inside `$bodies | contains(.html_url)`, the `.html_url` would otherwise
+  # be re-evaluated against the $bodies string and jq errors with
+  # "Cannot index string with string html_url".
   filter_url_referenced() {
-    jq -r --arg bodies "$HUMAN_BODIES" '
-      [.[] | select($bodies | contains(.html_url)) | .id] | unique
+    jq --arg bodies "$HUMAN_BODIES" '
+      [.[] | .html_url as $url | select($bodies | contains($url)) | .id] | unique
     ' <<<"$1"
   }
 
