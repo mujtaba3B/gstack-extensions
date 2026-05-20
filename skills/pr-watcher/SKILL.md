@@ -108,6 +108,15 @@ for f in issue_comments reviews review_comments; do
 done
 
 if [[ "$FRESH" == "0" ]]; then
+  # Note on pagination: every gh-api call below caps at per_page=100 and the
+  # GraphQL reviewThreads query caps at first:100 / first:50 comments per
+  # thread. On a PR with >100 CR items across one stream (or a thread with
+  # >50 comments), older items past the cap will be missed during baseline
+  # init and re-processed on cycle one. This is intentional. Pagination
+  # would add complexity for a case that doesn't happen on real-world PRs;
+  # if it ever does, Step 4b's status_ping / nitpick_only auto-classification
+  # absorbs the noise without making edits.
+
   # Pull all CR items from each stream (id + html_url for URL-reference detection).
   CR_ISSUE_COMMENTS=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" \
     | jq '[.[] | select(.user.login == "coderabbitai[bot]") | {id:(.id|tostring), html_url}]')
