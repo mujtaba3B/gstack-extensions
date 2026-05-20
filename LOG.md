@@ -8,6 +8,15 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ## 2026-05-20
 
+### `[bundle][qa-quincey]` Created QA Quincey bundle; absorbed qa-headless and replaced qa-quincey-browser
+New bundle at `qa-quincey/` mirroring the `pm-penny/` shape: `shared/core.md` carries the QA Quincey persona, report/plan storage conventions under `~/.gstack/projects/<slug>/qa-quincey/`, deviation category vocabulary (LAYOUT, COPY, COLOR, TYPOGRAPHY, MISSING, EXTRA, STATE), the reconcile loop, and the verdict rubric (PASS / DEVIATIONS / FAIL). Two sub-skills live under `qa-quincey/skills/`:
+- `qa-quincey-manual-browser-testing` (flagship, new): AI-autonomous defined-flow browser QA against Pencil mockups. Intake from GitHub issue / `.pen` file / free-form / saved plan. AI narrative visual diff (no pixel diff in v1) per the prompt in `references/visual-diff-prompt.md`. Chrome profile-aware cookie probe documented in `references/cookie-profile-probe.md`. Happy-path extraction rules in `references/happy-path-extraction.md`.
+- `qa-quincey-manual-headless-testing` (migrated, was `skills/qa-headless/`): same backend-feature QA workflow as before, now loading `shared/core.md` at Step 0.5 and writing artifacts under `.gstack/qa-quincey/headless-reports/` and `.gstack/qa-quincey/headless-golden/` (was `.gstack/qa-headless-reports/` and `.gstack/qa-headless/golden/`). Version bumped to 2.0.0 because the path change and slash-command rename are breaking.
+
+Deleted: `skills/qa-quincey-browser/` (the labeled-Chromium-only skill; its scope is now subsumed by the flagship's autonomous browser-driving workflow) and `skills/qa-headless/` (moved into the bundle). Stale `~/.claude/skills/qa-quincey-browser` and `~/.claude/skills/qa-headless` symlinks were removed and `./install` regenerated the new bundle symlinks. No alias left behind for `/qa-headless` per "full refactor" intent; users invoking the old name will get an unknown-skill error and will need to retype.
+
+Design intent: QA Quincey is an agent concept that will accrete sibling skills (mobile, accessibility, performance regression). The bundle gives them one identity file to share so persona and report shape stay consistent. Same pattern as pm-penny. Decided in a /handoff sidequest started from the per-person-memory deploy session; alignment questions answered: AI autonomous (not human-driven, not hybrid), AI narrative visual diff (not pixel diff).
+
 ### `[skill][coderabbit-config]` Added, rescued from orphan state
 New skill: generates tailored `.coderabbit.yaml` per repo (inspects languages, monorepo shape, generated/vendored dirs, lifts conventions from CLAUDE.md/AGENTS.md). Originally created by a sibling session directly under `~/.claude/skills/coderabbit-config/`, which meant it wouldn't survive a fresh clone of any repo and wasn't published anywhere. Moved into this repo's `skills/` so it's installable via the standard `./install` symlink flow. Picked gstack-extensions over mutwo because the user explicitly chose it; the skill has no gstack-specific deps so mutwo would also have fit. Shipped via PR #8.
 

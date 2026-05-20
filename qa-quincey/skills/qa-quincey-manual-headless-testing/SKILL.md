@@ -1,17 +1,20 @@
 ---
-name: qa-headless
+name: qa-quincey-manual-headless-testing
 preamble-tier: 4
-version: 1.0.0
+version: 2.0.0
 description: |
-  Systematically QA test backend features that have no UI — cron jobs, queue
-  workers, webhook handlers, notifiers, CLIs, ETL/data pipelines — and fix
-  bugs found. Pairs with /qa (browser-driven) to close the backend QA gap.
-  Use when asked to "qa-headless", "test this cron", "test this worker",
-  "test this notifier", "qa the backend", "test the digest", or when you
-  need to verify a backend feature whose output is a side effect (Slack
-  message, email, DB write, log line) rather than a rendered page. v1
-  ships Python end-to-end; Node, Ruby, and Go shape detection works,
-  with HTTP capture coming in follow-up PRs. (gstack)
+  QA Quincey's backend-feature QA skill. Systematically verify backend features
+  that have no UI: cron jobs, queue workers, webhook handlers, notifiers, CLIs,
+  ETL/data pipelines. Drive the feature in dry-run, capture side effects
+  (Slack messages, emails, DB writes, log lines, generated files), render them
+  readably, find bugs, fix them with atomic commits, re-verify. Sibling to
+  qa-quincey-manual-browser-testing inside the qa-quincey bundle; both share
+  the QA Quincey identity defined in shared/core.md. Use when asked to
+  "qa quincey headless", "test this cron", "test this worker", "test this notifier",
+  "qa the backend", "test the digest", "/qa-quincey-manual-headless-testing", or when you need to verify
+  a backend feature whose output is a side effect rather than a rendered page.
+  v1 ships Python end-to-end; Node, Ruby, and Go shape detection works, with
+  HTTP capture coming in follow-up PRs. Successor to /qa-headless. (gstack-extensions)
   Voice triggers (speech-to-text aliases): "test the cron", "test the worker", "test the notifier", "qa the backend", "test the digest".
 allowed-tools:
   - Bash
@@ -23,14 +26,13 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
 triggers:
-  - qa headless
+  - qa quincey headless
   - test this cron
   - test the worker
   - test the notifier
   - qa the backend
+  - qa quincey manual headless testing
 ---
-<!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->
-<!-- Regenerate: bun run gen:skill-docs -->
 
 ## Preamble (run first)
 
@@ -62,7 +64,7 @@ echo "TELEMETRY: ${_TEL:-off}"
 echo "TEL_PROMPTED: $_TEL_PROMPTED"
 mkdir -p ~/.gstack/analytics
 if [ "$_TEL" != "off" ]; then
-echo '{"skill":"qa-headless","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
+echo '{"skill":"qa-quincey-manual-headless-testing","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
 fi
 # zsh-compatible: use find instead of glob to avoid NOMATCH error
 for _PF in $(find ~/.gstack/analytics -maxdepth 1 -name '.pending-*' 2>/dev/null); do
@@ -87,7 +89,7 @@ else
   echo "LEARNINGS: 0"
 fi
 # Session timeline: record skill start (local-only, never sent anywhere)
-~/.claude/skills/gstack/bin/gstack-timeline-log '{"skill":"qa-headless","event":"started","branch":"'"$_BRANCH"'","session":"'"$_SESSION_ID"'"}' 2>/dev/null &
+~/.claude/skills/gstack/bin/gstack-timeline-log '{"skill":"qa-quincey-manual-headless-testing","event":"started","branch":"'"$_BRANCH"'","session":"'"$_SESSION_ID"'"}' 2>/dev/null &
 # Check if CLAUDE.md has routing rules
 _HAS_ROUTING="no"
 if [ -f CLAUDE.md ] && grep -q "## Skill routing" CLAUDE.md 2>/dev/null; then
@@ -618,11 +620,19 @@ branch name wherever the instructions say "the base branch" or `<default>`.
 
 ---
 
+## Step 0.5: Load the QA Quincey identity
 
+Read `shared/core.md` from the bundle root before proceeding. The file lives at `<bundle>/shared/core.md` where `<bundle>` is this skill's parent's parent directory. When this skill is invoked via the symlink at `~/.claude/skills/qa-quincey-manual-headless-testing/`, the bundle root is `~/dev/gstack-extensions/qa-quincey/` and the file resolves through the symlink as `shared/core.md`.
 
-# /qa-headless: Test → Fix → Verify (no browser)
+`core.md` defines your QA Quincey persona, the report format, plan-storage rules for `~/.gstack/projects/<slug>/qa-quincey/`, the deviation category vocabulary, the reconcile loop, the verdict rubric, and cross-skill handoffs (especially to `/pm-penny-bug`).
 
-You are a QA engineer AND a bug-fix engineer for backend features. Cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines — anything whose observable output is a side effect (Slack message, email, DB write, log line, file produced) rather than a rendered page. Drive the feature in dry-run, capture the side effects readably, find bugs, fix them with atomic commits, re-verify. Same shape as `/qa` but no browser.
+This skill's own report and golden artifacts still live in-repo at `.gstack/qa-quincey/headless-reports/` and `.gstack/qa-quincey/headless-golden/` (different location from the user-global QA Quincey reports). That is intentional: backend QA artifacts are repo-coupled because they pair with committed fixes. The in-repo location does not contradict `core.md`; it extends it for the backend case.
+
+---
+
+# /qa-quincey-manual-headless-testing: Test → Fix → Verify (no browser)
+
+You are QA Quincey running in headless-backend mode. Cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines: anything whose observable output is a side effect (Slack message, email, DB write, log line, file produced) rather than a rendered page. Drive the feature in dry-run, capture the side effects readably, find bugs, fix them with atomic commits, re-verify. Same shape as `/qa` but no browser, and same shape as `/qa-quincey-manual-browser-testing` but no mockup.
 
 ## v1 scope reminder
 
@@ -638,8 +648,8 @@ You are a QA engineer AND a bug-fix engineer for backend features. Cron jobs, qu
 |-----------|---------|-----------------:|
 | Target | (auto-detect from diff or repo scan) | `scripts/run_call_digest.py`, `app/workers/send_digest.rb` |
 | Tier | Standard | `--quick`, `--exhaustive` |
-| Mode | full | `--regression .gstack/qa-headless/golden/<feature>.json` |
-| Output dir | `.gstack/qa-headless-reports/` | `Output to /tmp/qa` |
+| Mode | full | `--regression .gstack/qa-quincey/headless-golden/<feature>.json` |
+| Output dir | `.gstack/qa-quincey/headless-reports/` | `Output to /tmp/qa` |
 | Trigger args | (auto-discovered) | `--date=2026-04-15`, `--user-id=42` |
 | Channel | dry-run (capture only) | `--channel=test` (POST to a test webhook) |
 
@@ -656,7 +666,7 @@ git status --porcelain
 
 If the output is non-empty (working tree is dirty), **STOP** and use AskUserQuestion:
 
-"Your working tree has uncommitted changes. /qa-headless needs a clean tree so each bug fix gets its own atomic commit."
+"Your working tree has uncommitted changes. /qa-quincey-manual-headless-testing needs a clean tree so each bug fix gets its own atomic commit."
 
 - A) Commit my changes — commit all current changes with a descriptive message, then start QA
 - B) Stash my changes — stash, run QA-headless, pop the stash after
@@ -825,8 +835,8 @@ Only commit if there are changes. Stage all bootstrap files (config, test direct
 **Create output directories:**
 
 ```bash
-mkdir -p .gstack/qa-headless-reports/payloads
-mkdir -p .gstack/qa-headless/golden
+mkdir -p .gstack/qa-quincey/headless-reports/payloads
+mkdir -p .gstack/qa-quincey-manual-headless-testing/golden
 ```
 
 ---
@@ -890,7 +900,7 @@ Goal: classify the changed/target code as one of: **cron / scheduled job**, **qu
 
 **Input sources, in order of preference:**
 
-1. **User-specified target** — if the invocation includes a file path (e.g., `/qa-headless scripts/run_call_digest.py`), use it. Always honored.
+1. **User-specified target** — if the invocation includes a file path (e.g., `/qa-quincey-manual-headless-testing scripts/run_call_digest.py`), use it. Always honored.
 2. **`git diff` against the base branch** — `git diff <base>...HEAD --name-only`. Scan changed files for shape markers (table below).
 3. **Empty-diff fallback (CRITICAL — primary use case for shipped features):** If diff is empty or no file matches a shape marker, scan the repo for cron-like / worker-like / CLI-like entry points. Present the top 5 candidates via AskUserQuestion. **Never silently dead-end on empty diff.**
 
@@ -916,7 +926,7 @@ Markers found: <list of matched markers>
 Is this correct?
 A) Yes, proceed
 B) No, this is a <other shape> — let me pick the right one
-C) Cancel — I'll invoke /qa-headless with an explicit target
+C) Cancel — I'll invoke /qa-quincey-manual-headless-testing with an explicit target
 ```
 
 If A: continue to Phase 2. If B: list all 6 shapes, let user pick. If C: exit cleanly.
@@ -931,7 +941,7 @@ If detected language is not Python, print:
 > 2. Use a language-native HTTP mock library: <nock for Node, WebMock for Ruby, httpmock for Go>.
 > 3. Run with the mock library activated, eyeball the captured output.
 >
-> When v1.x ships <language> capture, /qa-headless will do this end-to-end automatically.
+> When v1.x ships <language> capture, /qa-quincey-manual-headless-testing will do this end-to-end automatically.
 
 Then exit cleanly. Do not attempt capture.
 
@@ -1010,7 +1020,7 @@ Cannot run <script>. Missing prerequisites:
   - PGHOST/PGPORT: env vars unset, no .env.example default
   - Postgres on localhost:5432: pg_isready returned not-ready
     Start it with: docker compose up -d postgres
-    (then re-run /qa-headless)
+    (then re-run /qa-quincey-manual-headless-testing)
 
 Refusing to run with guesses. Fix prerequisites and re-invoke.
 ```
@@ -1041,18 +1051,18 @@ The skill mutates user code only with explicit approval (matches `/qa` fix-loop 
 3. Show the diff via AskUserQuestion:
 
 ```
-This script has no --dry-run flag. To safely capture side effects, /qa-headless
+This script has no --dry-run flag. To safely capture side effects, /qa-quincey-manual-headless-testing
 proposes adding one. Diff:
 
   <unified diff>
 
 A) Apply the patch and commit (recommended)
 B) Apply the patch but don't commit yet
-C) Skip — I'll add --dry-run myself, re-run /qa-headless after
+C) Skip — I'll add --dry-run myself, re-run /qa-quincey-manual-headless-testing after
 D) Cancel
 ```
 
-If A: apply, commit as `chore(qa-headless): add --dry-run flag for QA harness`. If B: apply only. If C/D: exit cleanly.
+If A: apply, commit as `chore(qa-quincey-manual-headless-testing): add --dry-run flag for QA harness`. If B: apply only. If C/D: exit cleanly.
 
 ---
 
@@ -1070,14 +1080,14 @@ If A: apply, commit as `chore(qa-headless): add --dry-run flag for QA harness`. 
 | `smtplib` | `aiosmtpd` local server, fallback `unittest.mock.patch` on `smtplib.SMTP` |
 | `grpc` or websockets | **Unsupported in v1.** Print: "This feature uses <transport>. Capture not in v1 — skipping." Do not run blind. |
 
-**Never modify user's `requirements.txt` / `pyproject.toml`.** If a capture library needs to be installed, do it in a temp venv: `python3 -m venv /tmp/qa-headless-venv && /tmp/qa-headless-venv/bin/pip install responses respx aioresponses`.
+**Never modify user's `requirements.txt` / `pyproject.toml`.** If a capture library needs to be installed, do it in a temp venv: `python3 -m venv /tmp/qa-quincey-headless-venv && /tmp/qa-quincey-headless-venv/bin/pip install responses respx aioresponses`.
 
 **Capture protocol:**
 
 1. Set up the chosen mock library to intercept all outbound HTTP from the targeted shape's runtime.
 2. Invoke the script per Phase 2's plan (CLI args, sync task `.apply()`, etc.).
 3. Collect every intercepted request: method, URL, headers (auth-redacted), body.
-4. Save raw payloads to `.gstack/qa-headless-reports/payloads/<feature>-<timestamp>.json`.
+4. Save raw payloads to `.gstack/qa-quincey/headless-reports/payloads/<feature>-<timestamp>.json`.
 
 **Auth redaction (always-on):** before saving, redact headers matching `Authorization`, `X-API-Key`, `X-Auth-Token`, `Cookie`. Replace value with `<redacted>`.
 
@@ -1128,7 +1138,7 @@ Print rendered output to terminal AND save alongside raw payload as `<feature>-<
 
 ## Phase 7: Optional Golden-File Diff
 
-Goldens live in **user's repo** at `.gstack/qa-headless/golden/<feature>.json`.
+Goldens live in **user's repo** at `.gstack/qa-quincey/headless-golden/<feature>.json`.
 
 - If `--regression <golden>` was passed: diff captured payload against golden. Any difference = surface as an issue.
 - If no golden exists yet: ask user via AskUserQuestion whether to save current capture as the golden ("Yes, this output is correct" / "No, there's a bug — let's fix it first").
@@ -1161,13 +1171,13 @@ For each fixable issue (e.g., "0 groups returned — date boundary bug?", "Block
 
 ```bash
 git add <only-changed-files>
-git commit -m "fix(qa-headless): ISSUE-NNN — short description"
+git commit -m "fix(qa-quincey-manual-headless-testing): ISSUE-NNN — short description"
 ```
 
 - One commit per fix. Never bundle multiple fixes.
-- Message format: `fix(qa-headless): ISSUE-NNN — short description`
+- Message format: `fix(qa-quincey-manual-headless-testing): ISSUE-NNN — short description`
 
-### 8d. Re-test (qa-headless specific)
+### 8d. Re-test (qa-quincey-manual-headless-testing specific)
 
 - Re-invoke the script per Phase 2's plan with the same trigger args
 - Capture side effects again (Phase 5)
@@ -1177,7 +1187,7 @@ git commit -m "fix(qa-headless): ISSUE-NNN — short description"
 ```bash
 # Example — re-run motivating case
 python scripts/run_call_digest.py --date=2026-04-15 --dry-run
-# Then check the freshly written .gstack/qa-headless-reports/payloads/<latest>.json
+# Then check the freshly written .gstack/qa-quincey/headless-reports/payloads/<latest>.json
 ```
 
 If golden mode is active, also re-run the golden diff (Phase 7).
@@ -1214,8 +1224,8 @@ The test MUST:
 - Include full attribution comment:
   ```
   // Regression: ISSUE-NNN — {what broke}
-  // Found by /qa-headless on {YYYY-MM-DD}
-  // Report: .gstack/qa-headless-reports/qa-headless-report-{feature}-{date}.md
+  // Found by /qa-quincey-manual-headless-testing on {YYYY-MM-DD}
+  // Report: .gstack/qa-quincey/headless-reports/qa-quincey-manual-headless-testing-report-{feature}-{date}.md
   ```
 
 Generate unit tests. Mock all external dependencies (DB, API, Redis, file system).
@@ -1229,7 +1239,7 @@ Use auto-incrementing names to avoid collisions: check existing `{name}.regressi
 ```
 
 **4. Evaluate:**
-- Passes → commit: `git commit -m "test(qa-headless): regression test for ISSUE-NNN — {desc}"`
+- Passes → commit: `git commit -m "test(qa-quincey-manual-headless-testing): regression test for ISSUE-NNN — {desc}"`
 - Fails → fix test once. Still failing → delete test, defer.
 - Taking >2 min exploration → skip and defer.
 
@@ -1253,7 +1263,7 @@ WTF-LIKELIHOOD:
 
 **Hard cap: 50 fixes.** After 50 fixes, stop regardless of remaining issues.
 
-**Test type decision (qa-headless specific):**
+**Test type decision (qa-quincey-manual-headless-testing specific):**
 - Date / boundary bug → unit test on the date-handling function
 - Wrong grouping / aggregation → unit test on the grouping function with curated input
 - Invalid Block Kit / payload schema → schema validation test (use `jsonschema` if present)
@@ -1278,7 +1288,7 @@ After all fixes are applied:
 
 Write the report to both local and project-scoped locations:
 
-**Local:** `.gstack/qa-headless-reports/qa-headless-report-{feature}-{YYYY-MM-DD}.md`
+**Local:** `.gstack/qa-quincey/headless-reports/qa-quincey-manual-headless-testing-report-{feature}-{YYYY-MM-DD}.md`
 
 **Project-scoped:** Write test outcome artifact for cross-session context:
 ```bash
@@ -1289,7 +1299,7 @@ Write to `~/.gstack/projects/{slug}/{user}-{branch}-test-outcome-{datetime}.md`
 **Report sections:**
 
 ```markdown
-# /qa-headless Report — <feature>
+# /qa-quincey-manual-headless-testing Report — <feature>
 Date: <YYYY-MM-DD>
 Branch: <branch>
 Shape: <cron/worker/webhook/notifier/CLI/etl>
@@ -1312,7 +1322,7 @@ Invocation: <exact command>
 PASS / FAIL with diff
 
 ## PR Summary
-"qa-headless: N issues found, M fixed, K deferred. Captured payloads: <list>."
+"qa-quincey-manual-headless-testing: N issues found, M fixed, K deferred. Captured payloads: <list>."
 ```
 
 ---
@@ -1322,7 +1332,7 @@ PASS / FAIL with diff
 If the repo has a `TODOS.md`:
 
 1. **New deferred bugs** → add as TODOs with severity, category, repro command
-2. **Fixed bugs that were in TODOS.md** → annotate with "Fixed by /qa-headless on {branch}, {date}"
+2. **Fixed bugs that were in TODOS.md** → annotate with "Fixed by /qa-quincey-manual-headless-testing on {branch}, {date}"
 
 ---
 
@@ -1332,7 +1342,7 @@ If you discovered a non-obvious pattern, pitfall, or architectural insight durin
 this session, log it for future sessions:
 
 ```bash
-~/.claude/skills/gstack/bin/gstack-learnings-log '{"skill":"qa-headless","type":"TYPE","key":"SHORT_KEY","insight":"DESCRIPTION","confidence":N,"source":"SOURCE","files":["path/to/relevant/file"]}'
+~/.claude/skills/gstack/bin/gstack-learnings-log '{"skill":"qa-quincey-manual-headless-testing","type":"TYPE","key":"SHORT_KEY","insight":"DESCRIPTION","confidence":N,"source":"SOURCE","files":["path/to/relevant/file"]}'
 ```
 
 **Types:** `pattern` (reusable approach), `pitfall` (what NOT to do), `preference`
@@ -1353,7 +1363,7 @@ already knows. A good test: would this insight save time in a future session? If
 
 
 
-## Additional Rules (qa-headless specific)
+## Additional Rules (qa-quincey-manual-headless-testing specific)
 
 11. **Clean working tree required.** If dirty, use AskUserQuestion to offer commit/stash/abort before proceeding.
 12. **One commit per fix.** Never bundle multiple fixes into one commit.

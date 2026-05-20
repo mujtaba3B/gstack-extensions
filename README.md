@@ -10,21 +10,20 @@ cd ~/dev/gstack-extensions
 ./install
 ```
 
-Then restart your Claude Code session. Skills become invokable as `/pr-watcher`, `/qa-headless`, etc.
+Then restart your Claude Code session. Skills become invokable as `/pr-watcher`, `/qa-quincey-manual-browser-testing`, etc.
 
 ## What's included
 
 Standalone skills (`skills/`):
 
 - **`/pr-watcher`** . Foreground watcher that pairs the main agent (dispatcher and fix-applier) with a passive polling subagent (sensor): the sensor blocks silently in one Agent call until CodeRabbit posts a settled round of feedback, then returns a single JSON blob; the main agent classifies, fixes, tests, commits, pushes, and replies on the PR before spawning the next sensor. Invoke manually after `/ship`.
-- **`/qa-headless`** . Systematic QA testing of backend features that have no UI (cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL pipelines).
-- **`/qa-quincey-browser`** . Visible Chromium with "QA Quincey | <page title>" prefix on every tab, kept in place across navigations by a small background poll loop. Same connect flow as `/open-gstack-browser`; the prefix makes the QA window visually distinct from regular dogfood browsing.
 - **`/coderabbit-config`** . Generates a tailored `.coderabbit.yaml` for the current repo. Detects languages, monorepo shape, generated/vendored dirs, and lifts conventions from CLAUDE.md/AGENTS.md into `path_filters`, `path_instructions`, and `tools`. Wraps the `coderabbit` CLI for optional live validation.
 
 Bundles (top-level dirs with their own `skills/` and `shared/`), skill groups that share common context files:
 
 - **PM Penny** (`pm-penny/`): `/pm-penny-feature`, `/pm-penny-bug`, `/pm-penny-next-issue`. Product manager who turns ideas, bug reports, and "what should I work on next?" into well-structured GitHub issues. Shares identity, label conventions, scope/repro gates, and fast-mode logic across the three sub-skills via `pm-penny/shared/*.md`.
 - **Feature Frank** (`feature-frank/`): `/feature-frank-pr-feedback`. Engineer who works through PR review comments, patches the code, and captures durable lessons.
+- **QA Quincey** (`qa-quincey/`): `/qa-quincey-manual-browser-testing`, `/qa-quincey-manual-headless-testing`. Manual QA specialist who verifies one defined flow against the spec or mockup. Browser sub-skill drives the gstack browse daemon autonomously and AI-compares screenshots against Pencil mockups; headless sub-skill (successor to the prior `/qa-headless`) verifies backend features by capturing side effects. Shares persona, deviation vocabulary, plan/report storage, and reconcile loop via `qa-quincey/shared/core.md`.
 
 ## How it works
 
