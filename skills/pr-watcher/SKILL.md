@@ -102,12 +102,12 @@ Why this shape: a CR comment with no human follow-up is exactly the case the wat
 
 ```bash
 # Fresh-watch detection: all three baselines are empty arrays.
-FRESH=0
+IS_FRESH=1
 for f in issue_comments reviews review_comments; do
-  [[ "$(jq 'length' "$STATE_DIR/baseline_${f}.json")" == "0" ]] || { FRESH=1; break; }
+  [[ "$(jq 'length' "$STATE_DIR/baseline_${f}.json")" == "0" ]] || { IS_FRESH=0; break; }
 done
 
-if [[ "$FRESH" == "0" ]]; then
+if [[ "$IS_FRESH" == "1" ]]; then
   # Note on pagination: every gh-api call below caps at per_page=100 and the
   # GraphQL reviewThreads query caps at first:100 / first:50 comments per
   # thread. On a PR with >100 CR items across one stream (or a thread with
