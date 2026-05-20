@@ -8,6 +8,9 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ## 2026-05-20
 
+### `[skill][coderabbit-config]` Added, rescued from orphan state
+New skill: generates tailored `.coderabbit.yaml` per repo (inspects languages, monorepo shape, generated/vendored dirs, lifts conventions from CLAUDE.md/AGENTS.md). Originally created by a sibling session directly under `~/.claude/skills/coderabbit-config/`, which meant it wouldn't survive a fresh clone of any repo and wasn't published anywhere. Moved into this repo's `skills/` so it's installable via the standard `./install` symlink flow. Picked gstack-extensions over mutwo because the user explicitly chose it; the skill has no gstack-specific deps so mutwo would also have fit. Shipped via PR #8.
+
 ### `[skill][pr-watcher]` Fresh-watch baselines now filter to addressed CR items only
 Old behavior was dead on arrival in the common case: `/ship` opens a PR, CodeRabbit posts a review, user invokes `/pr-watcher`, the skill silently baselined every existing CR comment ("watch from now forward only"), the sensor returned `already_settled`, and the user had to address the comments by hand anyway. The "watch forward" framing made sense for long-lived PRs with backlogs the user had already triaged, but that case turned out to be hypothetical: the user always either replies to a CR comment when triaging or pushes a commit referencing its URL.
 
