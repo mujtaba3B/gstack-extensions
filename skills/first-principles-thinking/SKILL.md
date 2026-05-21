@@ -113,43 +113,9 @@ After the seven-step walk is done, ask the user which artifact behavior they wan
 
 Never auto-write. The cost of polluting a plan file with speculative reasoning is higher than the cost of asking once.
 
-## Worked examples
+## Reference material
 
-### Example 1: SpaceX rockets
+Two sidecar files live in `references/` and load on demand:
 
-1. **Goal.** Humans living on Mars (binary endpoint). The sub-goal that unlocks it: launches cheap enough that round-trip Mars missions are economically feasible.
-2. **Success signal.** A booster lands, gets refueled, and launches again the same week; cost per kg to LEO drops by an order of magnitude.
-3. **Hard constraints.** Raw materials cost (~$7M at the time). Physics of escape velocity. Regulatory clearance for launches.
-4. **Assumed constraints.** (a) Rockets are single-use. (b) Aerospace must be built by traditional contractors. (c) Each part must be sourced from a separate specialty vendor.
-5. **Current path.** $20M/launch via traditional aerospace contractors with disposable boosters. "Why" = how the industry has always done it.
-6. **Constraint-class attacks.**
-   - *Attack the assumed-constraint "single-use"* => reusable boosters that land vertically.
-   - *Attack the actor "traditional contractors"* => vertically integrate; build engines, avionics, software in-house.
-   - *Attack the unit "one part per vendor"* => mass-produce identical components (Raptor engine commonality).
-7. **Pressure-test.** Traditional contractors exist partly for real reasons: certification, insurance, supply-chain redundancy. Those are tractable when you accept upfront investment in your own certification track. Reusable boosters cost more per first launch (heavier, more complex) and need refurb infrastructure, but those costs amortize over flights. Surviving reframes: all three, with phased rollout.
-
-### Example 2: Neuralink surgeons
-
-1. **Goal.** 10,000 implants in living humans (numeric).
-2. **Success signal.** 10,000 patients with safely installed, functioning implants within the target timeframe; surgical complication rate at or below baseline neurosurgery norms.
-3. **Hard constraints.** Total population of qualified neurosurgeons globally is a small number (low five figures, working other things). Skull anatomy. FDA approval pathway.
-4. **Assumed constraints.** (a) Implantation requires a human surgeon. (b) Each implant requires bespoke per-patient planning. (c) The procedure must look like existing neurosurgery.
-5. **Current path.** Industry default: a trained neurosurgeon performs each procedure.
-6. **Constraint-class attacks.**
-   - *Attack the assumed-constraint "human surgeon required"* => build a surgical robot that performs the implantation; surgeon only supervises.
-   - *Attack the goal scale (lower to 100 elite cases)* => REJECTED at pressure-test, violates the goal.
-   - *Attack the unit "bespoke per-patient planning"* => standardize the procedure to within a narrow envelope so robot software handles the variation.
-7. **Pressure-test.** The robot has real risks: training data, regulatory novelty, failure modes that surgeons handle by judgment. But those are tractable engineering problems. The "use more surgeons" path is genuinely not tractable: you cannot manufacture neurosurgeons at the required rate. Surviving reframes: robot + standardized procedure.
-
-## Anti-patterns
-
-These are the failure modes this skill is most likely to produce. Watch for them in your own output and call them out if you catch yourself.
-
-- **False floors.** Inventing a clean-sounding baseline ("minimum reviewer time is 30 seconds") when the real constraint is trust, attention, coordination, or incentives. If you cannot name the actual physics / economics / math of the floor, do not include one. Step 3 is optional for a reason.
-- **Numeric fetish.** Distorting a qualitative goal ("a code review experience reviewers actively want to use") into a shallow metric ("median review latency") just to get a number into step 1. The number is not the point; the crisp endpoint is.
-- **Gap theater.** Calling out a floor-vs-current gap that has no concrete attack on it. A profound-looking delta that does not produce a reframe is just rhetorical theater. If step 3 does not feed step 6, drop step 3.
-- **Reframe homogeneity.** Three reframes that are all the same constraint class (paraphrases) is a *failed step 6*, not a successful one. Surface it as a failure ("I can only find one real class of attack here") rather than padding the list.
-- **Dogma misses.** The most common dogma is the *goal itself*, not the implementation. Always check whether step 1's goal is an assumption inherited from the current frame. If you skip this, the reframe will be cosmetic.
-- **Skipping pressure-test.** Step 7 is mandatory. A reframe without a real-reason check is contrarianism, not first-principles thinking. The pressure-test is what separates the Neuralink robot from "we do not need pilots".
-- **Artifact overreach.** Do not auto-write to any file. Chat first; ask before writing. Even an "obviously useful" appendix to a plan doc is a write the user did not approve.
-- **Pretending to know.** If you do not have enough context to propose a credible goal or current path, say so and switch to Deep mode (one question at a time). A confidently wrong reframe wastes more time than the question would have.
+- **`references/examples.md`** — two worked end-to-end walks (SpaceX rockets, Neuralink surgeons). Read this when you want to see the seven-step flow executed on a concrete problem, especially when calibrating what a "real" hard constraint vs an assumed constraint looks like, or what constraint-class diversity looks like in step 6.
+- **`references/anti-patterns.md`** — failure modes this skill is most likely to produce (false floors, numeric fetish, gap theater, reframe homogeneity, dogma misses, skipping pressure-test, artifact overreach, pretending to know). Read this before generating output for steps 3, 6, or 7. If you catch one of these in your own draft, surface it explicitly rather than papering over it.
