@@ -6,6 +6,17 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-21
+
+### `[skill][first-principles-thinking]` Added; goal-first reframe coaching skill
+New skill at `skills/first-principles-thinking/`. Triggered by `/first-principles-thinking` or phrases like "first principles this", "reframe from first principles", "challenge the assumptions", "Musk this", "what's the ultimate goal here". Operates on three input modes (in-flight conversation, referenced plan file, standalone problem statement), auto-detected. Drives a seven-step walk: goal, success signal, hard constraints, assumed constraints, current path, constraint-class attacks (3+ reframes each attacking a different class), pressure-test. Modeled on the SpaceX rocket-floor and Neuralink no-surgeons examples; both worked examples ship in the skill body.
+
+Default operating mode is Light (agent drafts each step, user corrects); escalates to Deep (Socratic, one question per turn) only when user pushes back or context is missing. No upfront mode-pick gate. Artifact behavior is chat-only by default; asks before writing to a plan file or `FIRST-PRINCIPLES.md`.
+
+Design history worth keeping: original draft had a six-step flow centered on "find the floor" as a mandatory step. Codex second opinion pushed back hard on this (false-floors risk, numeric-fetish risk, gap-theater on problems with no real floor) and reframed it as "separate goal, constraints, assumptions, and solution path" with floor as an optional subtype of hard constraints. The seven-step flow and the constraint-class-diversity rule for reframes both came from that critique. Decision: incorporate, ship only SpaceX + Neuralink examples (user did not have a third real one yet). No evals (judgment skill, not verifiable). No CHANGELOG.md or references/ yet (lean v1).
+
+---
+
 ## 2026-05-20
 
 ### `[bundle][qa-quincey]` Created QA Quincey bundle; absorbed qa-headless and replaced qa-quincey-browser
