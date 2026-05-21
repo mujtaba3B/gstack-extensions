@@ -18,6 +18,7 @@ Standalone skills (`skills/`):
 
 - **`/pr-watcher`** . Foreground watcher that pairs the main agent (dispatcher and fix-applier) with a passive polling subagent (sensor): the sensor blocks silently in one Agent call until CodeRabbit posts a settled round of feedback, then returns a single JSON blob; the main agent classifies, fixes, tests, commits, pushes, and replies on the PR before spawning the next sensor. Invoke manually after `/ship`.
 - **`/coderabbit-config`** . Generates a tailored `.coderabbit.yaml` for the current repo. Detects languages, monorepo shape, generated/vendored dirs, and lifts conventions from CLAUDE.md/AGENTS.md into `path_filters`, `path_instructions`, and `tools`. Wraps the `coderabbit` CLI for optional live validation.
+- **`/first-principles-thinking`** . Goal-first reframe coaching skill. Interrupts in-flight optimization-inside-an-inherited-frame with a seven-step walk: goal, success signal, hard constraints, assumed constraints, current path, constraint-class attacks, pressure-test. Light mode by default; escalates to Deep (Socratic, one-question-per-turn) on pushback or missing context. Modeled on the SpaceX rocket-floor and Neuralink no-surgeons reframes.
 
 Bundles (top-level dirs with their own `skills/` and `shared/`), skill groups that share common context files:
 
