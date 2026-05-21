@@ -28,6 +28,7 @@ Per `CLAUDE.md`: keep this updated when artifacts are created, renamed, or depre
 |---|---|
 | `skills/pr-watcher/` | `/pr-watcher`. Foreground watcher for CodeRabbit feedback on a GitHub PR. Dispatcher (main agent) + sensor (polling subagent). Main applies fixes, runs tests, commits, pushes, replies. v2 architecture (see skill's CHANGELOG.md). |
 | `skills/coderabbit-config/` | `/coderabbit-config`. Generates a tailored `.coderabbit.yaml` for the current repo. Detects languages, monorepo shape, generated/vendored dirs, lifts conventions from CLAUDE.md/AGENTS.md. Wraps the `coderabbit` CLI for optional live validation. |
+| `skills/first-principles-thinking/` | `/first-principles-thinking`. Goal-first reframe coaching. Seven-step walk (goal, success signal, hard constraints, assumed constraints, current path, constraint-class attacks, pressure-test). Light mode by default. Modeled on SpaceX (rocket-floor) and Neuralink (no-surgeons) examples. No evals (judgment skill). |
 
 ## Bundles (sub-skills with shared context)
 

@@ -6,3 +6,6 @@
 # stays out of git. (The real defense is absolute paths in the skill code.)
 /pm-penny/*.json
 /pm-penny/fast-learnings.md
+
+# Skill-creator description-optimization workspaces (per-skill, ephemeral)
+/skills/*-workspace/
