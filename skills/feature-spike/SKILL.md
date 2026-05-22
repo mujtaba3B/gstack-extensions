@@ -126,7 +126,7 @@ Stop conditions (any one of these = land the verdict now, do not keep exploring)
 
 The canonical SPIKE.md structure (the stub from Phase 2 grows into this):
 
-```markdown
+````markdown
 THROWAWAY SPIKE: production guidelines intentionally suspended. Do not refactor, abstract, harden, test, or document beyond what is needed to answer the spike outcome. Do not promote this code directly to production.
 
 # Spike: <one-line outcome restated>
@@ -157,7 +157,7 @@ When this writeup is captured (copied into a plan, pasted into a doc, or just ab
 git worktree remove <path>      # if a worktree was used
 git branch -D spike/<slug>
 ```
-```
+````
 
 ## Hand-off
 
