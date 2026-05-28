@@ -3,7 +3,7 @@
 # Leaves gstack and any unrelated skills untouched.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$HOME/.claude/skills"
 
 removed=0

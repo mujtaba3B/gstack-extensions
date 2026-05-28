@@ -7,7 +7,7 @@
 # Idempotent: re-run after pulling updates.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$HOME/.claude/skills"
 mkdir -p "$TARGET"
 
