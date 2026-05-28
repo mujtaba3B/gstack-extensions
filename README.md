@@ -7,7 +7,7 @@ Personal skills layered on top of [gstack](https://github.com/garrytan/gstack), 
 ```
 git clone <this-repo> ~/dev/gstack-extensions
 cd ~/dev/gstack-extensions
-./install
+./bin/install
 ```
 
 Then restart your Claude Code session. Skills become invokable as `/pr-watcher`, `/qa-quincey-manual-browser-testing`, etc.
@@ -29,7 +29,7 @@ Bundles (top-level dirs with their own `skills/` and `shared/`), skill groups th
 
 ## How it works
 
-`./install` symlinks every directory under `skills/` AND every sub-skill under `<bundle>/skills/` into `~/.claude/skills/`. Claude Code scans that directory at session start and discovers any directory containing a `SKILL.md`. Bundle sub-skills resolve their shared files (e.g. `shared/core.md`) relative to the bundle root, which works through the symlink.
+`./bin/install` symlinks every directory under `skills/` AND every sub-skill under `<bundle>/skills/` into `~/.claude/skills/`. Claude Code scans that directory at session start and discovers any directory containing a `SKILL.md`. Bundle sub-skills resolve their shared files (e.g. `shared/core.md`) relative to the bundle root, which works through the symlink.
 
 This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never touches it. gstack and these extensions coexist as peers in the flat `~/.claude/skills/` namespace.
 
@@ -38,13 +38,13 @@ This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never to
 ```
 cd ~/dev/gstack-extensions
 git pull
-./install   # idempotent; refreshes links and cleans stale ones
+./bin/install   # idempotent; refreshes links and cleans stale ones
 ```
 
 ## Uninstall
 
 ```
-./uninstall
+./bin/uninstall
 ```
 
 Removes only symlinks that point into this repo. Leaves gstack and any other skills alone.
@@ -54,11 +54,11 @@ Removes only symlinks that point into this repo. Leaves gstack and any other ski
 For a standalone skill:
 
 1. Create `skills/<name>/SKILL.md` with valid frontmatter (`name`, `description`).
-2. Run `./install`.
+2. Run `./bin/install`.
 3. Restart Claude Code.
 
 For a bundle (a group of sub-skills that share `shared/*.md` context):
 
 1. Create `<bundle>/skills/<sub-skill>/SKILL.md` for each sub-skill at the repo top level (sibling to `skills/`).
 2. Put shared context in `<bundle>/shared/`; sub-skills reference it as "from the bundle root".
-3. Run `./install`. Each sub-skill is symlinked into `~/.claude/skills/` directly (no bundle-name prefix on the invocation).
+3. Run `./bin/install`. Each sub-skill is symlinked into `~/.claude/skills/` directly (no bundle-name prefix on the invocation).
