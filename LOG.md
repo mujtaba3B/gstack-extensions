@@ -6,6 +6,18 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ---
 
+## 2026-05-28
+
+### `[installer][layout]` Moved `install` / `uninstall` into `bin/` for cross-repo consistency
+
+Aligns this repo with `dxangels/claude-skills` (which had already grown a `bin/` dir for its 4-command installer tree: `install`, `uninstall`, `verify`, `test`). Rule applied: multi-command installer trees go under `bin/<verb>` extensionless, per GitHub's "Scripts to Rule Them All" shape; single-command repos (e.g. `mutwo-skills`) keep root `install.sh`. The split now has a principled reason instead of being accidental.
+
+Gotcha worth grepping later: `bin/install` and `bin/uninstall` both compute `REPO="$(cd "$(dirname "$0")" && pwd)"`, which previously resolved to the repo root because the script lived there. After the move it resolved to `bin/` itself, so `$REPO/skills/*` matched nothing and the installer silently completed with "Done." while linking zero skills. Fix: `REPO="$(cd "$(dirname "$0")/.." && pwd)"`. The first sanity run masked it because pre-existing symlinks from the prior root-installer run were still in `~/.claude/skills/`; only after `bin/uninstall` + reinstall did the new path actually exercise the logic.
+
+Verified end-to-end: 11 stale symlinks removed, 12 fresh links created. Codex review clean, CodeRabbit pass, merged as PR #13 (e773ed3).
+
+---
+
 ## 2026-05-21
 
 ### `[skill][feature-spike]` Added; pre-plan risk-discovery skill
