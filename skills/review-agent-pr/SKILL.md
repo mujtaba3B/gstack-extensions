@@ -62,6 +62,8 @@ gh pr view <N>   --repo <owner/name> --json reviews,comments
 
 Read the diff yourself first to form an independent picture. Note any claims in the PR body or self-review that you will need to verify (Step 4).
 
+Capture the PR author's login from the `author` field (e.g. `muthree-ai`). You will lead the posted comment with `@<login>` in Step 6 so the author, human or autonomous agent, is notified to pick up the feedback. This is the whole point for agent PRs: the mention is what closes the review loop back to the agent that opened the PR.
+
 To give the review lenses real surrounding-code context (not just the diff), you may check out the PR branch, but only when the current directory is a clone of the PR's repo, and protect the working state:
 
 1. Confirm cwd is the target repo: `git remote get-url origin` resolves to `owner/name`. If it does NOT (the user pasted a URL for a repo you are not sitting in), SKIP checkout entirely and review from `gh pr diff` plus `gh api` raw file reads. Never run `gh pr checkout` in an unrelated repo, it fails or pollutes that repo's refs.
@@ -112,6 +114,8 @@ Give the user a tight verdict first: **good to deploy or not yet, and why in one
 Draft a single review comment in this shape (model it on a strong manual review):
 
 ```markdown
+@<pr-author-login> reviewed below.
+
 ## Verdict: <one-line merge / don't-merge call>
 
 <one or two sentences on overall state; note if CI / cloud review passed but does not exercise the real risk>
@@ -132,7 +136,7 @@ Draft a single review comment in this shape (model it on a strong manual review)
 No merge until <condition>, verified live, not just asserted.
 ```
 
-Then **show the user the drafted comment and confirm before posting** (posting is outward-facing on GitHub). On approval, write the approved comment to a temp file and post it:
+Lead the comment with `@<pr-author-login>` (the login captured in Step 2) so the author is notified. Then **show the user the drafted comment and confirm before posting** (posting is outward-facing on GitHub). On approval, write the approved comment to a temp file and post it:
 
 ```bash
 cat > /tmp/review-agent-pr-comment.md <<'EOF'

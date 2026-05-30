@@ -8,6 +8,10 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 
 ## 2026-05-30
 
+### `[skill][review-agent-pr]` Lead the posted comment with an `@`-mention of the PR author
+
+Shipped v1 (#15) captured the PR author in Step 2's `gh pr view --json ... author` but only used it as context; the posted comment never tagged anyone. Surfaced while dogfooding on a real mutwo PR (#96, opened by `muthree-ai`): the review landed but the author got no notification, so for an autonomous-agent PR the review loop never closed back to the agent that could act on it. The mention IS the close-the-loop mechanism for agent PRs. Fix: capture the author login in Step 2 with a note explaining why, add `@<pr-author-login> reviewed below.` as the lead line of the Step 6 comment template, and add an explicit "lead with the mention" instruction at the posting step (before the confirm gate, so the user sees it in the draft). Also backfilled the already-posted #96 comment with `@muthree-ai` via `gh api -X PATCH .../issues/comments/<id>`. +5/-1 on SKILL.md.
+
 ### `[skill][review-agent-pr]` Added; review-only skill for agent-authored PRs
 
 New skill at `skills/review-agent-pr/`. Triggered by `/review-agent-pr <PR# | URL>` or phrases like "review this PR", "review the agent PR", "is this good to deploy?", "review MuThree's PR". Reviews a PR you did NOT author (the use case is autonomous-agent PRs from MuTwo/MuThree/etc.), ends in a quick chat verdict plus one structured comment posted via `gh pr comment` behind a confirm gate. Review-only: never merges, pushes, resolves conversations, or touches the assignee.
