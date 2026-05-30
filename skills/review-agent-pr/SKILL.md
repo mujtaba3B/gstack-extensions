@@ -111,7 +111,7 @@ Give the user a tight verdict first: **good to deploy or not yet, and why in one
 
 Draft a single review comment in this shape (model it on a strong manual review):
 
-```
+```markdown
 ## Verdict: <one-line merge / don't-merge call>
 
 <one or two sentences on overall state; note if CI / cloud review passed but does not exercise the real risk>

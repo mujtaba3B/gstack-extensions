@@ -9,6 +9,7 @@ Format: date-headed sections, topic-tagged entries. One line per decision; expan
 ## 2026-05-30
 
 ### `[skill][review-agent-pr]` Added; review-only skill for agent-authored PRs
+
 New skill at `skills/review-agent-pr/`. Triggered by `/review-agent-pr <PR# | URL>` or phrases like "review this PR", "review the agent PR", "is this good to deploy?", "review MuThree's PR". Reviews a PR you did NOT author (the use case is autonomous-agent PRs from MuTwo/MuThree/etc.), ends in a quick chat verdict plus one structured comment posted via `gh pr comment` behind a confirm gate. Review-only: never merges, pushes, resolves conversations, or touches the assignee.
 
 Core discipline baked into the skill: **verify, don't trust.** Agent PR descriptions and self-reviews are frequently wrong about their own code, so every blocking finding must be checked against the actual diff/repo (and against authoritative tool/framework docs when behavior-dependent) before it goes in the comment. The motivating case: a NanoClaw PR (#88) whose hook claimed to "block" file writes but emitted a non-nested `permissionDecision` schema with `exit 0` and wasn't `chmod +x` , a complete no-op that green CI and CodeRabbit both passed, and that the agent's own self-review missed. Both failures were only visible by checking the real Claude Code hook contract.
