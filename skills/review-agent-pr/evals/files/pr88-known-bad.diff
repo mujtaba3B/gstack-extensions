@@ -1,10 +1,3 @@
-# FROZEN FIXTURE — known-bad state of mujtaba3B/mutwo PR #88 at commit 21a7ebc
-# (before MuThree's fix 9d21892). Two blockers are present here:
-#  1. require-issue.sh emits a TOP-LEVEL {"permissionDecision":"deny",...} with exit 0
-#     instead of the nested {"hookSpecificOutput":{...}} shape -> never actually denies.
-#  2. 'new file mode 100644' -> the hook is NOT executable -> cannot run.
-# A correct review of this diff MUST catch both. Used by evals.json eval id 1.
-# ---
 diff --git a/.claude/hooks/require-issue.sh b/.claude/hooks/require-issue.sh
 new file mode 100644
 index 0000000..0c30f92

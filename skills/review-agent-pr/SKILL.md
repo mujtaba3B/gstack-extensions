@@ -71,7 +71,7 @@ To give the review lenses real surrounding-code context (not just the diff), you
 
 ## Step 3: Run the review lenses
 
-For each lens, spawn a `general-purpose` subagent via the Agent tool, in parallel, giving it (a) the contents of the matching agent prompt file from Step 1 as its instructions, and (b) the PR's changed-file list and base branch so it reviews the diff, not the whole repo. **Do not pass `subagent_type: pr-review-toolkit:...`** , those plugin-namespaced agents are not invocable via the Agent tool here; feeding their prompt text to a `general-purpose` agent is what actually works.
+For each lens, spawn a `general-purpose` subagent via the Agent tool, in parallel, giving it (a) the contents of the matching agent prompt file from Step 1 as its instructions, and (b) **the actual PR diff** (the `gh pr diff` output from Step 2) as the review target, plus the changed-file list and base branch. The diff is the subagent's primary input, so the lenses work whether or not you checked out the branch. If you DID check out the PR branch in Step 2, also tell the subagent the repo is checked out at the current directory so it can read surrounding files for context; if you skipped checkout, the diff is all it gets, which is enough to review the change itself. **Do not pass `subagent_type: pr-review-toolkit:...`** , those plugin-namespaced agents are not invocable via the Agent tool here; feeding their prompt text to a `general-purpose` agent is what actually works.
 
 The six toolkit lenses (filenames under the `agents/` dir found in Step 1):
 
