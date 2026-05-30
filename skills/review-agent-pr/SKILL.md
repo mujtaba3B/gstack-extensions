@@ -89,12 +89,21 @@ With the plugin enabled, spawn these six subagents via the Agent tool, in parall
 
 (Degraded inline path: skip the subagents and review the diff yourself against these same six lenses, in one pass.)
 
+**Then apply a seventh lens yourself, always , the design / blast-radius lens.** The six toolkit lenses are tuned for code-level defects (bugs, tests, types, comments, swallowed errors, clarity); none of them owns the question a human reviewer cares about most: *who and what else does this change affect?* An agent PR can be flawless line-by-line and still be wrong at the design level. Ask, against the actual diff:
+- **Scope / blast radius.** Does this change a shared or checked-in config (e.g. a repo-root `.claude/settings.json`, a CI file, a shared env) that other people, agents, or repos inherit? Could it block, break, or surprise an actor other than the author?
+- **Hardcoded identifiers in shared surfaces.** A name, ID, path, or assignee hardcoded into something other actors run (a hook everyone inherits, a shared workflow). Correct for the author, wrong for everyone else.
+- **Reversibility.** Is there a migration, a one-way data change, a delete, or a default flip that's hard to undo?
+- **Right-altitude.** Is this solving the stated problem at the right layer, or is it a narrow patch where a structural fix belongs (or vice versa)?
+
+This is the lens where a careful human out-reviews a naive pass. Weight it accordingly.
+
 ## Step 4 — Consolidate and verify
 
 - Collect all findings; dedupe overlaps (the lenses overlap on error handling and bugs).
 - For every **blocking / high-confidence** finding: verify it against the actual diff and repo before it goes in the comment. Read the real file, the sibling code, or the authoritative doc. Discard anything you can't substantiate; downgrade anything that's a style nit.
 - Cross-check the PR's own claims: does the code actually do what the body says? Mismatches are themselves findings.
 - Bucket survivors into **Blockers** (must fix before merge), **Important** (should fix), **Nits/Suggestions**, and **Strengths**.
+- Don't let a clean code-level review bury a design-level problem. A blast-radius or scope finding (Step 3's seventh lens) often outranks every line-level nit , surface it as a Blocker or Important item, not a footnote, even when the code itself is correct.
 
 ## Step 5 — Quick chat summary
 
