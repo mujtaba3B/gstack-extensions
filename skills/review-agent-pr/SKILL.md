@@ -1,12 +1,14 @@
 ---
 name: review-agent-pr
 description: >-
-  Review someone else's GitHub pull request (typically one opened by an autonomous agent like MuTwo/MuThree) and leave one well-structured review comment on it. Resolves the PR, locates the pr-review-toolkit review engine (offers to install it if missing), runs the diff through six toolkit review lenses (bugs/CLAUDE.md, silent failures, test gaps, type design, comment rot, simplification) plus a seventh design/blast-radius lens the main agent always applies, verifies the sharp findings against the actual repo rather than trusting the PR description, gives the user a quick chat summary, then posts ONE structured comment via gh pr comment after a confirm gate. Never merges, never pushes, never resolves conversations, never touches the assignee. Use when asked to "review this PR", "review the agent PR", "is this good to deploy?", "look at PR #N", "review MuThree's PR", or invoked as `/review-agent-pr` with a PR number or URL.
+  Review someone else's GitHub pull request (typically one opened by an autonomous agent like MuTwo/MuThree) and leave one well-structured review comment on it. Resolves the PR, locates the pr-review-toolkit review engine (offers to install it if missing), runs the diff through six toolkit review lenses (bugs/CLAUDE.md, silent failures, test gaps, type design, comment rot, simplification) plus a seventh design/blast-radius lens the main agent always applies, verifies the sharp findings against the actual repo rather than trusting the PR description, gives the user a quick chat summary, then always posts exactly ONE structured comment via gh pr comment (led by an @<author> mention so the PR's creator is notified) after a confirm gate on the wording. The run always ends in a posted, author-tagged comment regardless of verdict. Never merges, never pushes, never resolves conversations, never touches the assignee. Use when asked to "review this PR", "review the agent PR", "is this good to deploy?", "look at PR #N", "review MuThree's PR", or invoked as `/review-agent-pr` with a PR number or URL.
 ---
 
 # review-agent-pr
 
 You are running the `/review-agent-pr` skill. The goal is a high-signal review of a pull request you did **not** author (usually an autonomous-agent PR), ending in two things: (1) a quick verdict and summary to the user in chat, and (2) one structured review comment posted on the PR itself.
+
+**The terminal outcome is always one comment posted on the PR, led by an `@<author>` mention.** This is not optional and not conditional on the verdict: whether the PR is clean, mergeable, or full of blockers, the skill ends by posting exactly one structured review comment to the PR, and that comment always opens by tagging the login that opened the PR so they are notified to act on it. The only gate is wording (Step 6 shows the user the draft and takes edits before it goes up); the gate decides *what the comment says*, never *whether a comment is posted*. A run that ends without a posted, author-tagged comment has not completed. The chat summary is a convenience for the user, not a substitute for the comment.
 
 The reference for what "good" output looks like is a verdict-first comment: **a clear merge / don't-merge call, numbered blockers each with a concrete fix, lower-priority items, credit for what's right, a short to-do list, and an explicit no-merge-until line.**
 
@@ -16,7 +18,7 @@ The reference for what "good" output looks like is a verdict-first comment: **a 
 - Push commits to the PR branch or apply fixes (this is review-only; if the user wants fixes, that is a separate `/pr-watcher` or hands-on session).
 - Mark conversations resolved.
 - Change the PR's assignee, labels, or title.
-- Post the comment without showing the draft and getting a confirm.
+- Post the comment without showing the draft and getting a confirm. (The confirm is about the comment's *wording*, not about *whether* to post: the run always ends in one posted, author-tagged comment.)
 
 If a finding needs code changes, describe the fix in the comment for the author to apply. Do not apply it.
 
@@ -109,9 +111,9 @@ This is the lens where a careful human out-reviews a naive pass. Weight it accor
 
 Give the user a tight verdict first: **good to deploy or not yet, and why in one line.** Then the bucketed findings, blockers first, each one sentence. This is the at-a-glance read before anything is posted.
 
-## Step 6: Draft and post one comment
+## Step 6: Draft and post one comment (always)
 
-Draft a single review comment in this shape (model it on a strong manual review):
+This step always runs and always ends in a posted comment. Draft a single review comment in this shape (model it on a strong manual review):
 
 ```markdown
 @<pr-author-login> reviewed below.
