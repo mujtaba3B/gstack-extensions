@@ -66,17 +66,23 @@ Read the diff yourself first to form an independent picture. Note any claims in 
 
 Capture the PR author's login from the `author` field (e.g. `muthree-ai`). You will lead the posted comment with `@<login>` in Step 6 so the author, human or autonomous agent, is notified to pick up the feedback. This is the whole point for agent PRs: the mention is what closes the review loop back to the agent that opened the PR.
 
-To give the review lenses real surrounding-code context (not just the diff), you may check out the PR branch, but only when the current directory is a clone of the PR's repo, and protect the working state:
+To give the review lenses real surrounding-code context (not just the diff), check the PR out into a **dedicated git worktree**, never by switching the current checkout's branch. A `git checkout` / `gh pr checkout` in cwd would move HEAD out from under any parallel work sharing this clone (another session, a running build, an open editor) and clobber it. A detached worktree shares the same `.git` but has its own HEAD and working files, so the main checkout, its branch, and its uncommitted changes are left completely untouched. This is the only sanctioned way to get local file context for the review.
 
-1. Confirm cwd is the target repo: `git remote get-url origin` resolves to `owner/name`. If it does NOT (the user pasted a URL for a repo you are not sitting in), SKIP checkout entirely and review from `gh pr diff` plus `gh api` raw file reads. Never run `gh pr checkout` in an unrelated repo, it fails or pollutes that repo's refs.
-2. Record the current branch: `git rev-parse --abbrev-ref HEAD`.
-3. If the working tree is dirty (`git status --porcelain` is non-empty), STOP and ask the user before switching; do not stash silently.
-4. `gh pr checkout <N>`.
-5. After the review (Step 6, and on any early exit or error), restore: `git checkout -`.
+Only do this when the current directory is a clone of the PR's repo:
+
+1. Confirm cwd is the target repo: `git remote get-url origin` resolves to `owner/name`. If it does NOT (the user pasted a URL for a repo you are not sitting in), SKIP the worktree entirely and review from `gh pr diff` plus `gh api` raw file reads. Never create a worktree from an unrelated repo, the PR ref will not exist there.
+2. Fetch the PR head and add a detached worktree at a temp path (no branch switch in cwd, so a dirty working tree is fine and needs no stash):
+   ```bash
+   git fetch origin "pull/<N>/head"
+   WT="$(mktemp -d -t review-pr-<N>-XXXXXX)/wt"
+   git worktree add --detach "$WT" FETCH_HEAD
+   ```
+   `mktemp -d` reserves a unique parent; `git worktree add` creates `$WT` itself (the path must not already exist, hence the `/wt` suffix). Record `$WT`; the lenses read surrounding files from there.
+3. After the review (Step 6, and on any early exit or error), tear it down: `git worktree remove --force "$WT"` (then `rm -rf` the mktemp parent). This never affects the current branch because the branch was never switched.
 
 ## Step 3: Run the review lenses
 
-For each lens, spawn a `general-purpose` subagent via the Agent tool, in parallel, giving it (a) the contents of the matching agent prompt file from Step 1 as its instructions, and (b) **the actual PR diff** (the `gh pr diff` output from Step 2) as the review target, plus the changed-file list and base branch. The diff is the subagent's primary input, so the lenses work whether or not you checked out the branch. If you DID check out the PR branch in Step 2, also tell the subagent the repo is checked out at the current directory so it can read surrounding files for context; if you skipped checkout, the diff is all it gets, which is enough to review the change itself. **Do not pass `subagent_type: pr-review-toolkit:...`** , those plugin-namespaced agents are not invocable via the Agent tool here; feeding their prompt text to a `general-purpose` agent is what actually works.
+For each lens, spawn a `general-purpose` subagent via the Agent tool, in parallel, giving it (a) the contents of the matching agent prompt file from Step 1 as its instructions, and (b) **the actual PR diff** (the `gh pr diff` output from Step 2) as the review target, plus the changed-file list and base branch. The diff is the subagent's primary input, so the lenses work whether or not you created a worktree. If you DID add the PR worktree in Step 2, also give the subagent the worktree path (`$WT`) and tell it to read surrounding files from there for context; if you skipped the worktree, the diff is all it gets, which is enough to review the change itself. **Do not pass `subagent_type: pr-review-toolkit:...`** , those plugin-namespaced agents are not invocable via the Agent tool here; feeding their prompt text to a `general-purpose` agent is what actually works.
 
 The six toolkit lenses (filenames under the `agents/` dir found in Step 1):
 
@@ -147,7 +153,7 @@ EOF
 gh pr comment <N> --repo <owner/name> --body-file /tmp/review-agent-pr-comment.md
 ```
 
-Return the comment URL. Restore the original branch (`git checkout -`) if you checked out the PR. Do not merge, push, or resolve anything.
+Return the comment URL. Tear down the PR worktree (`git worktree remove --force "$WT"`, then remove the mktemp parent) if you created one. Do not merge, push, or resolve anything.
 
 ## Notes
 
