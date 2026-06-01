@@ -9,3 +9,9 @@
 
 # Skill-creator description-optimization workspaces (per-skill, ephemeral)
 /skills/*-workspace/
+
+# Karpathy three-file schema is local-only across every ~/dev/ repo (see
+# ~/dev/CLAUDE.md tracking rule, 2026-05-30). README.md stays tracked.
+/CLAUDE.md
+/LOG.md
+/INDEX.md
