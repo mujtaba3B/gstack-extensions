@@ -1,0 +1,40 @@
+{
+  "skill_name": "mac-shortcut-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I have a CLI at ~/dev/notes-cli that I run as `.venv/bin/python -m notes.cli add \"<text>\"`. Make me a macOS Shortcut called QuickNote that takes its input and passes it to that command, so I can trigger it from a hotkey. I'm on macOS 26.",
+      "expected_output": "A signed QuickNote.shortcut file built from a plist with a runshellscript action (Shell zsh, input passed through, absolute venv python path, cd into the repo). The skill opens the signed file and STOPS to ask the user to click 'Add Shortcut', then offers to verify with `shortcuts run`. Does not claim it is installed before the user confirms.",
+      "files": [],
+      "assertions": [
+        { "text": "Authors the plist into a file ending in .shortcut, not .plist", "passed": null, "evidence": "" },
+        { "text": "Signs with `shortcuts sign --mode anyone`", "passed": null, "evidence": "" },
+        { "text": "Run Shell Script uses an absolute interpreter path or sets PATH (accounts for stripped PATH)", "passed": null, "evidence": "" },
+        { "text": "Stops and waits for the user's 'Add Shortcut' click rather than claiming the shortcut is installed", "passed": null, "evidence": "" },
+        { "text": "Offers a `shortcuts run` verification step", "passed": null, "evidence": "" }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create an Apple Shortcut that shows the current weather conditions and then displays the result in an alert. Build it and install it for me.",
+      "expected_output": "A signed .shortcut built from a plist using is.workflow.actions.weather.currentconditions feeding a show result / alert, opened for the mandatory Add Shortcut click. Demonstrates the skill handles a non-shell-bridge Shortcut using the action reference.",
+      "files": [],
+      "assertions": [
+        { "text": "Uses real is.workflow.actions.* identifiers (e.g. weather.currentconditions, showresult/alert)", "passed": null, "evidence": "" },
+        { "text": "Produces a signed .shortcut and opens it for the user", "passed": null, "evidence": "" },
+        { "text": "Explains that the final Add Shortcut click is a mandatory manual step", "passed": null, "evidence": "" }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "bridge my expensify-forward automation into the menu bar. the command is `cd ~/dev/email-hero && .venv/bin/python -m email_hero.cli run expensify-forward --dry-run`. call the shortcut EmailHeroRunPipeline",
+      "expected_output": "Recognizes a Run Shell Script bridge, reads references/RUN_SHELL_SCRIPT.md, builds a runshellscript action with the stdin/arg-tolerant pattern and absolute paths, and detects that a shortcut named EmailHeroRunPipeline may already exist (warning about the 'Name 2' duplicate on re-import).",
+      "files": [],
+      "assertions": [
+        { "text": "Builds a runshellscript bridge that cd's into the repo and uses the absolute venv python", "passed": null, "evidence": "" },
+        { "text": "Uses the stdin/arg-tolerant script pattern (arg=\"${1:-$(cat)}\") or otherwise handles both input modes", "passed": null, "evidence": "" },
+        { "text": "Checks `shortcuts list` for an existing same-name shortcut and warns about the 'Name 2' duplicate", "passed": null, "evidence": "" }
+      ]
+    }
+  ]
+}
