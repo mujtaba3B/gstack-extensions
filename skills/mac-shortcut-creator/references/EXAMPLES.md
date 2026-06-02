@@ -581,9 +581,10 @@ Keep it brief and include clothing recommendations.</string>
 ## How to Use These Examples
 
 1. **Copy** the XML content
-2. **Save** to a file with `.shortcut` extension (e.g., `HelloWorld.shortcut`)
-3. **Sign** using the shortcuts CLI:
+2. **Save** to a working file with a `.shortcut` extension (e.g., `HelloWorld.build.shortcut`)
+3. **Sign** using the shortcuts CLI, naming the output file exactly what you want the Shortcut called:
    ```bash
-   shortcuts sign --mode anyone --input HelloWorld.shortcut --output HelloWorld_signed.shortcut
+   shortcuts sign --mode anyone --input HelloWorld.build.shortcut --output HelloWorld.shortcut
    ```
-4. **Import** by double-clicking the signed file or dragging to Shortcuts.app
+   The imported Shortcut takes its name from the **output filename**, so sign to `HelloWorld.shortcut`, not `HelloWorld_signed.shortcut` (which would import as "HelloWorld_signed").
+4. **Import** by double-clicking the signed `HelloWorld.shortcut` or dragging it to Shortcuts.app
