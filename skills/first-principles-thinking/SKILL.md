@@ -3,6 +3,21 @@ name: first-principles-thinking
 description: Reframe an in-flight plan, spec, or problem from the goal down so the user can spot when they are optimizing inside an inherited frame instead of attacking the actual goal. Use this skill whenever the user wants to "first principles this", "reframe from first principles", "challenge the assumptions", "Musk this", asks "what's the ultimate goal here", "are we sure this is the right approach", "is there a totally different way to think about this", or otherwise signals they want to step back from the current flow and check whether the goal itself, or the constraints they are treating as fixed, are actually load-bearing. Proactively suggest this skill when the user is iterating inside a plan that seems to assume its own framing (e.g. arguing about implementation details while never naming the ultimate goal, or treating a process step as fixed when the goal could be reached without it). Also fires on `/first-principles-thinking`.
 ---
 
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
+
 # First-principles thinking
 
 This skill drives a structured reframe of whatever the user is currently working on. The point is to interrupt momentum-driven optimization inside an inherited frame and let the user notice if they are solving the wrong problem, or solving the right problem the wrong way because they are treating something as fixed that is not.

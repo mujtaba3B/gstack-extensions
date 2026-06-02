@@ -35,11 +35,21 @@ This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never to
 
 ## Updating
 
+Each skill checks on invocation whether this clone's `main` is behind `origin/main` (a TTL-gated `git fetch`, so it does not hammer the remote) and, if so, offers to upgrade. Accepting runs:
+
+```
+~/dev/gstack-extensions/bin/gstack-extensions-upgrade
+```
+
+which fast-forwards `main` and re-installs the symlinks. It refuses safely (and tells you why) if the clone is not on a clean `main`, so it never disrupts in-progress feature-branch work. To upgrade by hand at any time:
+
 ```
 cd ~/dev/gstack-extensions
-git pull
-./bin/install   # idempotent; refreshes links and cleans stale ones
+git pull --ff-only   # must be on a clean main
+./bin/install        # idempotent; refreshes links and cleans stale ones
 ```
+
+`bin/gstack-extensions-update-check` is the read-only check behind the prompt; it prints `UPGRADE_AVAILABLE <n> <range>` when behind and nothing otherwise.
 
 ## Uninstall
 
@@ -54,8 +64,9 @@ Removes only symlinks that point into this repo. Leaves gstack and any other ski
 For a standalone skill:
 
 1. Create `skills/<name>/SKILL.md` with valid frontmatter (`name`, `description`).
-2. Run `./bin/install`.
-3. Restart Claude Code.
+2. Add the standard "Update check (run first)" preamble right after the frontmatter (copy it from any existing skill, e.g. `skills/pr-watcher/SKILL.md`) so the skill prompts on a stale clone like the others.
+3. Run `./bin/install`.
+4. Restart Claude Code.
 
 For a bundle (a group of sub-skills that share `shared/*.md` context):
 

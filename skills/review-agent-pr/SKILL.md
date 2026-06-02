@@ -4,6 +4,21 @@ description: >-
   Review someone else's GitHub pull request (typically one opened by an autonomous agent like MuTwo/MuThree) and leave one well-structured review comment on it. Resolves the PR, locates the pr-review-toolkit review engine (offers to install it if missing), runs the diff through six toolkit review lenses (bugs/CLAUDE.md, silent failures, test gaps, type design, comment rot, simplification) plus a seventh design/blast-radius lens the main agent always applies, verifies the sharp findings against the actual repo rather than trusting the PR description, gives the user a quick chat summary, then always posts exactly ONE structured comment via gh pr comment (led by an @<author> mention so the PR's creator is notified) after a confirm gate on the wording. The run always ends in a posted, author-tagged comment regardless of verdict. Never merges, never pushes, never resolves conversations, never touches the assignee. Use when asked to "review this PR", "review the agent PR", "is this good to deploy?", "look at PR #N", "review MuThree's PR", or invoked as `/review-agent-pr` with a PR number or URL.
 ---
 
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
+
 # review-agent-pr
 
 You are running the `/review-agent-pr` skill. The goal is a high-signal review of a pull request you did **not** author (usually an autonomous-agent PR), ending in two things: (1) a quick verdict and summary to the user in chat, and (2) one structured review comment posted on the PR itself.
