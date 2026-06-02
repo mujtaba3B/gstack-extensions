@@ -3,6 +3,21 @@ name: feature-spike
 description: Cheaply prove or disprove the riskiest unknown of a feature before committing to plan and build. Fire this skill whenever the user wants to "spike", "spike this", "spike a feature", "throwaway prove this works", "test the risky part first", "is this even possible", "smallest thing that proves the mechanic", "can we even do X", or otherwise signals they want to skip ahead and stress-test the one thing that could kill a feature before investing in the surrounding scaffolding. Proactively suggest this skill when the user is about to invoke `/plan-eng-review` or `/autoplan` on a feature that has a clear single unknown the plan would be guessing at. Drives a four-phase loop: lock the one-line outcome, write the leanest throwaway code that could falsify it on a `spike/<slug>` branch, escalate via `/second-opinion` (then user) when blocked, land a yes/no verdict in `SPIKE.md` before context compacts. NOT planning (`/plan-eng-review`), NOT ideation (`/office-hours`), NOT post-build QA (`/qa`), NOT change validation (`/verify`). Spike code is explicitly exempt from `karpathy-guidelines` production discipline. Also fires on `/feature-spike`.
 ---
 
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
+
 # Feature spike
 
 This skill exists for one job: validate the riskiest unknown of a feature with the smallest possible throwaway-ok implementation, before any of the planning, scaffolding, or production-code discipline kicks in.

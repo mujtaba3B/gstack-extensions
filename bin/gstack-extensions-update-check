@@ -1,0 +1,90 @@
+#!/bin/bash
+# gstack-extensions-update-check
+#
+# Prints "UPGRADE_AVAILABLE <n> <local>..<remote>" to stdout when this clone's
+# local `main` is behind `origin/main` (i.e. PRs have merged that you haven't
+# pulled). Silent otherwise. Read-only: never checks out, pulls, or mutates
+# anything, so it is safe to call at the top of every skill.
+#
+# The `git fetch` is TTL-gated (default 24h) so invoking many skills in a day
+# does not hammer the remote. Pass --force to fetch regardless of the TTL.
+#
+# Exit code is always 0 (a skill preamble must never fail because the check
+# could not run). Absence of output means "no upgrade available, or could not
+# determine": both cases the caller treats as "proceed".
+
+set -u
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/gstack-extensions"
+SNOOZE="$CACHE/snooze-until"
+
+FORCE=0
+case "${1:-}" in
+  --force) FORCE=1 ;;
+  --snooze)
+    # Suppress the upgrade prompt for a while (default 8h). The skill preamble
+    # calls this when the user picks "Skip", so a decline is not re-surfaced on
+    # the next skill invocation in the same work session.
+    hours="${2:-8}"
+    case "$hours" in (*[!0-9]*|'') hours=8 ;; esac
+    mkdir -p "$CACHE" 2>/dev/null || true
+    echo "$(( $(date +%s) + hours * 3600 ))" > "$SNOOZE" 2>/dev/null || true
+    exit 0
+    ;;
+esac
+
+# Self-locate the repo from this script's own path (this file is not symlinked;
+# only the skills/ dirs are), so the check works regardless of where the repo
+# lives on disk.
+REPO=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd) || exit 0
+
+command -v git >/dev/null 2>&1 || exit 0
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || exit 0
+git -C "$REPO" remote get-url origin >/dev/null 2>&1 || exit 0
+# A local `main` ref is the baseline we compare against. No main => nothing to say.
+git -C "$REPO" rev-parse --verify --quiet main >/dev/null 2>&1 || exit 0
+
+mkdir -p "$CACHE" 2>/dev/null || true
+STAMP="$CACHE/last-fetch"
+NOW=$(date +%s)
+TTL=86400
+
+# Honor an active snooze (set by --snooze when the user declines an upgrade):
+# stay silent until it expires, so a decline is not re-surfaced every skill.
+if [ "$FORCE" = "0" ] && [ -f "$SNOOZE" ]; then
+  until=$(cat "$SNOOZE" 2>/dev/null || echo 0)
+  case "$until" in (*[!0-9]*|'') until=0 ;; esac
+  [ "$NOW" -lt "$until" ] && exit 0
+fi
+
+do_fetch=1
+if [ "$FORCE" = "0" ] && [ -f "$STAMP" ]; then
+  last=$(cat "$STAMP" 2>/dev/null || echo 0)
+  case "$last" in (*[!0-9]*|'') last=0 ;; esac
+  # A future-dated stamp (clock skew/tampering) would otherwise suppress fetches
+  # forever; treat it as "never fetched".
+  [ "$last" -gt "$NOW" ] && last=0
+  [ $(( NOW - last )) -lt "$TTL" ] && do_fetch=0
+fi
+
+if [ "$do_fetch" = "1" ]; then
+  # Update only origin/main. On network failure, fall back to the last-known
+  # origin/main ref (the comparison below still works, just possibly stale).
+  # The low-speed env vars abort a stalled fetch after ~10s so a flaky network
+  # never hangs the skill preamble that calls this first.
+  if GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=10 \
+       git -C "$REPO" fetch origin main --quiet 2>/dev/null; then
+    echo "$NOW" > "$STAMP" 2>/dev/null || true
+  fi
+fi
+
+behind=$(git -C "$REPO" rev-list --count main..origin/main 2>/dev/null || echo 0)
+case "$behind" in (*[!0-9]*|'') behind=0 ;; esac
+
+if [ "$behind" -gt 0 ]; then
+  lo=$(git -C "$REPO" rev-parse --short main 2>/dev/null)
+  ro=$(git -C "$REPO" rev-parse --short origin/main 2>/dev/null)
+  echo "UPGRADE_AVAILABLE $behind ${lo}..${ro}"
+fi
+
+exit 0

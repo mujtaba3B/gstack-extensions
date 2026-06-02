@@ -3,6 +3,21 @@ name: coderabbit-config
 description: Generate or update a tailored .coderabbit.yaml for the current repository. Inspects the repo (languages, monorepo shape, generated/vendored dirs, CLAUDE.md/AGENTS.md conventions) and produces a config with sensible defaults plus repo-specific path_filters and path_instructions. Use when the user says "/coderabbit-config", "coderabbit config", "coderabbit yaml", "set up coderabbit for this repo", "customize coderabbit", "generate .coderabbit.yaml", "tune coderabbit", or otherwise asks to configure CodeRabbit AI code review for a repo. Run from inside the target repo (cwd = repo root). Defaults to inferring from the repo so the user only answers 1-2 questions.
 ---
 
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
+
 # coderabbit-config
 
 Generate a tailored `.coderabbit.yaml` at the root of the current repo. The interesting work is inferring the right `path_filters` and `path_instructions` from what's actually in the repo, then asking the user only the questions that can't be inferred.

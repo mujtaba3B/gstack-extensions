@@ -1,0 +1,50 @@
+#!/bin/bash
+# gstack-extensions-upgrade
+#
+# Safe one-command upgrade: fast-forward local `main` to `origin/main` and
+# re-run the installer so the symlinks point at the refreshed skills.
+#
+# Refuses (exit 1, with a reason) if it would disrupt in-progress work:
+#   - the clone is not on `main` (you're mid-feature-branch), or
+#   - the working tree is dirty.
+# In those cases it prints what to do and changes nothing.
+
+set -u
+
+REPO=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd) || { echo "REFUSED: cannot locate repo root" >&2; exit 1; }
+cd "$REPO" || { echo "REFUSED: cannot cd to $REPO" >&2; exit 1; }
+
+branch=$(git branch --show-current 2>/dev/null || echo "")
+if [ "$branch" != "main" ]; then
+  echo "REFUSED: on branch '${branch:-detached}', not main."
+  echo "  You're likely mid-feature-branch. When ready, switch to a clean main"
+  echo "  and re-run this upgrade:"
+  echo "    git -C \"$REPO\" checkout main && \"$REPO/bin/gstack-extensions-upgrade\""
+  echo "  (or, without switching: git -C \"$REPO\" fetch origin main:main, which"
+  echo "   updates local main in place but fails if main has diverged)."
+  exit 1
+fi
+
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "REFUSED: working tree is dirty. Commit or stash your changes first."
+  exit 1
+fi
+
+echo "Fetching and fast-forwarding main..."
+if ! git pull --ff-only origin main; then
+  echo "REFUSED: could not fast-forward (local main has diverged from origin/main)." >&2
+  echo "  Resolve manually: git -C \"$REPO\" status" >&2
+  exit 1
+fi
+
+echo "Re-installing symlinks..."
+if ! "$REPO/bin/install"; then
+  echo "ERROR: fast-forward succeeded but ./bin/install failed; symlinks may be stale." >&2
+  echo "  Re-run \"$REPO/bin/install\" manually." >&2
+  exit 1
+fi
+
+# Upgrade done: drop any active snooze so the prompt is honest again.
+rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/gstack-extensions/snooze-until" 2>/dev/null || true
+
+echo "UPGRADED to $(git rev-parse --short HEAD)"
