@@ -160,7 +160,7 @@ Find/filter message conversations (threads).
 
 ---
 
-## Search For Messages — DEPRECATED
+## Search For Messages: DEPRECATED
 
 Legacy `INSearchForMessagesIntent`. Still works but Apple says "This action won't be supported in future versions of Shortcuts."
 
