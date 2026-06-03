@@ -2,5 +2,5 @@
   "name": "pm",
   "version": "1.0.0",
   "description": "PM Penny, the product-manager persona. Turns ideas, bug reports, and 'what should I work on next?' into well-structured GitHub issues, and reframes problems from first principles. Skills: pm:bug, pm:feature, pm:next-issue, pm:first-principles.",
-  "author": "Mujtaba Badat"
+  "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
 }

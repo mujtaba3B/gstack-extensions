@@ -2,7 +2,7 @@
 
 Personal skills layered on top of [gstack](https://github.com/garrytan/gstack), discovered by Claude Code alongside gstack's own skills.
 
-Skills are organized into **persona plugins**: each persona is a Claude Code skills-directory plugin, and its skills invoke namespaced as `<persona>:<skill>` (for example `/pm:bug`, `/design:pencil-mockup`).
+Skills are organized into **persona plugins**: each persona is a Claude Code plugin installed from this repo's own local marketplace, and its skills invoke namespaced as `<persona>:<skill>` (for example `/pm:bug`, `/design:pencil-mockup`).
 
 ## Install
 
@@ -27,11 +27,13 @@ The persona name (Penny / Quincey / Earnie / Denise) lives in each plugin's `des
 
 ## How it works
 
-`./bin/install` symlinks every persona plugin (any top-level dir containing a `.claude-plugin/plugin.json`) into `~/.claude/skills/`. Claude Code loads each as a skills-directory plugin (`<name>@skills-dir`) and namespaces its skills as `<name>:<skill>`. Each skill lives in `<plugin>/skills/<slug>/SKILL.md` and resolves sibling files (`shared/*.md`, `references/`) relative to the plugin root, which works through the symlink.
+`./bin/install` registers this repo as a local Claude Code **marketplace** (the root `.claude-plugin/marketplace.json` lists every plugin) and installs each plugin from it. Claude Code namespaces a plugin's skills as `<name>:<skill>`, where `<name>` is the plugin's manifest `name` (not the directory name). Each skill lives in `<plugin>/skills/<slug>/SKILL.md` and resolves sibling files (`shared/*.md`, `references/`) relative to its plugin root.
 
-This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never touches it. gstack's skills and these plugins coexist as peers in `~/.claude/skills/`: gstack's are loose (invoked as `/name`), these are namespaced (invoked as `/persona:name`), so they never collide.
+Installing **copies** each plugin into `~/.claude/plugins/cache/gstack-extensions/<name>/<version>/`, so the repo is not read live: re-run `./bin/install` (or `bin/gstack-extensions-upgrade`) to refresh the cache from the working tree, then restart the session. Because the plugins live in the plugin cache rather than in `~/.claude/skills/`, they never collide on the filesystem with gstack's own skills: gstack's loose `/qa` and this repo's `/qa:browser` coexist cleanly (the `:` is what separates them).
 
-A running session picks up edits to a skill's `SKILL.md` live. A brand-new plugin dir, or a change to a `plugin.json` / hook, needs a session restart (or `/reload-plugins` for already-known plugins) to register.
+This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never touches it.
+
+> Earlier versions symlinked each plugin dir into `~/.claude/skills/`. That only ever loaded as `<name>@skills-dir` and refused to load when a name collided with an installed plugin, so the marketplace install above replaced it. `bin/install` still sweeps any leftover symlinks from that layout.
 
 ## Updating
 
@@ -41,12 +43,12 @@ Each skill checks on invocation whether this clone's `main` is behind `origin/ma
 ~/dev/gstack-extensions/bin/gstack-extensions-upgrade
 ```
 
-which fast-forwards `main` and re-installs the symlinks. It refuses safely (and tells you why) if the clone is not on a clean `main`, so it never disrupts in-progress feature-branch work. To upgrade by hand at any time:
+which fast-forwards `main` and refreshes the installed plugins from the pulled source (uninstall+install, since `claude plugin update` no-ops while a plugin's version is unchanged). It refuses safely (and tells you why) if the clone is not on a clean `main`, so it never disrupts in-progress feature-branch work. Restart the session afterwards to load the refreshed skills. To upgrade by hand at any time:
 
 ```
 cd ~/dev/gstack-extensions
 git pull --ff-only   # must be on a clean main
-./bin/install        # idempotent; refreshes links and cleans stale ones
+./bin/install        # idempotent; refreshes the installed plugins
 ```
 
 `bin/gstack-extensions-update-check` is the read-only check behind the prompt; it prints `UPGRADE_AVAILABLE <n> <range>` when behind and nothing otherwise.
@@ -57,10 +59,10 @@ git pull --ff-only   # must be on a clean main
 ./bin/uninstall
 ```
 
-Removes only symlinks that point into this repo. Leaves gstack and any other skills alone.
+Uninstalls the four plugins and removes this repo's local marketplace (and sweeps any leftover symlinks from the old installer). Leaves gstack and any other marketplaces alone.
 
 ## Adding to the repo
 
-**A new skill in an existing persona:** create `<plugin>/skills/<slug>/SKILL.md` with valid frontmatter (`name`, `description`) and the standard "Update check (run first)" preamble (copy it from any existing skill). No new symlink is needed (the plugin dir is already linked); `/reload-plugins` or restart to register it. It invokes as `/<plugin>:<slug>`.
+**A new skill in an existing persona:** create `<plugin>/skills/<slug>/SKILL.md` with valid frontmatter (`name`, `description`) and the standard "Update check (run first)" preamble (copy it from any existing skill). Re-run `./bin/install` to refresh the plugin in the cache, then restart the session to register it. It invokes as `/<plugin>:<slug>`.
 
-**A new persona plugin:** create `<persona>/.claude-plugin/plugin.json` (`name` is the only required field), put skills under `<persona>/skills/<slug>/SKILL.md` and shared context under `<persona>/shared/`, then run `./bin/install` and restart. It invokes as `/<persona>:<slug>`.
+**A new persona plugin:** create `<persona>/.claude-plugin/plugin.json` (`name` is the only required field), put skills under `<persona>/skills/<slug>/SKILL.md` and shared context under `<persona>/shared/`, add a matching entry to the root `.claude-plugin/marketplace.json` (`name` + `"source": "./<persona>"`), then run `./bin/install` and restart. `bin/install` discovers plugins from their manifests, so no installer edit is needed. It invokes as `/<persona>:<slug>`. Run `claude plugin validate . --strict` to check both manifests before installing.

@@ -2,7 +2,7 @@
 
 PM Penny is the product-manager persona. She turns feature requests, bug reports, and ideas into well-structured GitHub issues for your coding agents to pick up, helps you decide what to work on next, and reframes problems from first principles.
 
-This directory is a Claude Code skills-directory plugin named `pm`; its skills are invoked namespaced as `pm:<skill>`.
+This directory is a Claude Code plugin named `pm` (installed from this repo's local marketplace); its skills are invoked namespaced as `pm:<skill>`.
 
 ## Skills
 
@@ -22,7 +22,7 @@ Examples:
 
 ## How it is wired
 
-`bin/install` symlinks this `pm/` directory into `~/.claude/skills/`, where Claude Code loads it as the `pm` plugin. Each skill lives in `pm/skills/<slug>/SKILL.md` and resolves shared context (`shared/core.md`, `shared/fast-mode.md`, `shared/repro-gate.md`, `shared/scope-gate.md`) relative to this plugin root, which works through the symlink.
+`bin/install` installs this `pm/` directory as the `pm` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/pm/<version>/`). Each skill lives in `pm/skills/<slug>/SKILL.md` and resolves shared context (`shared/core.md`, `shared/fast-mode.md`, `shared/repro-gate.md`, `shared/scope-gate.md`) relative to its plugin root.
 
 ## Requirements
 

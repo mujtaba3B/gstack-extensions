@@ -2,7 +2,9 @@
 # gstack-extensions-upgrade
 #
 # Safe one-command upgrade: fast-forward local `main` to `origin/main` and
-# re-run the installer so the symlinks point at the refreshed skills.
+# re-run the installer, which refreshes the installed plugins from the pulled
+# source (uninstall+install, since `claude plugin update` no-ops on an unchanged
+# version). Restart the session afterwards to load the refreshed skills.
 #
 # Refuses (exit 1, with a reason) if it would disrupt in-progress work:
 #   - the clone is not on `main` (you're mid-feature-branch), or
@@ -37,9 +39,9 @@ if ! git pull --ff-only origin main; then
   exit 1
 fi
 
-echo "Re-installing symlinks..."
+echo "Refreshing installed plugins from the pulled source..."
 if ! "$REPO/bin/install"; then
-  echo "ERROR: fast-forward succeeded but ./bin/install failed; symlinks may be stale." >&2
+  echo "ERROR: fast-forward succeeded but ./bin/install failed; plugins may be stale." >&2
   echo "  Re-run \"$REPO/bin/install\" manually." >&2
   exit 1
 fi
@@ -47,4 +49,4 @@ fi
 # Upgrade done: drop any active snooze so the prompt is honest again.
 rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/gstack-extensions/snooze-until" 2>/dev/null || true
 
-echo "UPGRADED to $(git rev-parse --short HEAD)"
+echo "UPGRADED to $(git rev-parse --short HEAD). Restart your Claude Code session to load the refreshed skills."

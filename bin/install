@@ -1,76 +1,91 @@
 #!/usr/bin/env bash
-# Symlink every plugin in this repo into ~/.claude/skills/ so Claude Code
-# discovers it as a skills-directory plugin (loaded as <name>@skills-dir).
+# Register this repo's persona plugins with Claude Code via a local marketplace.
 #
-# A "plugin" is any top-level directory containing a .claude-plugin/plugin.json
-# manifest (e.g. pm/, qa/, eng/, design/). Its skills live under
-# <plugin>/skills/<slug>/SKILL.md and are invoked namespaced as <plugin>:<slug>
-# (e.g. /pm:bug, /qa:browser, /eng:pr-feedback, /design:pencil-mockup). Each
-# plugin's skills resolve sibling files (shared/core.md, references/) relative
-# to the plugin root, which works through the symlink.
+# Each top-level dir with a .claude-plugin/plugin.json (pm/ qa/ eng/ design/) is
+# a plugin; .claude-plugin/marketplace.json at the repo root lists all four. We
+# add this repo as a "directory" marketplace and install each plugin from it, so
+# its skills invoke namespaced as <plugin>:<skill> (/pm:bug, /qa:browser,
+# /eng:pr-feedback, /design:pencil-mockup). The prefix is the plugin's manifest
+# "name", not where the repo lives on disk.
 #
-# Idempotent: re-run after pulling updates. Also removes stale symlinks left by
-# the previous (pre-plugin) layout, since their targets no longer exist.
+# Why a marketplace and not symlinks into ~/.claude/skills/: a plugin dir
+# symlinked into the skills dir is only ever discovered as "<name>@skills-dir",
+# and it refuses to load when its name collides with a real installed plugin
+# (we hit exactly that: pm@skills-dir vs pm@gstack-extensions). A marketplace
+# install is the documented path, yields the clean /<name>: prefix, and never
+# collides on the filesystem because plugins live in the plugin cache, not in
+# ~/.claude/skills/. That also means gstack's loose /qa coexists with this
+# repo's /qa:browser with zero special handling.
+#
+# install COPIES each plugin into
+# ~/.claude/plugins/cache/<marketplace>/<name>/<version>/, so the repo is NOT
+# read live. `claude plugin update` is a no-op while the version is unchanged,
+# so to pick up edited skill bodies this script does uninstall+install (the only
+# reliable way to refresh the cache from the working tree). Re-run after pulling
+# updates (or use bin/gstack-extensions-upgrade), then restart the session.
+#
+# Idempotent: safe to re-run. Also purges stale symlinks left by the old
+# (pre-marketplace) installer so they don't shadow the marketplace plugins.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$HOME/.claude/skills"
-mkdir -p "$TARGET"
+MARKET="gstack-extensions"
+SKILLS_DIR="$HOME/.claude/skills"
 
-# The directory name we link into ~/.claude/skills/ is cosmetic: a plugin's
-# invocation prefix comes from its manifest "name", not from where it lives. So
-# if the preferred name is already taken by a foreign entry (e.g. gstack's own
-# loose /qa skill occupies ~/.claude/skills/qa), we dodge to "<name>-gext" and
-# the prefix (e.g. /qa:) still comes from .claude-plugin/plugin.json.
-link_plugin() {
-  local plugin="$1"
-  local name; name="$(basename "$plugin")"
-  local link="$TARGET/$name"
-  if { [[ -e "$link" || -L "$link" ]]; } && [[ "$(readlink "$link" 2>/dev/null)" != "$plugin" ]]; then
-    # Preferred name is occupied by something that isn't this plugin. Dodge.
-    link="$TARGET/${name}-gext"
-    if { [[ -e "$link" || -L "$link" ]]; } && [[ "$(readlink "$link" 2>/dev/null)" != "$plugin" ]]; then
-      echo "skip: both $TARGET/$name and $link are taken by foreign entries; resolve manually"
-      return
-    fi
-    echo "note: $TARGET/$name is taken (e.g. a gstack skill); linking as ${name}-gext instead."
-    echo "      The invocation prefix is still /$name: (it comes from the manifest name, not this dir)."
-  fi
-  if [[ -d "$link" && ! -L "$link" ]]; then
-    # Defensive: never symlink INTO an existing real directory (ln -sfn would nest).
-    echo "skip: $link is a real directory (not a symlink); resolve manually"
-    return
-  fi
-  ln -sfn "$plugin" "$link"
-  echo "linked plugin: $(basename "$link") (skills invoke as /$name:<skill>) -> $plugin"
-}
+# Read a plugin manifest's "name" (the install ref and invocation prefix come
+# from this, not from the directory name).
+plugin_name() { sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1; }
 
-# Clean stale symlinks pointing into this repo whose targets no longer exist
-# (e.g. the old per-skill links from before the plugin migration, or a skill
-# directory that was renamed or deleted). Done BEFORE linking so a reclaimable
-# dead link never blocks a fresh link on the same name.
-for link in "$TARGET"/*; do
-  [[ -L "$link" ]] || continue
-  target="$(readlink "$link")"
-  case "$target" in
-    "$REPO"/*)
-      if [[ ! -e "$target" ]]; then
+if ! command -v claude >/dev/null 2>&1; then
+  echo "error: the 'claude' CLI is not on PATH; cannot register plugins." >&2
+  exit 1
+fi
+
+# 1. Purge stale symlinks from the old symlink-based installer. A leftover
+#    ~/.claude/skills/<name> -> $REPO/<plugin> loads as <name>@skills-dir and
+#    collides with the marketplace plugin of the same name, so the symlinked
+#    copy refuses to load. Remove any symlink under ~/.claude/skills/ whose
+#    target points into this repo.
+if [[ -d "$SKILLS_DIR" ]]; then
+  for link in "$SKILLS_DIR"/*; do
+    [[ -L "$link" ]] || continue
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+      "$REPO"|"$REPO"/*)
         rm "$link"
-        echo "removed stale: $link -> $target"
-      fi
-      ;;
-  esac
-done
+        echo "removed stale symlink: $(basename "$link") -> $target"
+        ;;
+    esac
+  done
+fi
 
-# Forward-link every plugin (top-level dir with a .claude-plugin/plugin.json).
+# 2. Register (or refresh) the local marketplace.
+if claude plugin marketplace list 2>/dev/null | grep -q "$MARKET"; then
+  echo "marketplace '$MARKET' already registered; refreshing from source..."
+  claude plugin marketplace update "$MARKET" >/dev/null
+else
+  echo "adding marketplace '$MARKET' -> $REPO"
+  claude plugin marketplace add "$REPO" --scope user >/dev/null
+fi
+
+# 3. Install every plugin the repo declares (any top-level dir with a
+#    .claude-plugin/plugin.json). The install ref is <manifest-name>@<market>.
+#    If a plugin is already installed, uninstall first so the cache is re-copied
+#    from the current working tree (plain re-install and `update` both no-op
+#    while the version string is unchanged).
 shopt -s nullglob
 for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
-  plugin="$(cd "$(dirname "$manifest")/.." && pwd)"
-  link_plugin "$plugin"
+  name="$(plugin_name "$manifest")"
+  [[ -n "$name" ]] || { echo "skip: $manifest has no \"name\"; not installing." >&2; continue; }
+  ref="${name}@${MARKET}"
+  if claude plugin list 2>/dev/null | grep -q "$ref"; then
+    claude plugin uninstall "$ref" >/dev/null 2>&1 || true
+  fi
+  claude plugin install "$ref" --scope user >/dev/null && echo "installed: $ref (invokes as /$name:<skill>)"
 done
 shopt -u nullglob
 
 echo
-echo "Done. Restart your Claude Code session to pick up new/changed plugins."
-echo "(A running session picks up SKILL.md edits live, but a brand-new plugin"
-echo " dir needs a restart to register.)"
+echo "Done. Restart your Claude Code session to load new/changed plugins."
+echo "Verify with: claude plugin list"
+echo "Skills invoke as /pm:<skill>, /qa:<skill>, /eng:<skill>, /design:<skill>."

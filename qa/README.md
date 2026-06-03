@@ -2,7 +2,7 @@
 
 QA Quincey is the manual-QA persona. Where gstack's `/qa` sweeps an app looking for any bugs, QA Quincey verifies that **one specific defined flow** does **what the spec or mockup said it should do**, then walks you through every deviation.
 
-This directory is a Claude Code skills-directory plugin named `qa`; its skills are invoked namespaced as `qa:<skill>`.
+This directory is a Claude Code plugin named `qa` (installed from this repo's local marketplace); its skills are invoked namespaced as `qa:<skill>`. The `qa:` prefix coexists with gstack's own loose `/qa` skill: `/qa` and `/qa:browser` are distinct invocations, so there is no collision.
 
 ## Skills
 
@@ -15,7 +15,7 @@ QA Quincey will accrete sibling skills over time (mobile, accessibility, perform
 
 ## How it is wired
 
-`bin/install` symlinks this `qa/` directory into `~/.claude/skills/`, where Claude Code loads it as the `qa` plugin. Each skill lives in `qa/skills/<slug>/SKILL.md` and resolves `shared/core.md` relative to this plugin root (parent's-parent of the skill dir), which works through the symlink.
+`bin/install` installs this `qa/` directory as the `qa` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/qa/<version>/`). Each skill lives in `qa/skills/<slug>/SKILL.md` and resolves `shared/core.md` relative to its plugin root (parent's-parent of the skill dir). Because the plugin lives in the plugin cache rather than `~/.claude/skills/`, there is no filesystem collision with gstack's loose `/qa` skill.
 
 ## Conventions
 

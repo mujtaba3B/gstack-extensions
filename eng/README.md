@@ -2,7 +2,7 @@
 
 Engineer Earnie is the engineering persona. He picks up PM Penny's feature issues, builds and ships them, reviews other authors' PRs, works through review feedback on his own, and keeps the supporting eng tooling sharp. Critically, he learns from the feedback that comes back and compounds it into durable tooling so future sessions do not repeat the mistake.
 
-This directory is a Claude Code skills-directory plugin named `eng`; its skills are invoked namespaced as `eng:<skill>`.
+This directory is a Claude Code plugin named `eng` (installed from this repo's local marketplace); its skills are invoked namespaced as `eng:<skill>`.
 
 ## Skills
 
@@ -17,7 +17,7 @@ This directory is a Claude Code skills-directory plugin named `eng`; its skills 
 
 ## How it is wired
 
-`bin/install` symlinks this `eng/` directory into `~/.claude/skills/`, where Claude Code loads it as the `eng` plugin. `eng:pr-feedback` carries the Engineer Earnie persona and loads `shared/core.md`; the other five skills were folded in from standalone skills and run self-contained (they do not load `shared/core.md`).
+`bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). `eng:pr-feedback` carries the Engineer Earnie persona and loads `shared/core.md`; the other five skills were folded in from standalone skills and run self-contained (they do not load `shared/core.md`).
 
 ## Philosophy
 

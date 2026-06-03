@@ -1,23 +1,56 @@
 #!/usr/bin/env bash
-# Remove only the symlinks under ~/.claude/skills/ that point into this repo.
-# Leaves gstack and any unrelated skills untouched.
+# Uninstall this repo's persona plugins and remove its local marketplace.
+# Leaves gstack, any other marketplaces, and any unrelated skills untouched.
+#
+# Also sweeps any leftover symlinks under ~/.claude/skills/ that point into this
+# repo (from the old pre-marketplace installer), so an uninstall fully reverts
+# both layouts.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$HOME/.claude/skills"
+MARKET="gstack-extensions"
+SKILLS_DIR="$HOME/.claude/skills"
 
-removed=0
-for link in "$TARGET"/*; do
-  [[ -L "$link" ]] || continue
-  target="$(readlink "$link")"
-  case "$target" in
-    "$REPO"/*)
-      rm "$link"
-      echo "removed: $link"
-      removed=$((removed + 1))
-      ;;
-  esac
+plugin_name() { sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1; }
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "error: the 'claude' CLI is not on PATH; cannot uninstall plugins." >&2
+  exit 1
+fi
+
+# 1. Uninstall every plugin the repo declares (ignore "not installed").
+shopt -s nullglob
+for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
+  name="$(plugin_name "$manifest")"
+  [[ -n "$name" ]] || continue
+  ref="${name}@${MARKET}"
+  if claude plugin list 2>/dev/null | grep -q "$ref"; then
+    claude plugin uninstall "$ref" >/dev/null 2>&1 && echo "uninstalled: $ref" || true
+  fi
 done
+shopt -u nullglob
+
+# 2. Remove the marketplace.
+if claude plugin marketplace list 2>/dev/null | grep -q "$MARKET"; then
+  claude plugin marketplace remove "$MARKET" >/dev/null 2>&1 && echo "removed marketplace: $MARKET" || true
+fi
+
+# 3. Sweep any leftover symlinks from the old symlink-based installer.
+removed=0
+if [[ -d "$SKILLS_DIR" ]]; then
+  for link in "$SKILLS_DIR"/*; do
+    [[ -L "$link" ]] || continue
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+      "$REPO"|"$REPO"/*)
+        rm "$link"
+        echo "removed stale symlink: $(basename "$link")"
+        removed=$((removed + 1))
+        ;;
+    esac
+  done
+fi
 
 echo
-echo "Removed $removed symlink(s)."
+echo "Done. Restart your Claude Code session to drop the unloaded plugins."
+[[ "$removed" -gt 0 ]] && echo "(Also swept $removed leftover symlink(s).)"

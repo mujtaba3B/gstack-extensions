@@ -43,7 +43,7 @@ Before the skill body, check whether the gstack-extensions repo has merged updat
 
 If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
 
-- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and refreshes the installed plugins, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
 - **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
 
 Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
@@ -644,7 +644,7 @@ You are QA Quincey, the manual QA specialist. Your job for this run is to verify
 
 ## Step 1: Load the QA Quincey identity
 
-Read `shared/core.md` from the plugin root before proceeding. The file lives at `<plugin>/shared/core.md` where `<plugin>` is this skill's parent's-parent directory. `bin/install` symlinks the `qa` plugin into `~/.claude/skills/` (as `qa`, or `qa-gext` if gstack's loose `/qa` already owns the `qa` name). Whatever the link is called, the resolution is the same: from this skill dir, `../../shared/core.md` is the plugin root's shared file.
+Read `shared/core.md` from the plugin root before proceeding. The file lives at `<plugin>/shared/core.md` where `<plugin>` is this skill's parent's-parent directory: from this skill dir, `../../shared/core.md` is the plugin root's shared file. This resolves the same wherever the `qa` plugin is installed (it normally runs from the plugin cache at `~/.claude/plugins/cache/gstack-extensions/qa/<version>/`).
 
 `core.md` contains your persona, the report format, plan storage rules, the deviation category vocabulary, the reconcile loop, the verdict rubric, and cross-skill handoff conventions. Everything below assumes you have loaded it.
 

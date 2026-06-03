@@ -2,7 +2,7 @@
 
 Designer Denise is the design persona. She is the Pencil-native designer: while gstack's `design-*` skills work in HTML/CSS, Denise creates and updates real mockups on the Pencil (`.pen`) canvas via the Pencil MCP.
 
-This directory is a Claude Code skills-directory plugin named `design`; its skills are invoked namespaced as `design:<skill>`.
+This directory is a Claude Code plugin named `design` (installed from this repo's local marketplace); its skills are invoked namespaced as `design:<skill>`.
 
 ## Skills
 
@@ -14,7 +14,7 @@ Denise is a basket; more skills (review, variant exploration, and so on) will la
 
 ## How it is wired
 
-`bin/install` symlinks this `design/` directory into `~/.claude/skills/`, where Claude Code loads it as the `design` plugin. The skill lives in `design/skills/pencil-mockup/SKILL.md` and resolves `shared/core.md` relative to this plugin root (parent's-parent of the skill dir), which works through the symlink.
+`bin/install` installs this `design/` directory as the `design` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/design/<version>/`). The skill lives in `design/skills/pencil-mockup/SKILL.md` and resolves `shared/core.md` relative to its plugin root (parent's-parent of the skill dir).
 
 ## Conventions
 
