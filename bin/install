@@ -1,49 +1,56 @@
 #!/usr/bin/env bash
-# Symlink every skill in skills/* AND every sub-skill in <bundle>/skills/*
-# into ~/.claude/skills/ so Claude Code discovers them.
-# A "bundle" is any top-level directory (other than skills/) that has its own
-# skills/<sub-skill>/ tree plus helper files (e.g. shared/*.md) at the bundle
-# root, which sub-skills load via relative paths resolved through the symlink.
-# Idempotent: re-run after pulling updates.
+# Symlink every plugin in this repo into ~/.claude/skills/ so Claude Code
+# discovers it as a skills-directory plugin (loaded as <name>@skills-dir).
+#
+# A "plugin" is any top-level directory containing a .claude-plugin/plugin.json
+# manifest (e.g. pm/, qa/, eng/, design/). Its skills live under
+# <plugin>/skills/<slug>/SKILL.md and are invoked namespaced as <plugin>:<slug>
+# (e.g. /pm:bug, /qa:browser, /eng:pr-feedback, /design:pencil-mockup). Each
+# plugin's skills resolve sibling files (shared/core.md, references/) relative
+# to the plugin root, which works through the symlink.
+#
+# Idempotent: re-run after pulling updates. Also removes stale symlinks left by
+# the previous (pre-plugin) layout, since their targets no longer exist.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$HOME/.claude/skills"
 mkdir -p "$TARGET"
 
-link_skill() {
-  local skill="$1"
-  local name; name="$(basename "$skill")"
+# The directory name we link into ~/.claude/skills/ is cosmetic: a plugin's
+# invocation prefix comes from its manifest "name", not from where it lives. So
+# if the preferred name is already taken by a foreign entry (e.g. gstack's own
+# loose /qa skill occupies ~/.claude/skills/qa), we dodge to "<name>-gext" and
+# the prefix (e.g. /qa:) still comes from .claude-plugin/plugin.json.
+link_plugin() {
+  local plugin="$1"
+  local name; name="$(basename "$plugin")"
   local link="$TARGET/$name"
-  if [[ -e "$link" && ! -L "$link" ]]; then
-    echo "skip: $link exists and is not a symlink (manual cleanup required)"
-    return
+  if { [[ -e "$link" || -L "$link" ]]; } && [[ "$(readlink "$link" 2>/dev/null)" != "$plugin" ]]; then
+    # Preferred name is occupied by something that isn't this plugin. Dodge.
+    link="$TARGET/${name}-gext"
+    if { [[ -e "$link" || -L "$link" ]]; } && [[ "$(readlink "$link" 2>/dev/null)" != "$plugin" ]]; then
+      echo "skip: both $TARGET/$name and $link are taken by foreign entries; resolve manually"
+      return
+    fi
+    echo "note: $TARGET/$name is taken (e.g. a gstack skill); linking as ${name}-gext instead."
+    echo "      The invocation prefix is still /$name: (it comes from the manifest name, not this dir)."
   fi
-  ln -sfn "$skill" "$link"
-  echo "linked: /$name -> $skill"
+  ln -sfn "$plugin" "$link"
+  echo "linked plugin: $(basename "$link") (skills invoke as /$name:<skill>) -> $plugin"
 }
 
-# Forward-link standalone skills
-if compgen -G "$REPO/skills/*/" >/dev/null; then
-  for skill in "$REPO"/skills/*/; do
-    link_skill "$skill"
-  done
-fi
-
-# Forward-link bundle sub-skills (<bundle>/skills/<sub-skill>/).
-# Bundles keep their own shared/ files; sub-skills reference them as
-# "shared/core.md from the bundle root", which resolves through the symlink.
-for bundle in "$REPO"/*/; do
-  name="$(basename "$bundle")"
-  [[ "$name" == "skills" ]] && continue
-  compgen -G "${bundle}skills/*/" >/dev/null || continue
-  for skill in "${bundle}skills"/*/; do
-    link_skill "$skill"
-  done
+# Forward-link every plugin (top-level dir with a .claude-plugin/plugin.json).
+shopt -s nullglob
+for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
+  plugin="$(cd "$(dirname "$manifest")/.." && pwd)"
+  link_plugin "$plugin"
 done
+shopt -u nullglob
 
 # Clean stale symlinks pointing into this repo whose targets no longer exist
-# (e.g. after renaming or deleting a skill directory).
+# (e.g. the old per-skill links from before the plugin migration, or a skill
+# directory that was renamed or deleted).
 for link in "$TARGET"/*; do
   [[ -L "$link" ]] || continue
   target="$(readlink "$link")"
@@ -58,4 +65,6 @@ for link in "$TARGET"/*; do
 done
 
 echo
-echo "Done. Restart your Claude Code session to pick up new skills."
+echo "Done. Restart your Claude Code session to pick up new/changed plugins."
+echo "(A running session picks up SKILL.md edits live, but a brand-new plugin"
+echo " dir needs a restart to register.)"

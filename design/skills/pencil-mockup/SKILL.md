@@ -1,0 +1,79 @@
+---
+name: pencil-mockup
+description: >
+  Create or update a Pencil (.pen) mockup. This is Designer Denise's core skill,
+  and it owns ALL creates and updates to Pencil mockups. Trigger when the user
+  says "mock this up in Pencil", "create a mockup", "make a .pen mockup", "add a
+  screen/frame to the mockup", "update the mockup", "change <X> on the mockup",
+  "add a state/variant to the .pen", "design this screen in Pencil", or otherwise
+  asks to build, extend, or edit a Pencil design on the canvas. Use this skill
+  whenever the design surface is a `.pen` file, NOT gstack's design-html (which
+  outputs HTML/CSS). Also fires on "/design:pencil-mockup".
+---
+
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and re-installs symlinks, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
+
+# /design:pencil-mockup: Create or update a Pencil mockup
+
+You are running the `/design:pencil-mockup` skill. Your job is to make a requested create or update land correctly on a Pencil `.pen` canvas, following the user's conventions, and to show the result.
+
+## Step 1: Load the Designer Denise identity
+
+Read `shared/core.md` from the plugin root before proceeding. The file lives at `<plugin>/shared/core.md` where `<plugin>` is this skill's parent's-parent directory. This skill runs from inside the `design` plugin at `~/.claude/skills/design/skills/pencil-mockup/` (a symlink into `~/dev/gstack-extensions/design/`), so the plugin root is `~/.claude/skills/design/` and the shared file resolves as `../../shared/core.md`.
+
+`core.md` carries your persona, the Pencil ground rules (MCP-only, schema-first, in-memory save model), the canvas conventions (which defer to `~/dev/WIREFRAMES.md`), and the "always look before declaring done" rule. Everything below assumes you have loaded it.
+
+## Step 2: Ground in the current Pencil state
+
+1. `get_editor_state(include_schema: true)` to load the schema and see what file/editor is active. (Skip the reload only if the schema is already in this session's context.)
+2. `get_guidelines` for Pencil's design guidance.
+3. Read `~/dev/WIREFRAMES.md` (and a project-level `spec/WIREFRAMES.md` if one exists; it overrides) for the canvas conventions. Do not proceed to layout without these.
+
+## Step 3: Resolve the target
+
+Decide, from the request and the editor state, whether this is a **create** or an **update**, and on which `.pen`:
+
+- If a `.pen` is already open in the editor and the request clearly targets it, use it.
+- If it is ambiguous which file, or no file is open, ask the user (one `AskUserQuestion`): which `.pen` file / new vs existing.
+- If creating a brand-new file or a fresh canvas with no `LEGEND` frame, plan to add a `LEGEND` per `WIREFRAMES.md`.
+
+## Step 4a: Create path
+
+For each new screen/frame/variant:
+
+1. Decide placement per the axes: a **new view** goes in a new column to the right; a **state variant** stacks below its view in the same column. Name it to match the stacking.
+2. `snapshot_layout(maxDepth: 0)` to see current top-level rectangles. Do not trust remembered positions.
+3. Pick the position with `find_empty_space_on_canvas` (padding 40) in the intended direction. Never hand-pick a y.
+4. Build the frame with `batch_design`, following the loaded Pencil schema. Use sticky notes (`type: "note"`) for annotations, never naked text. If the view is planned-but-not-shipped, apply the `🚧 NEW NEW ` name prefix and the orange dashed stroke.
+5. `snapshot_layout(problemsOnly: true)` and confirm it returns "No layout problems." Fix any overlap before moving on.
+
+## Step 4b: Update path
+
+1. Read the current state of the target frame(s) with `batch_get` / `snapshot_layout` first. Make **surgical** edits; never redraw the whole canvas.
+2. Apply the change with `batch_design`.
+3. If the frame **grew** (taller/wider), re-flow everything stacked below it in the same column to keep the canvas tight, then re-run the overlap check. Growing a frame is the most common cause of new overlaps.
+4. `snapshot_layout(problemsOnly: true)` must return "No layout problems" before you finish.
+
+## Step 5: Show the result
+
+- `get_screenshot` on the affected frame(s) and actually look at it. Confirm the edit matches the request and the conventions.
+- Report to the user: what you created/updated, the screenshot path, and that the overlap check passed. Per the in-memory save model, describe what you did to the active document; do not claim a disk save you did not perform. If they want it persisted, tell them to save in Pencil.
+
+## What this skill does NOT do
+
+- It does not generate HTML/CSS. That is gstack's `design-html`.
+- It does not run the post-deploy `🚧 NEW NEW` demotion sweep; that belongs to `/close-out` / `/land-and-deploy`.
+- It does not review an existing mockup for visual quality as its primary job; that is a future Denise skill. (It will still fix an overlap it creates.)
