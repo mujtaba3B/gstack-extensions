@@ -74,18 +74,31 @@ fi
 #    from the current working tree (plain re-install and `update` both no-op
 #    while the version string is unchanged).
 shopt -s nullglob
+fail=0
 for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
   name="$(plugin_name "$manifest")"
-  [[ -n "$name" ]] || { echo "skip: $manifest has no \"name\"; not installing." >&2; continue; }
+  [[ -n "$name" ]] || { echo "skip: $manifest has no \"name\"; not installing." >&2; fail=1; continue; }
   ref="${name}@${MARKET}"
   if claude plugin list 2>/dev/null | grep -q "$ref"; then
     claude plugin uninstall "$ref" >/dev/null 2>&1 || true
   fi
-  claude plugin install "$ref" --scope user >/dev/null && echo "installed: $ref (invokes as /$name:<skill>)"
+  if claude plugin install "$ref" --scope user >/dev/null; then
+    echo "installed: $ref (invokes as /$name:<skill>)"
+  else
+    echo "ERROR: failed to install $ref" >&2
+    fail=1
+  fi
 done
 shopt -u nullglob
 
 echo
+# Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's
+# `if ! bin/install` guard catches it instead of reporting a clean upgrade.
+if [[ "$fail" -ne 0 ]]; then
+  echo "WARNING: one or more plugins failed to install (see errors above)." >&2
+  echo "Re-run this script to retry; restart your session once it succeeds." >&2
+  exit 1
+fi
 echo "Done. Restart your Claude Code session to load new/changed plugins."
 echo "Verify with: claude plugin list"
 echo "Skills invoke as /pm:<skill>, /qa:<skill>, /eng:<skill>, /design:<skill>."
