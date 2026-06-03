@@ -1,0 +1,32 @@
+{
+  "name": "gstack-extensions",
+  "owner": {
+    "name": "Mujtaba Badat",
+    "email": "mj@belalbadat.com"
+  },
+  "metadata": {
+    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Earnie, Designer Denise. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:pr-feedback, /design:pencil-mockup)."
+  },
+  "plugins": [
+    {
+      "name": "pm",
+      "source": "./pm",
+      "description": "PM Penny, the product-manager persona. Turns ideas, bug reports, and 'what should I work on next?' into well-structured GitHub issues, and reframes problems from first principles. Skills: pm:bug, pm:feature, pm:next-issue, pm:first-principles."
+    },
+    {
+      "name": "qa",
+      "source": "./qa",
+      "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup, either in the browser (driving the gstack browse daemon and AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects). Skills: qa:browser, qa:headless."
+    },
+    {
+      "name": "eng",
+      "source": "./eng",
+      "description": "Engineer Earnie, the engineering persona. Works through PR review feedback on his own PRs, reviews other authors' PRs, watches CodeRabbit and applies fixes, spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:pr-feedback, eng:review-pr, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut."
+    },
+    {
+      "name": "design",
+      "source": "./design",
+      "description": "Designer Denise, the design persona. Creates and updates Pencil (.pen) mockups via the Pencil MCP, the Pencil-native counterpart to gstack's HTML-oriented design skills. Skills: design:pencil-mockup."
+    }
+  ]
+}

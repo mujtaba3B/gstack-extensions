@@ -1,0 +1,6 @@
+{
+  "name": "eng",
+  "version": "1.0.0",
+  "description": "Engineer Earnie, the engineering persona. Works through PR review feedback on his own PRs, reviews other authors' PRs, watches CodeRabbit and applies fixes, spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:pr-feedback, eng:review-pr, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut.",
+  "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "qa",
+  "version": "1.0.0",
+  "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup, either in the browser (driving the gstack browse daemon and AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects). Skills: qa:browser, qa:headless.",
+  "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
+}

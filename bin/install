@@ -1,61 +1,125 @@
 #!/usr/bin/env bash
-# Symlink every skill in skills/* AND every sub-skill in <bundle>/skills/*
-# into ~/.claude/skills/ so Claude Code discovers them.
-# A "bundle" is any top-level directory (other than skills/) that has its own
-# skills/<sub-skill>/ tree plus helper files (e.g. shared/*.md) at the bundle
-# root, which sub-skills load via relative paths resolved through the symlink.
-# Idempotent: re-run after pulling updates.
+# Register this repo's persona plugins with Claude Code via a local marketplace.
+#
+# Each top-level dir with a .claude-plugin/plugin.json (pm/ qa/ eng/ design/) is
+# a plugin; .claude-plugin/marketplace.json at the repo root lists all four. We
+# add this repo as a "directory" marketplace and install each plugin from it, so
+# its skills invoke namespaced as <plugin>:<skill> (/pm:bug, /qa:browser,
+# /eng:pr-feedback, /design:pencil-mockup). The prefix is the plugin's manifest
+# "name", not where the repo lives on disk.
+#
+# Why a marketplace and not symlinks into ~/.claude/skills/: a plugin dir
+# symlinked into the skills dir is only ever discovered as "<name>@skills-dir",
+# and it refuses to load when its name collides with a real installed plugin
+# (we hit exactly that: pm@skills-dir vs pm@gstack-extensions). A marketplace
+# install is the documented path, yields the clean /<name>: prefix, and never
+# collides on the filesystem because plugins live in the plugin cache, not in
+# ~/.claude/skills/. That also means gstack's loose /qa coexists with this
+# repo's /qa:browser with zero special handling.
+#
+# install COPIES each plugin into
+# ~/.claude/plugins/cache/<marketplace>/<name>/<version>/, so the repo is NOT
+# read live. `claude plugin update` is a no-op while the version is unchanged,
+# so to pick up edited skill bodies this script does uninstall+install (the only
+# reliable way to refresh the cache from the working tree). Re-run after pulling
+# updates (or use bin/gstack-extensions-upgrade), then restart the session.
+#
+# Idempotent: safe to re-run. Also purges stale symlinks left by the old
+# (pre-marketplace) installer so they don't shadow the marketplace plugins.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$HOME/.claude/skills"
-mkdir -p "$TARGET"
+MARKET="gstack-extensions"
+SKILLS_DIR="$HOME/.claude/skills"
 
-link_skill() {
-  local skill="$1"
-  local name; name="$(basename "$skill")"
-  local link="$TARGET/$name"
-  if [[ -e "$link" && ! -L "$link" ]]; then
-    echo "skip: $link exists and is not a symlink (manual cleanup required)"
-    return
+# Read a plugin manifest's top-level "name" (the install ref and invocation
+# prefix come from this, not the directory name). Parse as JSON so a nested
+# "name" (e.g. under "author") can never be picked up by accident; fall back to
+# a line-oriented sed only if python3 is somehow unavailable.
+plugin_name() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$1" 2>/dev/null
+  else
+    sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
   fi
-  ln -sfn "$skill" "$link"
-  echo "linked: /$name -> $skill"
 }
 
-# Forward-link standalone skills
-if compgen -G "$REPO/skills/*/" >/dev/null; then
-  for skill in "$REPO"/skills/*/; do
-    link_skill "$skill"
+if ! command -v claude >/dev/null 2>&1; then
+  echo "error: the 'claude' CLI is not on PATH; cannot register plugins." >&2
+  exit 1
+fi
+
+# Preflight: validate the marketplace + plugin manifests BEFORE mutating any
+# installed state. Otherwise a broken manifest would uninstall a working cached
+# plugin in the loop below and then fail to reinstall it, leaving it gone until
+# the manifest is fixed. Non-strict on purpose: block on hard errors (the gate's
+# job), not on lint warnings (run `claude plugin validate "$REPO" --strict` by
+# hand for those).
+echo "validating marketplace and plugin manifests..."
+if ! claude plugin validate "$REPO" >/dev/null 2>&1; then
+  echo "error: manifest validation failed; fix it before installing." >&2
+  echo "  run: claude plugin validate \"$REPO\"" >&2
+  exit 1
+fi
+
+# 1. Purge stale symlinks from the old symlink-based installer. A leftover
+#    ~/.claude/skills/<name> -> $REPO/<plugin> loads as <name>@skills-dir and
+#    collides with the marketplace plugin of the same name, so the symlinked
+#    copy refuses to load. Remove any symlink under ~/.claude/skills/ whose
+#    target points into this repo.
+if [[ -d "$SKILLS_DIR" ]]; then
+  for link in "$SKILLS_DIR"/*; do
+    [[ -L "$link" ]] || continue
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+      "$REPO"|"$REPO"/*)
+        rm "$link"
+        echo "removed stale symlink: $(basename "$link") -> $target"
+        ;;
+    esac
   done
 fi
 
-# Forward-link bundle sub-skills (<bundle>/skills/<sub-skill>/).
-# Bundles keep their own shared/ files; sub-skills reference them as
-# "shared/core.md from the bundle root", which resolves through the symlink.
-for bundle in "$REPO"/*/; do
-  name="$(basename "$bundle")"
-  [[ "$name" == "skills" ]] && continue
-  compgen -G "${bundle}skills/*/" >/dev/null || continue
-  for skill in "${bundle}skills"/*/; do
-    link_skill "$skill"
-  done
-done
+# 2. Register (or refresh) the local marketplace.
+if claude plugin marketplace list 2>/dev/null | grep -q "$MARKET"; then
+  echo "marketplace '$MARKET' already registered; refreshing from source..."
+  claude plugin marketplace update "$MARKET" >/dev/null
+else
+  echo "adding marketplace '$MARKET' -> $REPO"
+  claude plugin marketplace add "$REPO" --scope user >/dev/null
+fi
 
-# Clean stale symlinks pointing into this repo whose targets no longer exist
-# (e.g. after renaming or deleting a skill directory).
-for link in "$TARGET"/*; do
-  [[ -L "$link" ]] || continue
-  target="$(readlink "$link")"
-  case "$target" in
-    "$REPO"/*)
-      if [[ ! -e "$target" ]]; then
-        rm "$link"
-        echo "removed stale: $link -> $target"
-      fi
-      ;;
-  esac
+# 3. Install every plugin the repo declares (any top-level dir with a
+#    .claude-plugin/plugin.json). The install ref is <manifest-name>@<market>.
+#    If a plugin is already installed, uninstall first so the cache is re-copied
+#    from the current working tree (plain re-install and `update` both no-op
+#    while the version string is unchanged).
+shopt -s nullglob
+fail=0
+for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
+  name="$(plugin_name "$manifest")"
+  [[ -n "$name" ]] || { echo "skip: $manifest has no \"name\"; not installing." >&2; fail=1; continue; }
+  ref="${name}@${MARKET}"
+  if claude plugin list 2>/dev/null | grep -q "$ref"; then
+    claude plugin uninstall "$ref" >/dev/null 2>&1 || true
+  fi
+  if claude plugin install "$ref" --scope user >/dev/null; then
+    echo "installed: $ref (invokes as /$name:<skill>)"
+  else
+    echo "ERROR: failed to install $ref" >&2
+    fail=1
+  fi
 done
+shopt -u nullglob
 
 echo
-echo "Done. Restart your Claude Code session to pick up new skills."
+# Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's
+# `if ! bin/install` guard catches it instead of reporting a clean upgrade.
+if [[ "$fail" -ne 0 ]]; then
+  echo "WARNING: one or more plugins failed to install (see errors above)." >&2
+  echo "Re-run this script to retry; restart your session once it succeeds." >&2
+  exit 1
+fi
+echo "Done. Restart your Claude Code session to load new/changed plugins."
+echo "Verify with: claude plugin list"
+echo "Skills invoke as /pm:<skill>, /qa:<skill>, /eng:<skill>, /design:<skill>."

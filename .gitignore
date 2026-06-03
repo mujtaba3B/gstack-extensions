@@ -1,14 +1,15 @@
 .DS_Store
 
-# Defense-in-depth: pm-penny user-scoped state lives at ~/.claude/pm-penny/,
-# but the in-repo bundle dir shares its basename. These globs ensure that
-# any stray write into ./pm-penny/<repo>.json or ./pm-penny/fast-learnings.md
-# stays out of git. (The real defense is absolute paths in the skill code.)
-/pm-penny/*.json
-/pm-penny/fast-learnings.md
+# Defense-in-depth: PM Penny user-scoped state lives at ~/.claude/pm-penny/
+# (absolute). These globs ensure that any stray RELATIVE write into the in-repo
+# pm/ plugin dir stays out of git. (The real defense is absolute paths in the
+# skill code.)
+/pm/*.json
+/pm/fast-learnings.md
 
-# Skill-creator description-optimization workspaces (per-skill, ephemeral)
-/skills/*-workspace/
+# Skill-creator description-optimization workspaces (per-skill, ephemeral).
+# They can appear next to any skill under <plugin>/skills/, so match anywhere.
+*-workspace/
 
 # Karpathy three-file schema is local-only across every ~/dev/ repo (see
 # ~/dev/CLAUDE.md tracking rule, 2026-05-30). README.md stays tracked.
