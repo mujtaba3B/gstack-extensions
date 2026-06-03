@@ -36,21 +36,19 @@ link_plugin() {
     echo "note: $TARGET/$name is taken (e.g. a gstack skill); linking as ${name}-gext instead."
     echo "      The invocation prefix is still /$name: (it comes from the manifest name, not this dir)."
   fi
+  if [[ -d "$link" && ! -L "$link" ]]; then
+    # Defensive: never symlink INTO an existing real directory (ln -sfn would nest).
+    echo "skip: $link is a real directory (not a symlink); resolve manually"
+    return
+  fi
   ln -sfn "$plugin" "$link"
   echo "linked plugin: $(basename "$link") (skills invoke as /$name:<skill>) -> $plugin"
 }
 
-# Forward-link every plugin (top-level dir with a .claude-plugin/plugin.json).
-shopt -s nullglob
-for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
-  plugin="$(cd "$(dirname "$manifest")/.." && pwd)"
-  link_plugin "$plugin"
-done
-shopt -u nullglob
-
 # Clean stale symlinks pointing into this repo whose targets no longer exist
 # (e.g. the old per-skill links from before the plugin migration, or a skill
-# directory that was renamed or deleted).
+# directory that was renamed or deleted). Done BEFORE linking so a reclaimable
+# dead link never blocks a fresh link on the same name.
 for link in "$TARGET"/*; do
   [[ -L "$link" ]] || continue
   target="$(readlink "$link")"
@@ -63,6 +61,14 @@ for link in "$TARGET"/*; do
       ;;
   esac
 done
+
+# Forward-link every plugin (top-level dir with a .claude-plugin/plugin.json).
+shopt -s nullglob
+for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
+  plugin="$(cd "$(dirname "$manifest")/.." && pwd)"
+  link_plugin "$plugin"
+done
+shopt -u nullglob
 
 echo
 echo "Done. Restart your Claude Code session to pick up new/changed plugins."

@@ -12,11 +12,11 @@ description: >
 
 # PM Penny — Bug
 
-**Read first:** Load `shared/core.md` from the bundle root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling.
+**Read first:** Load `shared/core.md` from the plugin root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling.
 
 **Fast mode short-circuit.** If the user invoked this skill with `--fast` followed by a description (e.g. `/pm:bug --fast continue button on confirm-details screen does nothing on tap`), load `shared/fast-mode.md` and follow it instead of the normal flow below. Fast mode skips the discovery questions, the reproduction gate, and the preview, files the issue immediately with reproduction marked as waived, then learns from any post-file correction. Everything else in this file is the normal (interactive) flow.
 
-**Then read:** Load `shared/repro-gate.md` from the bundle root. It defines the mandatory reproduction gate that runs after discovery and before the pre-creation preview. Bug issues are not filed without it unless the user explicitly waives.
+**Then read:** Load `shared/repro-gate.md` from the plugin root. It defines the mandatory reproduction gate that runs after discovery and before the pre-creation preview. Bug issues are not filed without it unless the user explicitly waives.
 
 Everything below is specific to bug issues.
 

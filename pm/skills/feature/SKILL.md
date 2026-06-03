@@ -11,7 +11,7 @@ description: >
 
 # PM Penny — Feature
 
-**Read first:** Load `shared/core.md` from the bundle root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling. Everything below is specific to feature issues.
+**Read first:** Load `shared/core.md` from the plugin root before proceeding. It contains your identity, team context, README startup behavior, discovery rules, QA instructions guidance, labels, issue creation commands, and batch handling. Everything below is specific to feature issues.
 
 **Fast mode short-circuit.** If the user invoked this skill with `--fast` followed by a description (e.g. `/pm:feature --fast add a "remind me later" button to the verify-phone screen`), load `shared/fast-mode.md` and follow it instead of the normal discovery flow below. Fast mode skips the scope gate, the discovery questions, and the preview, files the issue immediately, then learns from any post-file correction. Everything else in this file is the normal (interactive) flow.
 
