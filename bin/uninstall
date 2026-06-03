@@ -11,7 +11,15 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MARKET="gstack-extensions"
 SKILLS_DIR="$HOME/.claude/skills"
 
-plugin_name() { sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1; }
+# Parse the manifest's top-level "name" as JSON (a nested "name" under "author"
+# must never be mistaken for it); fall back to sed only if python3 is missing.
+plugin_name() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$1" 2>/dev/null
+  else
+    sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
+  fi
+}
 
 if ! command -v claude >/dev/null 2>&1; then
   echo "error: the 'claude' CLI is not on PATH; cannot uninstall plugins." >&2

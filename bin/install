@@ -32,12 +32,33 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MARKET="gstack-extensions"
 SKILLS_DIR="$HOME/.claude/skills"
 
-# Read a plugin manifest's "name" (the install ref and invocation prefix come
-# from this, not from the directory name).
-plugin_name() { sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1; }
+# Read a plugin manifest's top-level "name" (the install ref and invocation
+# prefix come from this, not the directory name). Parse as JSON so a nested
+# "name" (e.g. under "author") can never be picked up by accident; fall back to
+# a line-oriented sed only if python3 is somehow unavailable.
+plugin_name() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$1" 2>/dev/null
+  else
+    sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
+  fi
+}
 
 if ! command -v claude >/dev/null 2>&1; then
   echo "error: the 'claude' CLI is not on PATH; cannot register plugins." >&2
+  exit 1
+fi
+
+# Preflight: validate the marketplace + plugin manifests BEFORE mutating any
+# installed state. Otherwise a broken manifest would uninstall a working cached
+# plugin in the loop below and then fail to reinstall it, leaving it gone until
+# the manifest is fixed. Non-strict on purpose: block on hard errors (the gate's
+# job), not on lint warnings (run `claude plugin validate "$REPO" --strict` by
+# hand for those).
+echo "validating marketplace and plugin manifests..."
+if ! claude plugin validate "$REPO" >/dev/null 2>&1; then
+  echo "error: manifest validation failed; fix it before installing." >&2
+  echo "  run: claude plugin validate \"$REPO\"" >&2
   exit 1
 fi
 
