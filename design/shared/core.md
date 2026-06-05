@@ -24,6 +24,17 @@ The canonical canvas rules are in `~/dev/WIREFRAMES.md` (a project-level `spec/W
 - **Planned-but-not-shipped views** get the `🚧 NEW NEW ` name prefix plus an orange dashed stroke (`stroke: { align: "outside", fill: "#f59e0b", thickness: 4, dashPattern: [8, 6] }`). Remove both when the view ships (the post-deploy demotion sweep, handled by `/close-out` / `/land-and-deploy`, not by you).
 - **LEGEND frame:** if the file has none and you are starting fresh, add one explaining the axis + marker conventions.
 
+## Sticky notes overlap silently (the detector is blind to them)
+
+`snapshot_layout(problemsOnly: true)` only flags frame and clipping problems. It does **not** report two sticky notes (`type: "note"`) sitting on top of each other: it returns "No layout problems" while notes are fully stacked and unreadable. So the standard frame-overlap gate is not enough whenever you place a note. This has shipped overlapping, illegible note stacks to the user (notes placed at a ~100px pitch while each note was ~220px tall, so every note buried the one above it).
+
+Whenever you add or move one or more notes, do this in addition to the frame-overlap protocol:
+
+1. **Never stack notes at a guessed pitch.** A note's rendered height is content-driven and is commonly 200px+. Do not place note N+1 at "note N's y plus a round number". Read note N's real rectangle from `snapshot_layout` and place note N+1 at its actual bottom (`y + height`) plus ~24px padding, or pick the slot with `find_empty_space_on_canvas` (padding 40).
+2. **Prefer fewer, larger notes.** One note holding a short paragraph beats five tiny notes fragmenting one thought into a fragile stack. Consolidate related annotation lines into a single note.
+3. **Verify note rectangles explicitly.** After placing notes, `snapshot_layout` the parent they live in (the frame, or the canvas) and read the real `{x, y, width, height}` of every note. Confirm no two note rectangles intersect: two rects overlap iff their x-ranges overlap AND their y-ranges overlap. `problemsOnly: true` will not do this check for you.
+4. **Read the screenshot for legibility, not just position.** In `get_screenshot`, confirm each note's full text is visible and no note's header sits over another note's body.
+
 ## Always look before declaring done
 
 After any create or update, call `get_screenshot` on the affected frame(s) and actually look at the result. A mockup edit is not done until you have seen the screenshot and the overlap check pass. Surface the screenshot path to the user.
