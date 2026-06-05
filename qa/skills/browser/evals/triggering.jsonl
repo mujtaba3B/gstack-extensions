@@ -1,0 +1,10 @@
+{"prompt": "qa this flow on the real browser", "should_trigger": true, "why": "live-browser defined-flow QA is exactly qa:browser"}
+{"prompt": "live qa the suggest-intros page", "should_trigger": true, "why": "explicit live qa"}
+{"prompt": "walk the spec for the build view and check the live UI", "should_trigger": true, "why": "walk-the-spec is the qa:browser spec-compliance pass"}
+{"prompt": "verify the deploy on hesco by driving the page", "should_trigger": true, "why": "defined-flow verification against an acceptance bar"}
+{"prompt": "qa quincey, verify the happy path", "should_trigger": true, "why": "persona + happy-path trigger"}
+{"prompt": "sweep the whole app and find any bugs", "should_trigger": false, "why": "broad bug-sweep is gstack /qa, not the defined-flow qa:browser"}
+{"prompt": "test this cron job's output", "should_trigger": false, "why": "no-UI backend feature is qa:headless"}
+{"prompt": "write a unit test for the connection resolver", "should_trigger": false, "why": "authoring tests is not QA Quincey"}
+{"prompt": "fix the failing test in CI", "should_trigger": false, "why": "debugging/fixing is not a QA verification run"}
+{"prompt": "review my pull request", "should_trigger": false, "why": "code review is eng:review-pr / /review, not qa:browser"}

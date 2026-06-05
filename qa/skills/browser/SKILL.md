@@ -1,20 +1,24 @@
 ---
 name: browser
 preamble-tier: 4
-version: 1.0.0
+version: 2.0.0
 description: |
-  QA Quincey's flagship skill. Defined-flow manual browser QA against Pencil
-  mockups: ask the user what flow to test, extract the happy path from the
-  GitHub issue or .pen mockup, confirm the path with the user, drive the
-  gstack browse daemon step by step, AI-compare each live screenshot against
-  the matching mockup screenshot, report categorized deviations, then walk
-  the user through a per-deviation reconcile loop that hands bugs off to
-  /pm:bug. Saves the confirmed happy path as a replayable plan. Use
-  when the user says "qa quincey", "qa this flow", "test the happy path",
-  "verify the deploy on X", "manual qa", or invokes this skill directly. Use
-  this skill rather than /qa when the goal is to verify one specific flow
-  against an explicit acceptance bar, not to sweep the app for any bugs. (gstack-extensions)
-  Voice triggers (speech-to-text aliases): "qa quincey", "verify the happy path", "test this flow", "check the mockup".
+  QA Quincey's flagship skill: defined-flow LIVE-browser QA that drives the
+  real running app through the user's persistent agent-browser session
+  (abrowser, headed) at click/pixel level, not just endpoint calls. Pulls the
+  happy path from a GitHub issue, spec, or Pencil mockup; WALKS THE SPEC
+  (spec/eng docs + Pencil frames) and reports per-assertion Spec compliance
+  (matches/drifts/missing); boots the app and seeds TAGGED test data via the
+  repo's own recipe, then tears it down exactly; observes at the real surface
+  (URL/redirect, rendered DOM, screenshots) with at least one adversarial
+  off-happy-path probe; and ends by stating the QA posture contract
+  (QA_STATUS: verified + EVIDENCE) that satisfies the build-time Stop hook and
+  the PR qa-gate CI. Use when the user says "qa quincey", "live qa", "qa this
+  flow", "test the happy path on the real browser", "verify the deploy on X",
+  "walk the spec", or invokes this skill directly. Use this rather than /qa
+  when the goal is to verify one specific flow against an explicit acceptance
+  bar and record a QA posture, not to sweep the app for any bugs. (gstack-extensions)
+  Voice triggers (speech-to-text aliases): "qa quincey", "live qa", "verify the happy path", "test this flow on the real browser", "walk the spec".
 allowed-tools:
   - Bash
   - Read
@@ -26,11 +30,11 @@ allowed-tools:
   - WebSearch
 triggers:
   - qa quincey
+  - live qa
   - test this flow
-  - manual qa
   - verify the happy path
-  - check the mockup
-  - qa quincey manual browser testing
+  - walk the spec
+  - qa on the real browser
 ---
 
 ## Update check (run first)
@@ -707,6 +711,16 @@ For each frame in the happy path:
 
 Convert the user's prose to a numbered step list. Each step has: action, expected outcome, mockup reference (or "none"). Show your conversion back to the user in step 4 so they can correct it.
 
+### 3d. Walk the spec (not just the issue)
+
+Issue bullets describe outcomes; spec docs and Pencil frames describe intent and visual treatment, and outcomes can be green while presentation drifts substantially. If the repo ships from a spec (a `spec/eng/*.md` doc or a `spec/wireframes/*.pen` frame; paths configurable via the recipe `spec_refs`, see Step 5):
+
+1. Open every UX-relevant section of the spec doc.
+2. Open the relevant Pencil frame(s) via `mcp__pencil__get_screenshot`.
+3. Extract each described element (copy, layout, color, spacing, state) as an assertion you will check live in Step 7d.
+
+These assertions become the **Spec compliance** subsection of the report. Per the hesco convention, that subsection (one row per major assertion, verdict `matches` / `drifts` / `missing`) is the bar: no green without it.
+
 ## Step 4: Confirm the happy path
 
 **STOP point.** Do not proceed until the user has approved the path.
@@ -747,153 +761,137 @@ mkdir -p ~/.gstack/projects/${SLUG:-unknown}/qa-quincey/reports
 
 If a plan with the same slug exists, increment its `runs` counter rather than overwriting; preserve creation date, update `updated`.
 
-## Step 5: Authentication (non-local environments)
+## Step 5: Load and validate the repo recipe, then boot + seed
 
-Skip this step if environment is `local`.
+QA Quincey needs to know how THIS repo boots, seeds tagged data, and tears it down. That per-repo knowledge lives in a committed recipe at `.gstack/qa-quincey/recipe.yml` (relative to the git root). It holds declarative pointers only (no inline code). See `references/recipe-schema.md` for the full schema, an example, and the validation rules.
 
-For `staging` or `production`, you need browser cookies for the target domain. The cookie-import dance has a sharp edge documented in `references/cookie-profile-probe.md`: real Chrome users often have many profiles, and the logged-in session is rarely in `Default`. Probe all profiles for the target domain's `sessionid` cookie before assuming Default.
-
-Quick probe (read-only, no keychain unlock needed):
+### 5a. Locate and validate the recipe
 
 ```bash
-TARGET_DOMAIN=<the host>
-for db in "$HOME/Library/Application Support/Google/Chrome/"{Default,Profile\ *}/Cookies; do
-  [ -f "$db" ] || continue
-  cp "$db" /tmp/_p.db 2>/dev/null
-  cnt=$(sqlite3 /tmp/_p.db "SELECT COUNT(*) FROM cookies WHERE host_key LIKE '%${TARGET_DOMAIN}%' AND name='sessionid';" 2>/dev/null)
-  [ "${cnt:-0}" -gt 0 ] && echo "$(basename "$(dirname "$db")"): has sessionid"
-done
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+RECIPE="$ROOT/.gstack/qa-quincey/recipe.yml"
 ```
 
-If multiple profiles match, AskUserQuestion to pick. Then hand off to `/setup-browser-cookies` with the chosen profile, or invoke browse cookie-import directly with `--profile "Profile N"` (quoted because of the space).
+- **If the recipe is missing:** offer to scaffold one (AskUserQuestion). Use the template in `references/recipe-schema.md`, fill what you can infer (an `app_root` from where `manage.py` / `package.json` lives, a `boot` from a `dev-setup.sh` if present, a `base_url`), and STOP for the user to confirm the seed/teardown command NAMES before writing it. Never invent a seed command; the repo must own it as a real, reviewable entrypoint.
+- **If present:** validate it before trusting it. The skill loads and runs what the recipe points at, and autonomous agents (MuTwo) run this too, so a bad recipe is a safety surface. Run the bundled validator (rejects inline secrets, absolute machine paths, and an unscoped `teardown_command`):
 
-If no profile matches, ask the user to log in to the target domain in their Chrome and re-run the skill.
+  ```bash
+  VALIDATOR="${CLAUDE_PLUGIN_ROOT:-$HOME/dev/gstack-extensions/qa}/skills/browser/scripts/validate-recipe.py"
+  python3 "$VALIDATOR" "$RECIPE"
+  ```
 
-## Step 6: Locate the browse binary
+  On a non-zero exit, STOP and surface the flagged field; do not boot or seed with an invalid recipe. Then confirm the recipe is tracked, not git-ignored: `git -C "$ROOT" check-ignore -q "$RECIPE" && echo IGNORED`. If IGNORED, warn and offer to un-ignore `.gstack/qa-quincey/`, else the recipe will not travel to CI / MuTwo.
+
+### 5b. Boot the app
+
+Run the recipe `boot` command from `app_root` (the recipe names the subdir for monorepos, e.g. `user_growth`). For a prod-shaped local DB that is typically `./dev-setup.sh <your-email>` (pulls prod data scoped to you, neutralizes tokens, auto-login, serves). Record the PID of any server you start; you kill it in teardown. Confirm `base_url` responds before driving.
+
+### 5c. Seed TAGGED data
+
+Run the recipe `seed_command`, which creates rows tagged with `tag_prefix` (e.g. `people/qa-verify-`) so teardown is exact. Seed only what the scenarios need. Capture the identifiers/handles you seeded for the report.
+
+## Step 6: Bring up the persistent browser session
+
+You drive the user's real, logged-in browser via the `abrowser` launcher (the persistent `mujtaba` agent-browser session), NOT the gstack browse daemon. Headed by default.
+
+**CRITICAL: batch to avoid a 1Password prompt storm.** Each separate `abrowser` invocation re-reads the session key from 1Password via `op`, and every `op` read fires the macOS "iTerm wants to access data from other apps" prompt. The Claude Code Bash tool does not persist env between calls. So fetch the key ONCE at the top of a single Bash call and run all browser commands in that same call. See `references/abrowser-driving.md`.
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
-[ -z "$B" ] && B="$HOME/.claude/skills/gstack/browse/dist/browse"
-if [ ! -x "$B" ]; then
-  echo "NEEDS_SETUP: gstack browse binary not found at $B. Run 'cd ~/.claude/skills/gstack/browse && ./setup' once."
-  exit 1
-fi
+export AGENT_BROWSER_ENCRYPTION_KEY="$(source ~/.config/op-access/token.env && /opt/homebrew/bin/op read 'op://AI CLI/agent-browser session encryption key/password')"
+abrowser open "<base_url>/<first-route>"
+abrowser eval "location.pathname"      # confirm the app, not an authwall
+# ...more driving in THIS same block
 ```
 
-Use `$B` for every browse call below.
+Leave the daemon running when QA finishes; do NOT `abrowser close` (closing re-invokes `op` and can clobber the saved login). See teardown.
 
-## Step 7: Execute the flow (autonomous)
+## Step 7: Drive the real UI and observe at the real surface
 
-For each step in the happy path, in order:
+For each scenario in the happy path, drive the rendered UI through `abrowser` and observe what the user actually sees. Keep all the `abrowser` calls for one scenario inside ONE Bash block (re-export the key at the top of each block).
 
-### 7a. Capture the mockup reference
+### 7a. Capture the mockup reference (if any)
+If the step maps to a Pencil node: `mcp__pencil__get_screenshot(node_id: <id>)` and save it under the report dir.
 
-If the step has a mockup `node ID` (from the `.pen` file):
+### 7b. Drive
+- snapshot to get interactive `@e` refs: `abrowser snapshot -i`
+- act: `abrowser click @e15`, `abrowser type @e10 "qa-verify probe"`
+- navigate: `abrowser open "<url>"`
 
-```
-mcp__pencil__get_screenshot(node_id: <id>)
-```
+Prefer accessible / text targets over fragile class selectors. Re-snapshot after any navigation (refs go stale).
 
-Save the returned image to `~/.gstack/projects/<slug>/qa-quincey/reports/<feature>-<date>-step<N>-mockup.png`.
+### 7c. Observe at the REAL surface
+This skill verifies click/pixel-level UI, not just endpoint calls. Capture more than one signal:
+- URL / redirect: `abrowser eval "location.pathname"` (e.g. did it land on `/preview/` or detour to `/complete/`?)
+- rendered DOM: `abrowser eval "document.body.innerText.includes('...')"`
+- a screenshot as evidence: `abrowser screenshot --path <report-dir>/<feature>-step<N>-live.png`
 
-If the step has no mockup, note "no mockup; comparing against acceptance criteria only" for this step in the report.
+### 7d. Mockup + spec comparison
+If a mockup exists, AI-diff live vs mockup per `references/visual-diff-prompt.md` into the deviation categories (LAYOUT, COPY, COLOR, TYPOGRAPHY, MISSING, EXTRA, STATE). Independently, hold each spec assertion from Step 3d against what you observed and mark it `matches` / `drifts` / `missing`. This feeds the Spec compliance subsection; per the hesco rule, no green without it.
 
-### 7b. Perform the action
+### 7e. Classify the scenario
+- **PASS**: observed outcome matches expected AND no blocking deviations.
+- **DEVIATION**: outcome correct but visual / spec drift surfaced.
+- **FAIL**: observed outcome did not match (wrong redirect, missing element, etc.).
 
-Translate the step's `action` into one or more `$B` calls:
+A FAIL aborts the remaining happy-path scenarios that depend on it; record them as not-run. The probe in Step 8 still runs.
 
-- "Navigate to /foo" → `"$B" goto "<base_url>/foo"`
-- "Click the 'Continue' button" → `"$B" click "text=Continue"`
-- "Fill the email field with X" → `"$B" fill "input[name=email]" "X"`
-- "Wait for the page to load" → `"$B" wait` or `"$B" js 'document.readyState==="complete"'`
+## Step 8: Adversarial off-happy-path probe (required)
 
-Be conservative with selectors. Prefer `text=` and accessible attributes over fragile class selectors.
+Run at least one probe that is NOT the happy path, to prove the feature/fix is precise rather than coincidentally green. Canonical example (hesco #81): the happy path was "known contact skips the add-details form"; the probe was "same contact with company blanked", asserting it STILL detours, proving the gate fires on a real gap. Drive it through the real UI and observe at the real surface, same as Step 7. Record it as a distinct row (mark it 🔍 in the report table).
 
-### 7c. Capture the live screenshot
+## Step 9: Write the report
 
-```
-"$B" snapshot --path ~/.gstack/projects/<slug>/qa-quincey/reports/<feature>-<date>-step<N>-live.png
-```
+Per the `core.md` report format, at `~/.gstack/projects/<slug>/qa-quincey/reports/<feature>-<date>-<HHMM>.md`. It MUST include:
+- a scenario table (`# | Scenario | Result`) with the observed real-surface result per row (redirects, rendered state), including the 🔍 probe row;
+- a **Spec compliance** subsection: one row per major spec assertion with `matches` / `drifts` / `missing` (the hesco bar, no green without it);
+- the mockup ↔ live image strip for steps that had a mockup;
+- a **Pre-deploy** verdict and a **Post-deploy** line (the specific scenario to re-run against production after merge + deploy).
 
-### 7d. Verify the expected outcome
+## Step 10: Teardown (mandatory)
 
-Programmatic check first:
+Undo every mutation you made; keep the evidence.
+- Run the recipe `teardown_command` (scoped to `tag_prefix`). Then ASSERT zero tagged rows remain (re-query); a tagged-row delete can leave residue via cascades / async workers, so verify, do not assume.
+- Kill any dev server you started (the PID from Step 5b).
+- Remove any temp dirs / caches you created.
+- LEAVE the `abrowser` daemon running (do not `close`; it re-invokes `op` and can clobber the login).
+- Keep reports and screenshots.
 
-- If the step says "page shows X", `"$B" js 'document.body.innerText.includes("X")'`.
-- If the step says "URL is /foo", inspect the URL via `"$B" url`.
-- If the step says "the API call succeeded", check the network log via `"$B" network`.
+## Step 11: Emit the QA posture contract
 
-Record the boolean result. If FALSE, this step is FAIL.
+QA is a first-class, recorded decision. The same run feeds two gates with different match rules (see `references/qa-contract.md`):
+- the build-time **Stop hook** (lenient: any `QA_STATUS:` line in your final message satisfies it), and
+- the PR **qa-gate CI** (strict: a single-keyword `QA_STATUS:` line in the PR body, no `<` or `|`, not the template menu).
 
-### 7e. AI visual diff (only if mockup exists)
+Decide the posture from the verdict:
+- all scenarios PASS (deviations accepted/ignored) → `QA_STATUS: verified` + `EVIDENCE:` citing the real-surface observations, screenshot paths, the probe, and any test names. NEVER emit `verified` unless you actually drove the UI and observed the outcome.
+- a FAIL, or QA could not complete → `QA_STATUS: blocked` + `REASON:`.
+- QA genuinely not feasible → `QA_STATUS: skip_requested` + `REASON:`, then ask the human "ok to skip QA for <reason>"; on approval record `QA_STATUS: skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>`. CI rejects `skip_requested`, so it must reach `skip_approved` before the PR can go green.
 
-Read both the mockup PNG and the live PNG. Run the comparison per the prompt in `references/visual-diff-prompt.md`. Output is a list of deviations, each tagged with one of the categories from `core.md`: LAYOUT, COPY, COLOR, TYPOGRAPHY, MISSING, EXTRA, STATE.
+End your final message with the posture line so the Stop hook sees it, and hand the user a CI-clean QA block to paste into the PR `## QA` section.
 
-For each deviation, record:
-- The category.
-- A one-sentence description (specific: name the element, name the property, give both values).
-- An optional cropped region of the live screenshot showing the affected area (use `"$B" snapshot --selector <css>` if you can isolate it).
+### Optional: reconcile deviations
+If deviations were found and the user wants them filed, walk them one at a time and offer `/pm:bug --fast` with a pre-filled body. This is optional now; the primary output is the stated QA posture, not the bug handoff.
 
-### 7f. Classify this step
+## Step 12: Finalize the verdict
 
-- **PASS**: programmatic check passed AND zero visual deviations (or no mockup to compare).
-- **DEVIATION**: programmatic check passed but visual diff surfaced one or more deviations.
-- **FAIL**: programmatic check failed (the expected outcome did not happen).
-
-If FAIL, decide whether to continue or abort. Some flows depend on prior step state (cannot test step 5 if step 3 broke). Default to abort on FAIL; record remaining steps as "not-run".
-
-## Step 8: Write the report
-
-Per the `core.md` report format. Path:
-
-```
-~/.gstack/projects/<slug>/qa-quincey/reports/<feature>-<date>-<HHMM>.md
-```
-
-Include the side-by-side image strip (mockup ↔ live) for every step that had a mockup. Markdown image references resolve relative to the report file, so use relative paths.
-
-Set `verdict` provisionally to the worst step verdict (any FAIL = FAIL; otherwise any DEVIATION = DEVIATIONS; otherwise PASS). The reconcile loop in step 9 may upgrade DEVIATIONS to PASS if every deviation is Accepted or Ignored.
-
-Print the report path to the user.
-
-## Step 9: Reconcile loop
-
-For every deviation found across all steps, walk the user through it. One deviation at a time. Use AskUserQuestion for each:
-
-- **A) Accept**: intentional or acceptable. Capture a one-line reason. Move on.
-- **B) File as bug**: invoke `/pm:bug --fast` with a pre-filled body containing the step number, the action that triggered it, expected vs observed, and the path to the live screenshot. Capture the returned issue number.
-- **C) Ignore**: noise (data difference, intermittent state). Capture a one-line reason. Move on.
-
-After every deviation has a disposition, update the report's Reconciliation table and Filed Issues section.
-
-## Step 10: Finalize the verdict
-
-Recompute the verdict based on dispositions:
-
-- All deviations Accepted or Ignored, no FAIL steps → **PASS**.
-- At least one deviation filed as bug, no FAIL steps → **DEVIATIONS**.
-- Any FAIL step → **FAIL**.
-
-Update the report's frontmatter `verdict` field with the final value.
-
-Report to the user with one paragraph: feature, environment, verdict, count of deviations by disposition, link to the report file.
+Set the report's `verdict` (PASS / DEVIATIONS / FAIL) and make sure it agrees with the QA_STATUS you emitted (PASS ↔ verified; FAIL ↔ blocked or bug-filed). Report to the user in one paragraph: feature, environment, verdict, the posture line, and the report path.
 
 ## Additional rules (qa:browser specific)
 
+### Seeds and tears down tagged data; never edits source
+This skill mutates DATA (tagged, then deleted) and may scaffold a recipe, but it never edits project source code. If a deviation reveals a code bug, file it via `/pm:bug`; refer the user to `/qa` for the fix-and-commit loop.
+
+### Batch every abrowser sequence
+All `abrowser` calls for a given step go in ONE Bash block with the key exported once at the top. Never one `abrowser` call per Bash invocation (op-prompt storm).
+
+### Honesty
+`QA_STATUS: verified` is a claim that you drove the real UI and observed the result. Do not emit it from a dry run, a code read, or an endpoint-only check. If you only got partway, say `blocked` with what you reached.
+
 ### Save the plan, always
-
-Even if the user cancels at step 9, the plan file from step 4b stays on disk. The next run of this skill should detect it and offer to replay (step 2 option B).
-
-### Do not modify project source code
-
-This skill never edits the project. If a deviation reveals a bug, it gets filed via /pm:bug for BugBash Ben to fix. Refer the user to /qa if they want the fix-and-commit loop.
+The plan file from step 4b stays on disk even if the run is cancelled. The next run detects it and offers to replay (step 2 option B).
 
 ### Plan mode behavior
-
-If invoked in plan mode, the workflow runs as a plan: steps 1-4 execute, the plan is presented as the plan, and step 5+ are deferred until the user exits plan mode. The plan file is the artifact.
+In plan mode, Steps 1-4 (intake, discover, spec-walk, confirm) plus recipe validation run and the plan is the artifact; booting, seeding, and driving are deferred until the user exits plan mode.
 
 ### Voice triggers and aliases
-
-Users will invoke this skill with phrases like "qa quincey", "test this flow", "verify the happy path". The triggers are also covered by the bundle README. If the user says "test this flow" without naming a flow, your first job is step 2 (intake), not to start clicking.
+"qa quincey", "live qa", "qa this flow on the real browser", "verify the happy path", "walk the spec". If the user names no flow, your first job is intake (Step 2), not driving.
