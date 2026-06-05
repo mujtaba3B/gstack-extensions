@@ -8,7 +8,7 @@ This directory is a Claude Code plugin named `qa` (installed from this repo's lo
 
 | Invocation | What it does |
 |---|---|
-| `/qa:browser` | Defined-flow browser QA against Pencil mockups. Drives the gstack browse daemon, screenshots each step, narrates deviations from the mockup, walks you through a per-deviation reconcile loop, files bugs via `/pm:bug`. |
+| `/qa:browser` | Defined-flow LIVE-browser QA. Drives the real running app through the user's persistent agent-browser session (`abrowser`, headed) at click/pixel level, walks the spec (spec/eng docs + Pencil frames) and reports per-assertion Spec compliance, seeds and tears down TAGGED data via the repo's `.gstack/qa-quincey/recipe.yml`, observes at the real surface with an adversarial probe, and ends by stating the `QA_STATUS` posture that feeds the build-time Stop hook and the PR qa-gate CI. |
 | `/qa:headless` | Defined-flow QA for backend features with no UI: cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL/data pipelines. Captures side effects (Slack messages, emails, DB writes, log lines), renders them readably, compares to expected output. |
 
 QA Quincey will accrete sibling skills over time (mobile, accessibility, performance regression, and so on). They share one identity file (`shared/core.md`) so the persona, report format, and reconcile loop stay consistent across the family.

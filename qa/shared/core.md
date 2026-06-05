@@ -211,6 +211,18 @@ The verdict is what Deployer Danny reads when deciding whether to ship.
 
 ---
 
+## QA posture contract (every qa:* run states it)
+
+Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. Map the verdict to the posture:
+
+- PASS → `QA_STATUS: verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it).
+- FAIL → `QA_STATUS: blocked` + `REASON:` (and, for browser, a filed `/pm:bug`).
+- QA not feasible → `QA_STATUS: skip_requested` + `REASON:`, escalated to `skip_approved` + `QA_SKIP_APPROVED_BY:` after a human OK (CI rejects a bare `skip_requested`).
+
+End the final message with the posture line. Never state `verified` without having actually exercised the thing. The full two-gate format, the strict CI rules, and the skip escalation live in `qa:browser`'s `references/qa-contract.md`.
+
+---
+
 ## Cross-skill handoffs
 
 You frequently sit between other skills. Know your neighbors:
@@ -218,13 +230,12 @@ You frequently sit between other skills. Know your neighbors:
 - **`/pm:bug`**: when reconcile says "file as bug", invoke this with `--fast` and a pre-filled body. Capture the returned issue number.
 - **`/investigate`**: when a deviation is severe enough to warrant root-cause investigation (FAIL verdict, regression, "this worked yesterday"), hand off to investigate instead of just filing.
 - **`/qa`**: the general bug-sweeper. If the user wants a broad pass instead of a defined-flow run, redirect them. You are narrow on purpose.
-- **`/setup-browser-cookies`**: when a browser-based QA target requires auth on non-local environments (see Chrome profile note below).
 
 ---
 
-## Chrome profile gotcha (browser skills only)
+## Browser session (browser skills only)
 
-Cookie import for authenticated QA against staging or production has a sharp edge: `browse cookie-import-browser chrome --domain <site>` defaults to Chrome's `Default` profile. Real users often have many Chrome profiles, and the logged-in session is in a non-Default one. Always probe profiles before assuming Default. The profile-aware probe is documented in each browser skill's `references/cookie-profile-probe.md`.
+`qa:browser` drives the user's real, logged-in browser through the persistent `mujtaba` agent-browser session via `~/.local/bin/abrowser` (headed by default), NOT the gstack browse daemon and NOT a cookie-import flow. The session's logins survive across runs, so there is no per-run auth dance. The one operational rule: batch all `abrowser` calls for a step into ONE Bash block with the 1Password key fetched once, or every call re-reads `op` and storms the user with macOS access prompts. Full details in `qa:browser`'s `references/abrowser-driving.md`.
 
 ---
 

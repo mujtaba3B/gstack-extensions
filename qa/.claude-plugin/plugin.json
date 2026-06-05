@@ -1,6 +1,6 @@
 {
   "name": "qa",
-  "version": "1.0.0",
-  "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup, either in the browser (driving the gstack browse daemon and AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects). Skills: qa:browser, qa:headless.",
+  "version": "2.0.0",
+  "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup and records a QA posture. qa:browser drives the real running app through the user's persistent agent-browser session (click/pixel level), walks the spec, seeds and tears down tagged data via the repo's recipe, and ends with the QA_STATUS contract that satisfies the build-time Stop hook and the PR qa-gate CI. qa:headless does the same for backend features with no UI (capturing side effects). Skills: qa:browser, qa:headless.",
   "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
 }
