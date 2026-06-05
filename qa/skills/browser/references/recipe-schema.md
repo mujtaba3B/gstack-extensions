@@ -59,11 +59,11 @@ All fields except `app_root`, `base_url`, and `boot` are optional, but a recipe 
 
 ## Validation (the skill runs this on load)
 
-A bad recipe is a safety surface because autonomous agents run it. Before trusting a recipe, reject and STOP on:
+A bad recipe is a safety surface because autonomous agents run it. The validator is a best-effort **tripwire for obvious mistakes**, not a guarantee; it rejects and STOPs on:
 
-- **Inline secrets:** any value matching `sk-`, `ghp_`, `AKIA`, `xoxb-`, or a raw token shape. An `op://...` REFERENCE is allowed (it is a pointer, not a secret).
-- **Absolute machine paths:** values starting with `/Users/` or `/home/` (paths should be repo-relative or resolved at runtime).
-- **Unscoped teardown:** a `teardown_command` that does not reference `{tag_prefix}` / `tag_prefix`. Teardown must only ever delete tagged rows.
+- **Inline secrets (known shapes):** values matching common vendor-prefixed tokens (`sk-`, `ghp_`, `github_pat_`, `glpat-`, `AKIA`, `AIza`, `xoxb-`). This is not exhaustive: a prefix-less high-entropy secret can still slip past, so the real defense is the `op://` convention (a reference is a pointer, not a secret, and is allowed).
+- **Machine-absolute paths:** a `/Users/...` or `/home/...` path in any field (paths should be repo-relative or resolved at runtime).
+- **Obviously unscoped teardown:** a `teardown_command` whose command portion does not reference `{tag_prefix}` (inline comments are stripped first, so a bare `# tag_prefix` comment cannot satisfy it). This is a lint, not a proof. The load-bearing teardown safety is that `teardown_command` is a repo-owned reviewed entrypoint and the skill asserts **zero tagged rows remain** after running it (Step 10).
 
 Also confirm the recipe is tracked, not git-ignored:
 

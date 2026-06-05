@@ -4,8 +4,11 @@
 A recipe (`.gstack/qa-quincey/recipe.yml`) points the live-browser QA skill at
 repo-owned entrypoints that get executed, including by autonomous agents, so a
 bad recipe is a safety surface. This validator is the linter the skill runs in
-Step 5a. It works on the raw text (no YAML dependency) so the security checks
-catch a secret or absolute path wherever it appears.
+Step 5a. It is a best-effort TRIPWIRE for obvious mistakes, not a guarantee: it
+works on the raw text (no YAML dependency) and flags KNOWN token shapes,
+machine-absolute paths, and a teardown that is obviously not tag-scoped. The
+real teardown safety is that `teardown_command` is a repo-owned, reviewed
+entrypoint and the skill asserts zero tagged rows remain afterward (Step 10).
 
 Usage:   validate-recipe.py <path-to-recipe.yml>
 Exit:    0 = PASS, 1 = FAIL (reasons on stderr), 2 = file missing / unreadable.
@@ -20,15 +23,23 @@ import sys
 
 REQUIRED_KEYS = ("app_root", "base_url", "boot")
 
-# Inline secret shapes. An `op://...` reference is a POINTER, not a secret, and
-# is explicitly allowed; everything else here is a real credential leak.
+# Known inline-secret shapes. This is a tripwire for the common vendor-prefixed
+# tokens, NOT exhaustive (a prefix-less high-entropy secret can still slip past;
+# the real defense is the op:// convention). An `op://...` reference is a
+# POINTER, not a secret, and is explicitly allowed.
 _SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9]{8,}"),
     re.compile(r"ghp_[A-Za-z0-9]{8,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{16,}"),
     re.compile(r"AKIA[0-9A-Z]{12,}"),
+    re.compile(r"AIza[0-9A-Za-z_-]{30,}"),
     re.compile(r"xox[baprs]-[0-9A-Za-z-]{8,}"),
 )
-_ABS_PATH = re.compile(r":\s*['\"]?(/Users/|/home/)")
+# A machine-absolute home path in any position: after a colon, a list dash,
+# whitespace, a quote, or at line start. (A URL like https://x/home/ is not
+# matched because /home/ there is not preceded by one of these delimiters.)
+_ABS_PATH = re.compile(r"(?:^|[:\-\s'\"])(/Users/|/home/)")
 
 
 def _value_lines(text: str):
@@ -69,10 +80,16 @@ def validate_recipe_text(text: str) -> list[str]:
         if key not in keys_seen:
             problems.append(f"missing required key: {key}")
 
-    # Teardown must be scoped to the tag prefix so it can never delete untagged
-    # rows. We accept either a {tag_prefix} placeholder or a literal reference.
+    # Teardown should be scoped to the tag prefix so it cannot delete untagged
+    # rows. Best-effort lint: strip any inline comment and check the COMMAND
+    # portion (after the key's colon), so a bare `# tag_prefix` comment cannot
+    # satisfy it. This is a tripwire, not a proof; a path that merely contains
+    # the literal tag can still pass. Real safety is the post-teardown
+    # zero-tagged-rows assert in the skill's Step 10.
     if teardown_line is not None:
-        if "tag_prefix" not in teardown_line and "qa-verify" not in teardown_line:
+        cmd = re.split(r"\s#", teardown_line, maxsplit=1)[0]
+        cmd_val = cmd.split(":", 1)[1] if ":" in cmd else cmd
+        if "tag_prefix" not in cmd_val and "qa-verify" not in cmd_val:
             problems.append(
                 "teardown_command is not scoped to tag_prefix; teardown must "
                 "only ever delete tagged rows (reference {tag_prefix})"

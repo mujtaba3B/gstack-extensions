@@ -9,7 +9,7 @@ function with real tests:
 
 - `../scripts/validate-recipe.py`: rejects inline secrets, absolute machine
   paths, and an unscoped `teardown_command`; requires `app_root` / `base_url` / `boot`.
-- `../scripts/test_validate_recipe.py`: 8 pytest cases.
+- `../scripts/test_validate_recipe.py`: 14 pytest cases, including adversarial bypass cases (comment-scoped teardown, prefix-less paths, fine-grained PATs) and `main()` exit codes.
 
 Run (single file only, per the machine's no-full-suite rule):
 
