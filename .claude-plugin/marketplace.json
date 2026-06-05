@@ -5,7 +5,7 @@
     "email": "mj@belalbadat.com"
   },
   "metadata": {
-    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Earnie, Designer Denise. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:pr-feedback, /design:pencil-mockup)."
+    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Earnie, Designer Denise. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:cr, /design:pencil-mockup)."
   },
   "plugins": [
     {
@@ -21,7 +21,7 @@
     {
       "name": "eng",
       "source": "./eng",
-      "description": "Engineer Earnie, the engineering persona. Works through PR review feedback on his own PRs, reviews other authors' PRs, watches CodeRabbit and applies fixes, spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:pr-feedback, eng:review-pr, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut."
+      "description": "Engineer Earnie, the engineering persona. eng:cr is his master code-review skill and the single local review path the ~/dev merge gate keys on: it risk-tiers depth, runs the pr-review-toolkit lenses, and mints the merge-clearance stamp. It routes to cr-teammate (review someone else's PR and post a comment) and to address-pr-feedback / pr-watcher (respond to review feedback). He also spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:cr, eng:cr-teammate, eng:address-pr-feedback, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut."
     },
     {
       "name": "design",

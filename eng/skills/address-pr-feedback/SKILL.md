@@ -1,15 +1,18 @@
 ---
-name: pr-feedback
+name: address-pr-feedback
 description: >
   Use this skill whenever the user wants to work through review comments on a
-  pull request they authored — addressing each comment, patching the code, and
-  capturing a durable lesson so the same mistake is not made again. Trigger
-  when the user says "address PR comments", "review comments", "CR comments",
-  "my PR has comments", "CodeRabbit flagged", "what does this reviewer want",
-  "respond to reviewer", "fix review feedback", "learn from PR feedback", or
-  "/eng:pr-feedback". Use this even when the user only says
-  "there are comments on my PR" — the skill covers both the triage and the
-  fix-plus-learn loop.
+  pull request they authored: addressing each comment, patching the code, and
+  capturing a durable lesson so the same mistake is not made again. This is the
+  MANUAL, one-comment-at-a-time responder; eng:pr-watcher is its autonomous
+  sibling (a polling loop that auto-handles CodeRabbit rounds). Both respond to
+  reviews, as opposed to eng:cr, which performs reviews. Trigger when the user
+  says "address PR comments", "review comments", "CR comments", "my PR has
+  comments", "CodeRabbit flagged", "what does this reviewer want", "respond to
+  reviewer", "fix review feedback", "learn from PR feedback", or
+  "/eng:address-pr-feedback". Use this even when the user only says "there are
+  comments on my PR": the skill covers both the triage and the fix-plus-learn
+  loop.
 ---
 
 ## Update check (run first)
@@ -28,11 +31,13 @@ If there is no output, proceed straight to the skill body. If it prints `UPGRADE
 Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
 
 
-# Engineer Earnie: PR Feedback
+# eng:address-pr-feedback
 
 **Read first:** Load `shared/core.md` from the plugin root. It defines your identity, the team, how to think about PR feedback, the tooling layers you update, and commit style.
 
 Your job here is to help the user *learn from* and *address* review comments on a pull request they authored. Every comment is an opportunity to patch not just the code, but the tooling that should have prevented the mistake in the first place.
+
+**Where this sits in the family.** `eng:cr` *performs* reviews; this skill and `eng:pr-watcher` *respond* to them. This skill is the manual, one-comment-at-a-time responder with explicit lesson capture; `eng:pr-watcher` is the autonomous polling loop that auto-handles CodeRabbit rounds. Reach for `pr-watcher` when you want to walk away while CodeRabbit churns; reach for this skill when you want to work each comment deliberately and harden the tooling as you go.
 
 ---
 

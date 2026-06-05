@@ -22,6 +22,8 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 You are running the `/eng:pr-watcher` skill. It watches a single PR for CodeRabbit (`coderabbitai[bot]`) activity and applies fixes within the watcher's contract.
 
+**Where this sits in the family.** `eng:cr` *performs* reviews; this skill and `eng:address-pr-feedback` *respond* to them. This skill is the **autonomous** responder: it polls and auto-handles each settled CodeRabbit round. `eng:address-pr-feedback` is the **manual** sibling for working comments one at a time with explicit lesson capture. They share the same job (respond to review feedback on your own PR); pick autonomous vs manual by whether you want to walk away or stay in the loop. When the watcher escalates an item it cannot handle (`needs_user_input`), `eng:address-pr-feedback` is the natural follow-up for working it by hand.
+
 ## Architecture: dispatcher + sensor
 
 This skill splits work between two roles:
