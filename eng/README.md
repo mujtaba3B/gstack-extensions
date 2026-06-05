@@ -8,16 +8,17 @@ This directory is a Claude Code plugin named `eng` (installed from this repo's l
 
 | Invocation | What it does |
 |---|---|
-| `/eng:pr-feedback` | Work through review comments on a PR you authored: diagnose what each comment wants and how the mistake got through, then patch, push back, or skip, and capture a durable lesson. |
-| `/eng:review-pr` | Review someone else's PR (typically an autonomous-agent PR), run it through the toolkit review lenses, verify the sharp findings, and post exactly one author-tagged comment. |
-| `/eng:pr-watcher` | Foreground watcher that pairs a dispatcher with a polling sensor to handle CodeRabbit feedback on a PR: classify, fix, test, commit, push, reply, repeat. |
+| `/eng:cr` | Master code review and the single local review path the `~/dev` merge gate keys on. Reviews any code (your own or someone else's), risk-tiers the depth, runs the shared review engine, and mints the merge-clearance stamp. Routes to the specialists below rather than duplicating them. |
+| `/eng:cr-teammate` | Review a PR authored by someone else (a human teammate or an autonomous agent), run it through the shared review engine, verify the sharp findings, and post exactly one author-tagged comment. Does not mint the gate stamp. |
+| `/eng:address-pr-feedback` | Manually work through review comments on a PR you authored: diagnose what each comment wants and how the mistake got through, then patch, push back, or skip, and capture a durable lesson. |
+| `/eng:pr-watcher` | Autonomous watcher that pairs a dispatcher with a polling sensor to handle CodeRabbit feedback on a PR: classify, fix, test, commit, push, reply, repeat. The auto sibling of `address-pr-feedback`. |
 | `/eng:spike` | Cheaply prove or disprove a feature's riskiest unknown before committing to plan and build. Throwaway code on a `spike/<slug>` branch, verdict in `SPIKE.md`. |
 | `/eng:coderabbit-config` | Generate or update a tailored `.coderabbit.yaml` for the current repo. |
 | `/eng:shortcut` | Create a signed macOS/iOS Shortcut from a spec, especially a Run Shell Script bridge for a CLI. macOS only. |
 
 ## How it is wired
 
-`bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). `eng:pr-feedback` carries the Engineer Earnie persona and loads `shared/core.md`; the other five skills were folded in from standalone skills and run self-contained (they do not load `shared/core.md`).
+`bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). Shared context lives under `shared/`: `core.md` (the Engineer Earnie persona) is loaded by `eng:cr` and `eng:address-pr-feedback`, and `review-engine.md` (the multi-lens review machinery) is loaded by `eng:cr` and `eng:cr-teammate`. The remaining skills run self-contained.
 
 ## Philosophy
 
