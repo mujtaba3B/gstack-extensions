@@ -1,0 +1,7 @@
+{
+  "_comment": "Opt-in marker for the merge-clearance gate. Presence activates ~/.claude/scripts/pr-merge-gate.sh on the listed base branches and tells apply-merge-clearance-protection.sh which CI checks to require. Land PRs via /land-and-deploy (which runs merge-clearance.sh).",
+  "base_branches": [
+    "main"
+  ],
+  "required_checks": []
+}
