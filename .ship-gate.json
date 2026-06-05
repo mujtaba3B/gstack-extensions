@@ -1,0 +1,7 @@
+{
+  "_comment": "Opt-in marker for the ship-PR gate. Presence activates ~/.claude/scripts/ship-pr-gate.sh, which blocks a bare `gh pr create` on the listed base branches unless a fresh /ship sentinel proves the create is part of a real /ship run. Makes gstack /ship the only sanctioned PR-creation path. Fails open; non-marked repos are untouched. ttl_seconds tunes the sentinel freshness window (default 1200). Human one-off: temporarily move this file aside, create the PR, then restore it.",
+  "base_branches": [
+    "main"
+  ],
+  "ttl_seconds": 1200
+}
