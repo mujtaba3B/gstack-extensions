@@ -57,15 +57,15 @@ For each new screen/frame/variant:
 1. Decide placement per the axes: a **new view** goes in a new column to the right; a **state variant** stacks below its view in the same column. Name it to match the stacking.
 2. `snapshot_layout(maxDepth: 0)` to see current top-level rectangles. Do not trust remembered positions.
 3. Pick the position with `find_empty_space_on_canvas` (padding 40) in the intended direction. Never hand-pick a y.
-4. Build the frame with `batch_design`, following the loaded Pencil schema. Use sticky notes (`type: "note"`) for annotations, never naked text. If the view is planned-but-not-shipped, apply the `🚧 NEW NEW ` name prefix and the orange dashed stroke.
-5. `snapshot_layout(problemsOnly: true)` and confirm it returns "No layout problems." Fix any overlap before moving on.
+4. Build the frame with `batch_design`, following the loaded Pencil schema. Use sticky notes (`type: "note"`) for annotations, never naked text. When you place more than one note, position each by the previous note's real bottom (`y + height` from `snapshot_layout`), never a guessed pitch, and prefer one larger note over a stack of tiny ones (see `core.md`'s note-overlap rules). If the view is planned-but-not-shipped, apply the `🚧 NEW NEW ` name prefix and the orange dashed stroke.
+5. `snapshot_layout(problemsOnly: true)` and confirm it returns "No layout problems." Fix any overlap before moving on. **This gate does not catch note-on-note overlap** (the detector is blind to it), so if you placed any sticky notes, also run the explicit note-rectangle check from `core.md` and confirm in the screenshot that no note buries another.
 
 ## Step 4b: Update path
 
 1. Read the current state of the target frame(s) with `batch_get` / `snapshot_layout` first. Make **surgical** edits; never redraw the whole canvas.
 2. Apply the change with `batch_design`.
 3. If the frame **grew** (taller/wider), re-flow everything stacked below it in the same column to keep the canvas tight, then re-run the overlap check. Growing a frame is the most common cause of new overlaps.
-4. `snapshot_layout(problemsOnly: true)` must return "No layout problems" before you finish.
+4. `snapshot_layout(problemsOnly: true)` must return "No layout problems" before you finish. If the edit touched any sticky notes, that gate is **not** sufficient (it does not flag note-on-note overlap), so also run the explicit note-rectangle check from `core.md`.
 
 ## Step 5: Show the result
 
