@@ -213,13 +213,14 @@ The verdict is what Deployer Danny reads when deciding whether to ship.
 
 ## QA posture contract (every qa:* run states it)
 
-Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. Map the verdict to the posture:
+Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. The postures are two-phase, matching `~/dev/BUILD-PROCEDURE.md` (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
 
-- PASS → `QA_STATUS: verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it).
+- PASS in dev / preview (pre-merge) → `QA_STATUS: dev_verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it). `verified` is accepted as an alias.
+- PASS live in production (post-deploy) → `QA_STATUS: prod_verified` + `EVIDENCE:`.
 - FAIL → `QA_STATUS: blocked` + `REASON:` (and, for browser, a filed `/pm:bug`).
 - QA not feasible → `QA_STATUS: skip_requested` + `REASON:`, escalated to `skip_approved` + `QA_SKIP_APPROVED_BY:` after a human OK (CI rejects a bare `skip_requested`).
 
-End the final message with the posture line. Never state `verified` without having actually exercised the thing. The full two-gate format, the strict CI rules, and the skip escalation live in `qa:browser`'s `references/qa-contract.md`.
+End the final message with the posture line. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The full two-gate format, the strict CI rules, and the skip escalation live in `qa:browser`'s `references/qa-contract.md`.
 
 ---
 

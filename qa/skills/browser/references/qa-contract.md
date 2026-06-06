@@ -2,11 +2,17 @@
 
 QA is a first-class, recorded decision, not something review has to catch. A `qa:browser` run ends by STATING its posture in a fixed format. That one posture feeds two enforcement points with DIFFERENT match rules. Satisfy both.
 
+The postures are **two-phase**, matching `~/dev/BUILD-PROCEDURE.md`: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
+
 ## The postures
 
 ```
-QA_STATUS: verified
-EVIDENCE: <command run / URL hit / screenshot path / test name proving you exercised it live>
+QA_STATUS: dev_verified
+EVIDENCE: <command run / URL hit / screenshot path / test name proving you exercised the Development QA Plan live in dev / preview>
+# `verified` is accepted as an alias for dev_verified.
+
+QA_STATUS: prod_verified
+EVIDENCE: <live check proving the Production QA Plan passed after deploy (build-procedure step 11)>
 
 QA_STATUS: blocked
 REASON: <what prevents QA right now>
@@ -39,7 +45,8 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 
 | Posture | Stop hook | CI qa-gate |
 |---|---|---|
-| `verified` + `EVIDENCE` | passes | passes |
+| `dev_verified` + `EVIDENCE` (alias: `verified`) | passes | passes |
+| `prod_verified` + `EVIDENCE` | passes | n/a (post-deploy, not a pre-merge gate) |
 | `blocked` + `REASON` | passes | passes |
 | `skip_requested` + `REASON` | passes (stated) | **fails** (not an accepted keyword) |
 | `skip_approved` + `QA_SKIP_APPROVED_BY` | passes | passes |
