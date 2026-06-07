@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.0.0
+version: 1.1.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -8,7 +8,9 @@ description: |
   a Production QA section (verified live after deploy), and a Definition of Done.
   Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
   the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
-  run by /qa, qa:browser, or qa:headless; Production QA by /canary). It is step 3 of
+  run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
+  presenting the plan for the human's approval and, on a yes, writing the
+  approval stamp the QA-plan gates read (build / PR / deploy). It is step 3 of
   ~/dev/BUILD-PROCEDURE.md and feeds the two-phase QA posture (dev_verified /
   prod_verified) the QA-status gate reads. Use when the user says "qa plan", "write
   the qa plan", "plan the QA", "qa section for the PR", "dev and prod QA plan",
@@ -51,7 +53,7 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 You are running `/qa:plan`. Your job is to turn a change's success criteria into a **two-phase QA plan** and write it into the **PR body**, so QA is planned before the PR is reviewed and gated by construction. This is **step 3 of `~/dev/BUILD-PROCEDURE.md`**.
 
-You **plan** QA. You do not execute it: Development QA is run by `/qa`, `qa:browser`, or `qa:headless`; Production QA by `/canary`. You also do not merge or stamp.
+You **plan** QA. You do not execute it: Development QA is run by `/qa`, `qa:browser`, or `qa:headless`; Production QA by `/canary`. You do not merge or open the PR, and you do not mint the merge-clearance stamp (that is `/eng:cr`). The one stamp you DO write is the QA-plan **approval** stamp in Step 6, and only after the human approves.
 
 ## Step 1: Load the QA Quincey identity
 
@@ -121,8 +123,28 @@ Tell the user, in one tight readout:
 - The **Production QA** bullets are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
 - Point at `~/dev/BUILD-PROCEDURE.md` (the procedure) and the aligned QA-status gate (`claude-hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
+## Step 6: Present the plan for approval, then write the approval stamp
+
+The load-bearing step: it makes QA approval come **before** building. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
+
+1. **Present and ask.** Show the Development + Production QA sections, then fire one `AskUserQuestion` (header `"QA plan"`):
+   - **Approve** (recommended): plan is right, build against it.
+   - **Revise**: capture the changes, edit the plan (back to Step 3 / Step 4), re-present. Do NOT stamp.
+   - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
+
+2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree):
+
+   ```bash
+   ~/.claude/scripts/qa-plan-stamp.sh write \
+     --digest "$(printf '%s' "<your QA section text>" | shasum -a 256 | cut -d' ' -f1)"
+   ```
+
+   `--digest` is optional (hashes the approved plan so later drift is detectable); omit if awkward. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+
+3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Revise, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
+
 ## What this skill does NOT do
 
 - It does not **execute** QA. Development QA is `/qa` / `qa:browser` / `qa:headless`; Production QA is `/canary`. This skill writes the plan they run against.
 - It does not **invent** criteria. It pulls them from `/spec`, the issue, the mockup, or the user.
-- It does not **merge, stamp, or open the PR**. Opening the PR is `/ship`; the merge-clearance stamp is `/eng:cr`.
+- It does not **merge or open the PR**. Opening the PR is `/ship`; the merge-clearance stamp is `/eng:cr`. The only stamp this skill writes is the QA-plan **approval** stamp (`<git-dir>/qa-plan-approved`), and only after the human approves in Step 6.
