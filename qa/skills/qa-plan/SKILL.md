@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.0.0
+version: 1.1.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -8,7 +8,9 @@ description: |
   a Production QA section (verified live after deploy), and a Definition of Done.
   Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
   the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
-  run by /qa, qa:browser, or qa:headless; Production QA by /canary). It is step 3 of
+  run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
+  presenting the plan for the human's approval and, on a yes, writing the
+  approval stamp the QA-plan gates read (build / PR / deploy). It is step 3 of
   ~/dev/BUILD-PROCEDURE.md and feeds the two-phase QA posture (dev_verified /
   prod_verified) the QA-status gate reads. Use when the user says "qa plan", "write
   the qa plan", "plan the QA", "qa section for the PR", "dev and prod QA plan",
@@ -121,8 +123,24 @@ Tell the user, in one tight readout:
 - The **Production QA** bullets are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
 - Point at `~/dev/BUILD-PROCEDURE.md` (the procedure) and the aligned QA-status gate (`claude-hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
+## Step 6: Present the plan for approval, then write the approval stamp
+
+This is the load-bearing step that makes QA approval come **before** building, not after. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation proceeds. The QA-plan gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo they block source edits and `gh pr create` until an approval stamp exists for the branch.
+
+1. **Present the plan and ask for approval.** Show the Development + Production QA sections you just authored, then fire a single `AskUserQuestion` (header `"QA plan"`) with options:
+   - **Approve** (recommended): the plan is right; proceed to build against it.
+   - **Revise**: capture what to change, edit the plan (loop back to Step 3 / Step 4), and re-present. Do NOT stamp.
+   - **Skip the gate**: the human deliberately wants to build without an approved plan (a spike, a trivial change). Do NOT stamp; remind them a `spike/` branch bypasses the build gate, or they can proceed and the deploy gate still requires QA to pass.
+2. **On Approve, write the stamp.** From inside the repo (or the branch's worktree), run:
+   ```bash
+   ~/.claude/scripts/qa-plan-stamp.sh write \
+     --digest "$(printf '%s' "<the QA section text you wrote>" | shasum -a 256 | cut -d' ' -f1)"
+   ```
+   The `--digest` is optional (records a hash of the approved plan so a later check can notice the plan changed); omit it if awkward. The script keys the stamp to the current branch and prints its path. Confirm to the user: "QA plan approved and stamped for `<branch>`; building is unblocked."
+3. **Only stamp on a real yes.** The stamp is the record that the human approved. Never write it on the human's behalf without the explicit Approve answer. If they revise, re-present and stamp only after the next approval. Detached HEAD or a base-branch checkout will refuse to stamp (by design); branch first.
+
 ## What this skill does NOT do
 
 - It does not **execute** QA. Development QA is `/qa` / `qa:browser` / `qa:headless`; Production QA is `/canary`. This skill writes the plan they run against.
 - It does not **invent** criteria. It pulls them from `/spec`, the issue, the mockup, or the user.
-- It does not **merge, stamp, or open the PR**. Opening the PR is `/ship`; the merge-clearance stamp is `/eng:cr`.
+- It does not **merge or open the PR**. Opening the PR is `/ship`; the merge-clearance stamp is `/eng:cr`. The only stamp this skill writes is the QA-plan **approval** stamp (`<git-dir>/qa-plan-approved`), and only after the human approves in Step 6.
