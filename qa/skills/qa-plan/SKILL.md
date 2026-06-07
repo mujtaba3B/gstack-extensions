@@ -53,7 +53,7 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 You are running `/qa:plan`. Your job is to turn a change's success criteria into a **two-phase QA plan** and write it into the **PR body**, so QA is planned before the PR is reviewed and gated by construction. This is **step 3 of `~/dev/BUILD-PROCEDURE.md`**.
 
-You **plan** QA. You do not execute it: Development QA is run by `/qa`, `qa:browser`, or `qa:headless`; Production QA by `/canary`. You also do not merge or stamp.
+You **plan** QA. You do not execute it: Development QA is run by `/qa`, `qa:browser`, or `qa:headless`; Production QA by `/canary`. You do not merge or open the PR, and you do not mint the merge-clearance stamp (that is `/eng:cr`). The one stamp you DO write is the QA-plan **approval** stamp in Step 6, and only after the human approves.
 
 ## Step 1: Load the QA Quincey identity
 
@@ -125,19 +125,23 @@ Tell the user, in one tight readout:
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
-This is the load-bearing step that makes QA approval come **before** building, not after. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation proceeds. The QA-plan gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo they block source edits and `gh pr create` until an approval stamp exists for the branch.
+The load-bearing step: it makes QA approval come **before** building. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
 
-1. **Present the plan and ask for approval.** Show the Development + Production QA sections you just authored, then fire a single `AskUserQuestion` (header `"QA plan"`) with options:
-   - **Approve** (recommended): the plan is right; proceed to build against it.
-   - **Revise**: capture what to change, edit the plan (loop back to Step 3 / Step 4), and re-present. Do NOT stamp.
-   - **Skip the gate**: the human deliberately wants to build without an approved plan (a spike, a trivial change). Do NOT stamp; remind them a `spike/` branch bypasses the build gate, or they can proceed and the deploy gate still requires QA to pass.
-2. **On Approve, write the stamp.** From inside the repo (or the branch's worktree), run:
+1. **Present and ask.** Show the Development + Production QA sections, then fire one `AskUserQuestion` (header `"QA plan"`):
+   - **Approve** (recommended): plan is right, build against it.
+   - **Revise**: capture the changes, edit the plan (back to Step 3 / Step 4), re-present. Do NOT stamp.
+   - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
+
+2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree):
+
    ```bash
    ~/.claude/scripts/qa-plan-stamp.sh write \
-     --digest "$(printf '%s' "<the QA section text you wrote>" | shasum -a 256 | cut -d' ' -f1)"
+     --digest "$(printf '%s' "<your QA section text>" | shasum -a 256 | cut -d' ' -f1)"
    ```
-   The `--digest` is optional (records a hash of the approved plan so a later check can notice the plan changed); omit it if awkward. The script keys the stamp to the current branch and prints its path. Confirm to the user: "QA plan approved and stamped for `<branch>`; building is unblocked."
-3. **Only stamp on a real yes.** The stamp is the record that the human approved. Never write it on the human's behalf without the explicit Approve answer. If they revise, re-present and stamp only after the next approval. Detached HEAD or a base-branch checkout will refuse to stamp (by design); branch first.
+
+   `--digest` is optional (hashes the approved plan so later drift is detectable); omit if awkward. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+
+3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Revise, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
 
 ## What this skill does NOT do
 
