@@ -31,4 +31,4 @@ Examples:
 
 ## Designed for
 
-Issues are written for a team of coding agents (Engineer Earnie, BugBash Ben, QA Quincey, Deployer Danny), but work equally well for human engineers. Penny's user-scoped state lives at `~/.claude/pm-penny/` (absolute path), never in a project repo.
+Issues are written for a team of coding agents (Engineer Ernie, BugBash Ben, QA Quincey, Deployer Danny), but work equally well for human engineers. Penny's user-scoped state lives at `~/.claude/pm-penny/` (absolute path), never in a project repo.

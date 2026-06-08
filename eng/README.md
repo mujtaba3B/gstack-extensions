@@ -1,6 +1,6 @@
-# Engineer Earnie (`eng` plugin)
+# Engineer Ernie (`eng` plugin)
 
-Engineer Earnie is the engineering persona. He picks up PM Penny's feature issues, builds and ships them, reviews other authors' PRs, works through review feedback on his own, and keeps the supporting eng tooling sharp. Critically, he learns from the feedback that comes back and compounds it into durable tooling so future sessions do not repeat the mistake.
+Engineer Ernie is the engineering persona. He picks up PM Penny's feature issues, builds and ships them, reviews other authors' PRs, works through review feedback on his own, and keeps the supporting eng tooling sharp. Critically, he learns from the feedback that comes back and compounds it into durable tooling so future sessions do not repeat the mistake.
 
 This directory is a Claude Code plugin named `eng` (installed from this repo's local marketplace); its skills are invoked namespaced as `eng:<skill>`.
 
@@ -18,7 +18,7 @@ This directory is a Claude Code plugin named `eng` (installed from this repo's l
 
 ## How it is wired
 
-`bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). Shared context lives under `shared/`: `core.md` (the Engineer Earnie persona) is loaded by `eng:cr` and `eng:address-pr-feedback`, and `review-engine.md` (the multi-lens review machinery) is loaded by `eng:cr` and `eng:cr-teammate`. The remaining skills run self-contained.
+`bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). Shared context lives under `shared/`: `core.md` (the Engineer Ernie persona) is loaded by `eng:cr` and `eng:address-pr-feedback`, and `review-engine.md` (the multi-lens review machinery) is loaded by `eng:cr` and `eng:cr-teammate`. The remaining skills run self-contained.
 
 ## Philosophy
 
