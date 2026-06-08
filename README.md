@@ -20,10 +20,10 @@ Four persona plugins (each a top-level dir with a `.claude-plugin/plugin.json`, 
 
 - **PM Penny** (`pm/`): product-manager persona. `/pm:feature`, `/pm:bug`, `/pm:next-issue`, `/pm:first-principles`. Turns ideas, bug reports, and "what next?" into well-structured GitHub issues, and reframes problems from first principles.
 - **QA Quincey** (`qa/`): manual-QA persona. `/qa:browser`, `/qa:headless`. Verifies one defined flow against the spec or mockup, in the browser (driving the gstack browse daemon, AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects).
-- **Engineer Earnie** (`eng/`): engineering persona. `/eng:cr`, `/eng:cr-teammate`, `/eng:address-pr-feedback`, `/eng:pr-watcher`, `/eng:spike`, `/eng:coderabbit-config`, `/eng:shortcut`. `cr` is his master code-review skill (the single local review path the `~/dev` merge gate keys on); it routes to `cr-teammate` (review others' PRs), `address-pr-feedback` and `pr-watcher` (respond to feedback). Also spikes risky unknowns, configures CodeRabbit, and builds macOS Shortcuts.
+- **Engineer Ernie** (`eng/`): engineering persona. `/eng:cr`, `/eng:cr-teammate`, `/eng:address-pr-feedback`, `/eng:pr-watcher`, `/eng:spike`, `/eng:coderabbit-config`, `/eng:shortcut`. `cr` is his master code-review skill (the single local review path the `~/dev` merge gate keys on); it routes to `cr-teammate` (review others' PRs), `address-pr-feedback` and `pr-watcher` (respond to feedback). Also spikes risky unknowns, configures CodeRabbit, and builds macOS Shortcuts.
 - **Designer Denise** (`design/`): design persona. `/design:pencil-mockup`. The Pencil-native counterpart to gstack's HTML design skills: creates and updates `.pen` mockups on the canvas via the Pencil MCP.
 
-The persona name (Penny / Quincey / Earnie / Denise) lives in each plugin's `description` and README as a memory hook; you invoke by the short role prefix, not the name.
+The persona name (Penny / Quincey / Ernie / Denise) lives in each plugin's `description` and README as a memory hook; you invoke by the short role prefix, not the name.
 
 ## How it works
 
