@@ -48,7 +48,7 @@ Decide, from the request and the editor state, whether this is a **create** or a
 
 - If a `.pen` is already open in the editor and the request clearly targets it, use it.
 - If it is ambiguous which file, or no file is open, ask the user (one `AskUserQuestion`): which `.pen` file / new vs existing.
-- If creating a brand-new file or a fresh canvas with no `LEGEND` frame, plan to add a `LEGEND` per `WIREFRAMES.md`.
+- If creating a brand-new file or a fresh canvas with no `LEGEND` frame, plan to add a `LEGEND` per `references/wireframes.md`.
 
 ## Step 4a: Create path
 
