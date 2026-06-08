@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.1.0
+version: 1.2.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -9,8 +9,10 @@ description: |
   Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
   the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
   run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
-  presenting the plan for the human's approval and, on a yes, writing the
-  approval stamp the QA-plan gates read (build / PR / deploy). It is step 3 of
+  presenting the plan (and a recommended QA driver from claude-hooks/qa-roster.json,
+  default mutwo, named in the PR body with their handle) for the human's approval
+  and, on a yes, writing the approval stamp the QA-plan gates read (build / PR /
+  deploy). It is step 3 of
   ~/dev/BUILD-PROCEDURE.md and feeds the two-phase QA posture (dev_verified /
   prod_verified) the QA-status gate reads. Use when the user says "qa plan", "write
   the qa plan", "plan the QA", "qa section for the PR", "dev and prod QA plan",
@@ -92,6 +94,8 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 
 <!-- qa-plan: managed by /qa:plan -->
 
+**QA driver:** <Label> (`<@handle>`) -- <one-line why>. Who is on the hook to run the Development QA, recommended by /qa:plan and approved by the human (roster: `claude-hooks/qa-roster.json`). For the agent (`claude`) write "the building agent (this session)" with no handle.
+
 ### Development QA (must pass before merge)
 - [ ] <Given/When/Then or EARS criterion> via `<tool/command>`, expect <result>
 - [ ] ...
@@ -111,6 +115,8 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 - Post-deploy: state `QA_STATUS: prod_verified` + `EVIDENCE:` once Production QA is verified live.
 ```
 
+**Pick the QA driver** for the `**QA driver:**` line: read `claude-hooks/qa-roster.json` and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
+
 Mechanics:
 - With a PR open: read the current body, replace the existing `## QA`...marker block if present (idempotent) else append it, and `gh pr edit <n> --body-file <tmp>`.
 - No PR yet: print the block and tell the user `/ship` will fold it into the PR body, or they can paste it.
@@ -127,10 +133,12 @@ Tell the user, in one tight readout:
 
 The load-bearing step: it makes QA approval come **before** building. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
 
-1. **Present and ask.** Show the Development + Production QA sections, then fire one `AskUserQuestion` (header `"QA plan"`):
-   - **Approve** (recommended): plan is right, build against it.
-   - **Revise**: capture the changes, edit the plan (back to Step 3 / Step 4), re-present. Do NOT stamp.
+1. **Present and ask.** Show the Development + Production QA sections AND the recommended **QA driver** (label + handle, from Step 4), then fire one `AskUserQuestion` (header `"QA plan"`):
+   - **Approve** (recommended): plan and driver are right, build against it.
+   - **Revise**: capture the changes (to the plan and/or the QA driver), edit the plan / driver line (back to Step 3 / Step 4), re-present. Do NOT stamp.
    - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
+
+   If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
 
 2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree):
 
