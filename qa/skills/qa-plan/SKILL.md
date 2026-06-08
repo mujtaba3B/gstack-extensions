@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.2.0
+version: 1.3.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -81,6 +81,10 @@ For each acceptance criterion, decide how it is verified in each phase:
 - **Development QA** (exercised in a dev / preview environment, **before the PR merges**). Name the tool that exercises it: `/qa` (bug sweep), `qa:browser` (a UI flow), `qa:headless` (a backend side effect), or an explicit command. Render each as a **checkbox** (`- [ ]`).
 - **Production QA** (verified **live after deploy**, build-procedure step 11). Name the check: `/canary`, a smoke URL, a log line, or a metric. Render each as a **plain bullet** (`-`), NOT a checkbox, so it does not trip the pre-merge merge-clearance QA gate (which blocks on unchecked boxes). It is verified post-deploy via the `prod_verified` posture.
 
+**Name the production artifact (required on every Production QA item).** Give each Production QA item a `Production artifact:` sub-line naming the EXACT thing production runs (an image digest/tag, a bundle id, a deploy/run id) plus the host and how it is exercised. The QA-status gate reads this field: when you later state `QA_STATUS: prod_verified`, it rejects EVIDENCE that names only an upstream / base / proxy artifact instead of this one. Write it so a machine can match it (a literal image:tag or `sha256:` digest), not a vague description.
+
+**Layer-walk (only when the diff touches a build / derivation / deploy layer:** a container image, bundled binary, lambda layer, CDN asset, vendored copy, or multi-stage build. Skip it otherwise.) Ask: between the code I changed and what the user/agent actually runs, what layers exist, which one does production execute, does my QA hit THAT one, and is the derived artifact rebuilt automatically when my change lands or does it go stale until a separate trigger? Make the answer the `Production artifact:` and write the QA item to verify through it. This exists because a shared base image was once "verified" by testing the base directly while the per-agent images derived from it silently went stale.
+
 **Mockup-first rule (from BUILD-PROCEDURE.md step 2):** if the change has a user-facing surface, at least one Development QA item must compare the live result against the Pencil mockup.
 
 Right-size it: one QA item per real acceptance criterion. Do not pad the list with generic "page loads" checks that prove nothing.
@@ -102,6 +106,7 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 
 ### Production QA (verified after deploy, build-procedure step 11)
 - <criterion> via `<check>`, expect <result>
+  - Production artifact: `<exact image digest/tag | bundle id | deploy/run id>` on `<host>`, exercised by `<command/flow>`
 - ...
 
 ### Definition of Done
