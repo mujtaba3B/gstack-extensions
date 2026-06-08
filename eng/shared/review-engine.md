@@ -1,4 +1,4 @@
-# Engineer Earnie: Shared Review Engine
+# Engineer Ernie: Shared Review Engine
 
 The multi-lens adversarial review machinery shared by `eng:cr` (review your own
 work before merge) and `eng:cr-teammate` (review another author's PR and comment).

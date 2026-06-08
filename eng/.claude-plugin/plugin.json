@@ -1,6 +1,6 @@
 {
   "name": "eng",
   "version": "1.1.0",
-  "description": "Engineer Earnie, the engineering persona. eng:cr is his master code-review skill and the single local review path the ~/dev merge gate keys on: it risk-tiers depth, runs the pr-review-toolkit lenses, and mints the merge-clearance stamp. It routes to cr-teammate (review someone else's PR and post a comment) and to address-pr-feedback / pr-watcher (respond to review feedback). He also spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:cr, eng:cr-teammate, eng:address-pr-feedback, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut.",
+  "description": "Engineer Ernie, the engineering persona. eng:cr is his master code-review skill and the single local review path the ~/dev merge gate keys on: it risk-tiers depth, runs the pr-review-toolkit lenses, and mints the merge-clearance stamp. It routes to cr-teammate (review someone else's PR and post a comment) and to address-pr-feedback / pr-watcher (respond to review feedback). He also spikes the riskiest unknown before building, generates CodeRabbit config, and builds macOS Shortcuts. Skills: eng:cr, eng:cr-teammate, eng:address-pr-feedback, eng:pr-watcher, eng:spike, eng:coderabbit-config, eng:shortcut.",
   "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
 }
