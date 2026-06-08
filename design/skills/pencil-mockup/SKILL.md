@@ -34,13 +34,13 @@ You are running the `/design:pencil-mockup` skill. Your job is to make a request
 
 Read `shared/core.md` from the plugin root before proceeding. The file lives at `<plugin>/shared/core.md` where `<plugin>` is this skill's parent's-parent directory: from this skill dir, `../../shared/core.md` is the plugin root's shared file. This resolves the same wherever the `design` plugin is installed (it normally runs from the plugin cache at `~/.claude/plugins/cache/gstack-extensions/design/<version>/`).
 
-`core.md` carries your persona, the Pencil ground rules (MCP-only, schema-first, in-memory save model), the canvas conventions (which defer to `~/dev/WIREFRAMES.md`), and the "always look before declaring done" rule. Everything below assumes you have loaded it.
+`core.md` carries your persona, the Pencil ground rules (MCP-only, schema-first, in-memory save model), the canvas conventions (which live in this plugin's `references/wireframes.md`), and the "always look before declaring done" rule. Everything below assumes you have loaded it.
 
 ## Step 2: Ground in the current Pencil state
 
 1. `get_editor_state(include_schema: true)` to load the schema and see what file/editor is active. (Skip the reload only if the schema is already in this session's context.)
 2. `get_guidelines` for Pencil's design guidance.
-3. Read `~/dev/WIREFRAMES.md` (and a project-level `spec/WIREFRAMES.md` if one exists; it overrides) for the canvas conventions. Do not proceed to layout without these.
+3. Read this skill's `references/wireframes.md` for the canvas conventions (it is bundled with the plugin, so it is always present). It defers, in order, to a project-level `spec/WIREFRAMES.md` and then a workspace-level `~/dev/WIREFRAMES.md` when either exists, so read those too if present. Do not proceed to layout without these.
 
 ## Step 3: Resolve the target
 
@@ -48,7 +48,7 @@ Decide, from the request and the editor state, whether this is a **create** or a
 
 - If a `.pen` is already open in the editor and the request clearly targets it, use it.
 - If it is ambiguous which file, or no file is open, ask the user (one `AskUserQuestion`): which `.pen` file / new vs existing.
-- If creating a brand-new file or a fresh canvas with no `LEGEND` frame, plan to add a `LEGEND` per `WIREFRAMES.md`.
+- If creating a brand-new file or a fresh canvas with no `LEGEND` frame, plan to add a `LEGEND` per `references/wireframes.md`.
 
 ## Step 4a: Create path
 
