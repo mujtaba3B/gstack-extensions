@@ -162,7 +162,7 @@ The load-bearing step: it makes QA approval come **before** building. BUILD-PROC
 
    `--digest` is optional (hashes the approved plan so later drift is detectable); omit if awkward. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
 
-3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Revise, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
+3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Rework it, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
 
 ## What this skill does NOT do
 
