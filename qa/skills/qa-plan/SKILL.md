@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.3.0
+version: 1.4.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -138,9 +138,17 @@ Tell the user, in one tight readout:
 
 The load-bearing step: it makes QA approval come **before** building. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
 
-1. **Present and ask.** Show the Development + Production QA sections AND the recommended **QA driver** (label + handle, from Step 4), then fire one `AskUserQuestion` (header `"QA plan"`):
-   - **Approve** (recommended): plan and driver are right, build against it.
-   - **Revise**: capture the changes (to the plan and/or the QA driver), edit the plan / driver line (back to Step 3 / Step 4), re-present. Do NOT stamp.
+1. **Present and ask.** Fire one `AskUserQuestion` (header `"QA plan"`, single-select; previews do not render on multiSelect). The plan is presented INSIDE the modal: the **Approve** option's `preview` field carries a summary of the plan, so the human reads plan and approval as one unmissable unit. Do not dump the plan as prose and follow it with a bare Approve modal.
+
+   The preview is a **summary that always fits the box**: hard cap **20 lines, 60 characters per line** (a PreToolUse hook, `qa-plan-present-gate.sh`, blocks the question if the preview is missing, oversized, or multiSelect). Budget the box for the QA plan itself:
+   - Title line (`QA PLAN: <slug>`), then the change-under-test in **1-2 lines max**; the human knows what is being changed, do not spend lines re-explaining it.
+   - The literal headings `DEVELOPMENT QA` and `PRODUCTION QA` (the hook greps for both), each followed by its items compressed to one line apiece.
+   - The QA driver line.
+   The full canonical plan lives in the PR body (Step 4); the preview is the approval-time summary, never the only copy.
+
+   Options:
+   - **Approve** (recommended): plan and driver are right, build against it. Carries the plan-summary preview.
+   - **Rework it**: capture the changes (to the plan and/or the QA driver), edit the plan / driver line (back to Step 3 / Step 4), re-present. Do NOT stamp.
    - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
 
    If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
@@ -154,7 +162,7 @@ The load-bearing step: it makes QA approval come **before** building. BUILD-PROC
 
    `--digest` is optional (hashes the approved plan so later drift is detectable); omit if awkward. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
 
-3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Revise, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
+3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Rework it, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
 
 ## What this skill does NOT do
 
