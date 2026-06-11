@@ -112,6 +112,45 @@ for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
 done
 shopt -u nullglob
 
+# 4. Stable-path shim for merge-clearance.sh. The real script ships inside the
+#    eng plugin (eng/hooks/scripts/), but external callers invoke it by the
+#    long-standing fixed path ~/.claude/scripts/merge-clearance.sh: the gstack
+#    /land-and-deploy patch (eng/docs/land-and-deploy-merge-clearance.md) and
+#    the pr-merge-gate block message both name it. The shim execs the newest
+#    installed cache copy, so the path stays valid across version bumps.
+mkdir -p "$HOME/.claude/scripts"
+cat > "$HOME/.claude/scripts/merge-clearance.sh" <<'SHIM'
+#!/usr/bin/env bash
+# Shim installed by gstack-extensions bin/install. The real merge-clearance.sh
+# ships inside the eng plugin; exec the newest installed cache copy.
+set -euo pipefail
+CACHE="$HOME/.claude/plugins/cache/gstack-extensions/eng"
+# Highest installed version wins (sort -V), not newest mtime: deterministic
+# when multiple cache version dirs coexist.
+real=""
+for d in $(ls -d "$CACHE"/*/ 2>/dev/null | sort -rV); do
+  if [ -x "${d}hooks/scripts/merge-clearance.sh" ]; then
+    real="${d}hooks/scripts/merge-clearance.sh"
+    break
+  fi
+done
+if [ -z "$real" ] || [ ! -x "$real" ]; then
+  echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
+  exit 1
+fi
+exec "$real" "$@"
+SHIM
+chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
+echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
+
+# 5. Deploy the QA posture contract doc to its fixed path. The qa-status-gate
+#    Stop hook's block message points agents at ~/.claude/docs/qa-status-postures.md
+#    (a path baked into the ported script), so keep that path valid from this
+#    repo now that claude-hooks no longer owns the doc.
+mkdir -p "$HOME/.claude/docs"
+cp "$REPO/qa/docs/qa-status-postures.md" "$HOME/.claude/docs/qa-status-postures.md"
+echo "deployed: ~/.claude/docs/qa-status-postures.md (qa-status-gate contract)"
+
 echo
 # Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's
 # `if ! bin/install` guard catches it instead of reporting a clean upgrade.

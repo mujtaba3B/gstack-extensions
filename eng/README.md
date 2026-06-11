@@ -16,6 +16,21 @@ This directory is a Claude Code plugin named `eng` (installed from this repo's l
 | `/eng:coderabbit-config` | Generate or update a tailored `.coderabbit.yaml` for the current repo. |
 | `/eng:shortcut` | Create a signed macOS/iOS Shortcut from a spec, especially a Run Shell Script bridge for a CLI. macOS only. |
 
+## Hooks (Ernie's enforcement arm)
+
+The plugin ships its PR-lifecycle gates in `hooks/hooks.json`; installing the plugin activates them, uninstalling deactivates them. They are opt-in per repo (`.ship-gate.json` / `.merge-clearance.json` markers at the repo root) and scoped to git repos under `~/dev`; everything else is untouched. All gates fail open on missing dependencies. Path convention: `hooks.json` commands locate entrypoints via `${CLAUDE_PLUGIN_ROOT}`; inside the scripts, sibling libs resolve via `BASH_SOURCE` so the executing copy always binds its own dependencies (the scripts are dual-use: skills, the shim, and the bats suites invoke them without the hook env).
+
+| Hook | Event | What it enforces |
+|---|---|---|
+| `ship-pr-gate.sh` | PreToolUse Bash | Blocks a bare `gh pr create` in an opted-in repo unless a fresh `/ship` sentinel proves the create is part of a real `/ship` run. |
+| `ship-gate-sentinel.sh` | PreToolUse Skill + UserPromptSubmit | Mints the `/ship`-is-running sentinel the ship gate reads. Never blocks. |
+| `pr-merge-gate.sh` | PreToolUse Bash | Blocks `gh pr merge` in an opted-in repo unless a valid, HEAD-matched merge-clearance stamp exists (the local accident-guard half of "merge only via `/land-and-deploy`"). |
+| `review-skill-stamp.sh` | PostToolUse Bash | Records the reviewed HEAD when a review skill logs completion; a sub-signal merge-clearance reads. |
+| `merge-clearance.sh` | (utility) | The pre-merge gauntlet: `check` renders the CodeRabbit + CI + review + QA checklist; `clear` writes the stamp and posts the `local-review/merge-clearance` GitHub status. Called by `/land-and-deploy`. External callers use the stable shim `~/.claude/scripts/merge-clearance.sh` (written by `bin/install`), which execs the newest installed plugin copy. |
+| `apply-merge-clearance-protection.sh` | (utility) | Applies the GitHub branch ruleset (require CI + the clearance status check, `enforce_admins` on) that binds the web Merge button too. |
+
+Pure decision logic lives in `merge-clearance-lib.sh` / `ship-pr-gate-lib.sh`, unit-tested by the bats suites in `hooks/tests/` (run them as individual files). The re-appliable gstack patch that wires `/land-and-deploy` into the gauntlet is `docs/land-and-deploy-merge-clearance.md`.
+
 ## How it is wired
 
 `bin/install` installs this `eng/` directory as the `eng` plugin via the repo's local marketplace (a copy lands in `~/.claude/plugins/cache/gstack-extensions/eng/<version>/`). Shared context lives under `shared/`: `core.md` (the Engineer Ernie persona) is loaded by `eng:cr` and `eng:address-pr-feedback`, and `review-engine.md` (the multi-lens review machinery) is loaded by `eng:cr` and `eng:cr-teammate`. The remaining skills run self-contained.

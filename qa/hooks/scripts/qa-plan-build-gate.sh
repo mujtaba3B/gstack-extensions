@@ -1,0 +1,83 @@
+#!/bin/bash
+# PreToolUse hook on Edit|Write. Gate 1 of the QA-plan approval policy: in an
+# OPTED-IN ~/dev repo, block edits to application SOURCE on a feature branch until
+# the two-phase QA plan has been approved (an approval stamp exists for the
+# branch). The plan is approved-and-stamped by /qa:plan's closing AskUserQuestion.
+#
+# "Approve the plan, THEN build" (BUILD-PROCEDURE.md non-negotiable #4). Reading
+# code is never gated (this is Edit|Write only), so you can fully investigate
+# before writing the plan. Genuine spikes bypass via a `spike/` branch.
+#
+# Output protocol (Claude Code PreToolUse hook):
+#   exit 0 + empty stdout                          -> allow
+#   stdout JSON {"decision":"block","reason":...}  -> block, reason shown to Claude
+#
+# Fail-OPEN posture (same as the merge / ship gates): any missing dependency
+# (jq/git), file outside ~/dev, no marker, or unresolvable branch leaves the edit
+# ALLOWED. A local gate that fails closed on its own bug trains the human to rip
+# it out. The deploy gate (QA-passed at merge) is the hard backstop.
+
+set -u
+
+PAYLOAD=$(cat)
+command -v jq >/dev/null 2>&1 || exit 0
+
+TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
+case "$TOOL" in Edit|Write|MultiEdit) ;; *) exit 0 ;; esac
+
+FILE=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // empty')
+[ -n "$FILE" ] || exit 0
+
+# Resolve a relative path against the session cwd from the payload.
+CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
+case "$FILE" in /*) ;; *) [ -n "$CWD" ] && FILE="$CWD/$FILE" ;; esac
+
+# Find an existing ancestor dir of the (possibly not-yet-created) target so we can
+# ask git which repo it lives in.
+DIR=$(dirname "$FILE")
+while [ ! -d "$DIR" ] && [ "$DIR" != "/" ] && [ "$DIR" != "." ]; do DIR=$(dirname "$DIR"); done
+[ -d "$DIR" ] || exit 0
+
+TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
+case "$TOP" in
+  "$HOME/dev"|"$HOME/dev/"*) ;;
+  *) exit 0 ;;
+esac
+
+MARKER_FILE="$TOP/.qa-plan-gate.json"
+[ -f "$MARKER_FILE" ] || exit 0
+MARKER=$(cat "$MARKER_FILE" 2>/dev/null)
+
+LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
+[ -f "$LIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$LIB"
+
+qpg_gate_enabled "$MARKER" build || exit 0   # build gate not enabled -> allow
+
+BRANCH=$(git -C "$DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+[ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || exit 0   # detached / unresolved -> allow
+
+# On a base branch itself (main) there is no feature work to gate here.
+if [ "$(qpg_base_in_scope "$MARKER" "$BRANCH")" = "in" ]; then exit 0; fi
+
+# Spike escape hatch.
+if qpg_is_spike "$BRANCH" >/dev/null; then exit 0; fi
+
+# Only application source needs an approved plan; carved-out files pass.
+REL="${FILE#"$TOP"/}"
+qpg_path_needs_plan "$REL" >/dev/null || exit 0
+
+GITDIR=$(git -C "$DIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
+[ "$VERDICT" = "valid" ] && exit 0
+
+# Blocked: record for visibility (a rotted/bypassed gate should be auditable).
+LOG="$HOME/.claude/qa-plan-gate.log"
+printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "$VERDICT" >> "$LOG" 2>/dev/null || true
+
+REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE building. You are about to edit source (\`$REL\`) on \`$BRANCH\` with no approved-plan stamp [${VERDICT}]. Per ~/dev/BUILD-PROCEDURE.md (non-negotiable #4), the Development + Production QA plan is presented to and approved by the human before implementation. Run \`/qa:plan\` now: it pulls the success criteria, writes the two-phase plan, presents it for approval, and on your yes writes the stamp that unblocks editing. Reading code is NOT gated, so investigate freely first. For a genuine spike/exploration where the plan cannot be written yet, branch as \`spike/<name>\` to bypass this gate. Docs, tests, and config edits are also ungated."
+jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+exit 0

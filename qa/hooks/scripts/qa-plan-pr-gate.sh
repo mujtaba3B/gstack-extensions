@@ -1,0 +1,75 @@
+#!/bin/bash
+# PreToolUse hook on Bash. Gate 2 of the QA-plan approval policy: in an OPTED-IN
+# ~/dev repo, block `gh pr create` until the branch has an approved two-phase QA
+# plan (an approval stamp written by /qa:plan). "The plan is in place before the
+# PR goes up" (BUILD-PROCEDURE.md non-negotiable #4).
+#
+# This is a separate hook from ship-pr-gate.sh (which forces /ship to be the PR
+# path); keeping it separate leaves that tested gate untouched. Both run on the
+# same Bash PreToolUse event; either can block. The spike escape hatch is NOT
+# honored here: a spike that graduates to a PR is shipping, so it needs a plan
+# (running /qa:plan on the branch writes the stamp and unblocks).
+#
+# Output protocol (Claude Code PreToolUse hook):
+#   exit 0 + empty stdout                          -> allow
+#   stdout JSON {"decision":"block","reason":...}  -> block, reason shown to Claude
+#
+# Fail-OPEN: any missing dependency, file outside ~/dev, no marker, or
+# unresolvable branch leaves the create ALLOWED. The deploy gate is the backstop.
+
+set -u
+
+PAYLOAD=$(cat)
+command -v jq >/dev/null 2>&1 || exit 0
+
+TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
+[ "$TOOL" = "Bash" ] || exit 0
+
+CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
+# Match `gh pr create` at command position (line start or after a shell
+# separator), tolerating env-var prefixes and an absolute/relative path to gh, so
+# the phrase inside a quoted arg / heredoc body does not trip the gate.
+printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
+
+# Resolve the repo the command targets, honoring a leading `cd <dir>` (hooks run
+# from the session cwd, not the cwd a `cd ... &&` switched into).
+WORKDIR=$(printf '%s\n' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p' | head -1)
+case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
+{ [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
+
+TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
+case "$TOP" in
+  "$HOME/dev"|"$HOME/dev/"*) ;;
+  *) exit 0 ;;
+esac
+
+MARKER_FILE="$TOP/.qa-plan-gate.json"
+[ -f "$MARKER_FILE" ] || exit 0
+MARKER=$(cat "$MARKER_FILE" 2>/dev/null)
+
+LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
+[ -f "$LIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$LIB"
+
+qpg_gate_enabled "$MARKER" pr || exit 0   # pr gate not enabled -> allow
+
+# Base scoping: a create with --base outside the marker's list is allowed.
+PRBASE=$(printf '%s' "$CMD" | grep -oE '(--base[ =]|[[:space:]]-B[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
+if [ -n "$PRBASE" ] && [ "$(qpg_base_in_scope "$MARKER" "$PRBASE")" = "out" ]; then exit 0; fi
+
+BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+[ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || exit 0
+
+GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
+[ "$VERDICT" = "valid" ] && exit 0
+
+LOG="$HOME/.claude/qa-plan-gate.log"
+printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$VERDICT" >> "$LOG" 2>/dev/null || true
+
+REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. Per ~/dev/BUILD-PROCEDURE.md (non-negotiable #4), the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."
+jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+exit 0
