@@ -35,7 +35,7 @@ the code is actually exercised and run the real flow there. Prefer it over a
 thin `dev_verified` for user-facing / interactive changes.
 
 - Requires `DRIVER: <who>` and `DEPLOYED: <host> @ <branch>, run: <command>`.
-- `<who>` is a QA-roster id from `claude-hooks/qa-roster.json`:
+- `<who>` is a QA-roster id from `qa-roster.json` at the qa plugin's root:
   - `mutwo` (DEFAULT), `muthree`, `mufour`: a Mu clone deploys AND drives it.
     Recommend the default unless another clone owns the repo or host. Add
     `EVIDENCE:` for what was observed.

@@ -38,8 +38,15 @@
 qa_gate_decision() {
   local msg="$1" shippable="$2"
 
-  # Posture already stated -> allow regardless of anything else.
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:'; then
+  # Strip fenced code blocks FIRST, for BOTH checks: trigger words inside
+  # ``` ... ``` (examples, quoted logs, the gate discussing itself) do not
+  # count as a claim, and a QA_STATUS: token inside a fence is a quotation,
+  # not a stated posture, so it must not satisfy the gate either.
+  local clean
+  clean=$(printf '%s\n' "$msg" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}')
+
+  # Posture already stated (outside fences) -> allow regardless of anything else.
+  if printf '%s' "$clean" | grep -qiE 'QA_STATUS:'; then
     echo allow
     return 0
   fi
@@ -49,11 +56,6 @@ qa_gate_decision() {
     echo allow
     return 0
   fi
-
-  # Strip fenced code blocks so trigger words inside ``` ... ``` (examples,
-  # quoted logs, the gate discussing itself) do not count as a claim.
-  local clean
-  clean=$(printf '%s\n' "$msg" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}')
 
   # Negation-aware completion claim. perl gives fixed-width negative lookbehinds
   # so "not done" / "isn't ready" / "never shipped" do not match. If perl is

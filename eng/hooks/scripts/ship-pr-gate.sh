@@ -89,7 +89,17 @@ TARGETREPO=$(printf '%s' "$CMD" | grep -oE '(--repo[ =]|[[:space:]]-R[ =])[^[:sp
 if [ -n "$TARGETREPO" ] && command -v gh >/dev/null 2>&1; then
   WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
   TNORM=$(printf '%s' "$TARGETREPO" | sed -E 's#^https?://[^/]+/##; s#\.git$##')
-  if [ -n "$WDREPO" ] && [ "$TNORM" != "$WDREPO" ]; then
+  if [ -z "$WDREPO" ]; then
+    # This checkout's repo identity could not be resolved (no remote, gh auth or
+    # network failure). An explicit cross-repo target with an unverifiable local
+    # identity is exactly the bypass this guard exists for, so refuse rather
+    # than let a local sentinel clear a PR in an unknown other repo.
+    REASON="Ship gate: this command targets $TNORM via --repo/-R/GH_REPO, but this checkout's own repo identity could not be resolved (no remote, or gh auth/network failure), so the gate cannot verify the target matches. Open the PR via /ship from a checkout of $TNORM, or fix gh auth and retry."
+    sg_log "BLOCK cross-repo gh pr create from $TOP targeting $TNORM (WDREPO unresolved)"
+    jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+    exit 0
+  fi
+  if [ "$TNORM" != "$WDREPO" ]; then
     REASON="Ship gate: this command targets a different repo ($TNORM) via --repo/-R/GH_REPO from inside an opted-in checkout ($WDREPO). The ship gate can only validate a /ship sentinel for the repo you are in, so it refuses rather than mis-evaluate. Open the PR via /ship from a checkout of $TNORM (its own gate applies there)."
     sg_log "BLOCK cross-repo gh pr create from $TOP targeting $TNORM"
     jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'

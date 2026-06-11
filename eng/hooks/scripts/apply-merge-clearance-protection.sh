@@ -44,7 +44,7 @@ for arg in "$@"; do
     --yes) ASSUME_YES=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -*) echo "unknown flag: $arg" >&2; exit 2 ;;
-    *) if [ -z "$REPO" ]; then REPO="$arg"; elif [ -z "$BRANCH" ]; then BRANCH="$arg"; fi ;;
+    *) if [ -z "$REPO" ]; then REPO="$arg"; elif [ -z "$BRANCH" ]; then BRANCH="$arg"; else echo "unexpected extra argument: $arg" >&2; exit 2; fi ;;
   esac
 done
 [ -n "$REPO" ] || { echo "usage: apply-merge-clearance-protection.sh <owner/repo> [base-branch] [--yes] [--dry-run]" >&2; exit 2; }
@@ -95,10 +95,12 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   case "$ans" in y|Y|yes|YES) ;; *) echo "aborted." >&2; exit 1 ;; esac
 fi
 
-printf '%s' "$PAYLOAD" | gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
+# Branch names may contain '/' (release/2026.06); encode for the REST path.
+BRANCH_API=${BRANCH//\//%2F}
+printf '%s' "$PAYLOAD" | gh api -X PUT "repos/$REPO/branches/$BRANCH_API/protection" \
   -H "Accept: application/vnd.github+json" --input - >/dev/null
 
 echo "Applied. Current required checks + admin enforcement:"
-gh api "repos/$REPO/branches/$BRANCH/protection" \
+gh api "repos/$REPO/branches/$BRANCH_API/protection" \
   -q '{checks: .required_status_checks.contexts, enforce_admins: .enforce_admins.enabled, reviews: .required_pull_request_reviews, conversation_resolution: .required_conversation_resolution.enabled}' 2>/dev/null \
-  || gh api "repos/$REPO/branches/$BRANCH/protection" | jq '{required_status_checks, enforce_admins, required_conversation_resolution}'
+  || gh api "repos/$REPO/branches/$BRANCH_API/protection" | jq '{required_status_checks, enforce_admins, required_conversation_resolution}'

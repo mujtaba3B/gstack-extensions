@@ -80,7 +80,7 @@ case "$VERB" in
       '{branch:$branch, approved_at:$iso, approved_at_epoch:$epoch,
         head_at_approval:$head, criteria_digest:$digest, approver:$approver,
         tool:"qa-plan"}' > "$tmp" || { rm -f "$tmp"; echo "jq write failed" >&2; exit 1; }
-    mv -f "$tmp" "$STAMP"
+    mv -f "$tmp" "$STAMP" || { rm -f "$tmp"; echo "stamp write failed: could not move into $STAMP" >&2; exit 1; }
     echo "$STAMP"
     ;;
 

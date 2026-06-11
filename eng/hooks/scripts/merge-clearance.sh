@@ -452,15 +452,6 @@ STAMP_JSON=$(jq -nc \
     ttl_seconds:$ttl, tool:"land-and-deploy",
     evidence:{ci:$ci, coderabbit:$cr, coderabbit_head:$crhead, review:$review, qa:$qa}}')
 
-# Local stamp (consumed by pr-merge-gate.sh). Only meaningful inside a checkout.
-if [ -n "$GITDIR" ]; then
-  printf '%s\n' "$STAMP_JSON" > "$GITDIR/merge-clearance-head" \
-    && err "merge-clearance: wrote local stamp $GITDIR/merge-clearance-head (ttl ${TTL}s)" \
-    || err "merge-clearance: WARNING could not write local stamp ($GITDIR/merge-clearance-head)"
-else
-  err "merge-clearance: not in a checkout - skipping local stamp (GitHub status still posted)"
-fi
-
 # GitHub commit status - the hard authority the branch ruleset requires. The
 # description carries the auto-satisfy note when it applied, so the audit trail
 # is visible on the commit status itself (descriptions cap ~140 chars).
@@ -471,6 +462,16 @@ if gh api -X POST "repos/$REPO/statuses/$HEAD" \
      -f context="$CLEARANCE_CONTEXT" \
      -f description="$STATUS_DESC" >/dev/null 2>&1; then
   err "merge-clearance: posted $CLEARANCE_CONTEXT=success on ${HEAD:0:12}"
+  # Local stamp (consumed by pr-merge-gate.sh) is written only AFTER the
+  # authoritative GitHub status posted, so a failed POST never leaves a valid
+  # local stamp behind for the TTL window. Only meaningful inside a checkout.
+  if [ -n "$GITDIR" ]; then
+    printf '%s\n' "$STAMP_JSON" > "$GITDIR/merge-clearance-head" \
+      && err "merge-clearance: wrote local stamp $GITDIR/merge-clearance-head (ttl ${TTL}s)" \
+      || err "merge-clearance: WARNING could not write local stamp ($GITDIR/merge-clearance-head)"
+  else
+    err "merge-clearance: not in a checkout - skipping local stamp (GitHub status still posted)"
+  fi
 else
   err "merge-clearance: ERROR failed to post $CLEARANCE_CONTEXT status (check gh auth / repo perms)"
   exit 1

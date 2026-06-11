@@ -6,8 +6,11 @@
 
 setup() {
   GATE="$BATS_TEST_DIRNAME/../scripts/pr-merge-gate.sh"
+  mkdir -p "$HOME/dev"   # hermetic on clean runners: the gate scopes to ~/dev
   REPO=$(mktemp -d "$HOME/dev/.mctest.XXXXXX")
   git -C "$REPO" init -q
+  git -C "$REPO" config user.name "Test User"
+  git -C "$REPO" config user.email "t@example.com"
   git -C "$REPO" commit -q --allow-empty -m init
   HEAD=$(git -C "$REPO" rev-parse HEAD)
   GITDIR=$(git -C "$REPO" rev-parse --absolute-git-dir)

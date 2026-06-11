@@ -91,3 +91,13 @@ setup() {
   run qa_gate_decision "I abandoned that approach and refactored instead." 1
   [ "$output" = "allow" ]
 }
+
+@test "blocks: QA_STATUS only inside a fenced block does not satisfy the gate" {
+  run qa_gate_decision "$(printf 'The contract is:\n```\nQA_STATUS: dev_verified\n```\nAnyway, the feature is done and ready to merge.')" 1
+  [ "$output" = "block" ]
+}
+
+@test "allows: QA_STATUS stated outside fences still satisfies the gate" {
+  run qa_gate_decision "$(printf 'Work is done.\nQA_STATUS: dev_verified\nEVIDENCE: ran the flow.')" 1
+  [ "$output" = "allow" ]
+}
