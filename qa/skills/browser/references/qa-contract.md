@@ -26,7 +26,7 @@ QA_SKIP_APPROVED_BY: <github-handle> <YYYY-MM-DD> <why QA is not feasible / not 
 
 ## Gate 1: the build-time Stop hook (lenient)
 
-`~/dev/claude-hooks/scripts/qa-status-gate.sh` is a Claude Code Stop hook. When your final assistant message claims coding work is done (`done`, `shipped`, `ready to merge`, ...) on a branch with shippable changes, it blocks the stop unless the message carries a `QA_STATUS:` line.
+The qa plugin's `hooks/scripts/qa-status-gate.sh` (shipped and wired by this plugin) is a Claude Code Stop hook. When your final assistant message claims coding work is done (`done`, `shipped`, `ready to merge`, ...) on a branch with shippable changes, it blocks the stop unless the message carries a `QA_STATUS:` line.
 
 - The match is lenient: ANY line containing `QA_STATUS:` (case-insensitive) anywhere in the final message satisfies it. It strips code fences and is negation-aware, and it fails OPEN on any doubt.
 - So: just end your final message with the posture line. That is all the Stop hook needs.

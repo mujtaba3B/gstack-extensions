@@ -2,7 +2,7 @@
 
 The `deploy_branch_for_manual_qa` QA posture (full contract:
 [`qa-status-postures.md`](qa-status-postures.md), enforced by
-`scripts/qa-status-gate.sh`) names
+this plugin's `hooks/scripts/qa-status-gate.sh`) names
 a real, often-skipped QA activity: deploy the unmerged feature branch to the host
 where the code is actually exercised, run the real flow against real data, and only
 then call it verified. It exists because automated tests pass on plenty of changes
@@ -15,7 +15,7 @@ evidence would otherwise be unit tests.
 
 ## Who drives QA: the roster
 
-`DRIVER:` names WHO runs the QA, chosen from the QA roster (`claude-hooks/qa-roster.json`).
+`DRIVER:` names WHO runs the QA, chosen from the QA roster (`qa-roster.json` at this plugin's root).
 The agent RECOMMENDS a driver (a best guess), the human approves or refines it, and the
 chosen driver is named **in the PR body with their handle** (e.g. `QA driver: @mutwo-ai`)
 so it is unambiguous who is on the hook. The roster ids and their handles:

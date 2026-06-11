@@ -125,7 +125,7 @@ cat > "$HOME/.claude/scripts/merge-clearance.sh" <<'SHIM'
 # ships inside the eng plugin; exec the newest installed cache copy.
 set -euo pipefail
 CACHE="$HOME/.claude/plugins/cache/gstack-extensions/eng"
-real="$(ls -t "$CACHE"/*/hooks/scripts/merge-clearance.sh 2>/dev/null | head -1)"
+real="$(ls -t "$CACHE"/*/hooks/scripts/merge-clearance.sh 2>/dev/null | head -1 || true)"
 if [ -z "$real" ] || [ ! -x "$real" ]; then
   echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
   exit 1
@@ -134,6 +134,14 @@ exec "$real" "$@"
 SHIM
 chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
 echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
+
+# 5. Deploy the QA posture contract doc to its fixed path. The qa-status-gate
+#    Stop hook's block message points agents at ~/.claude/docs/qa-status-postures.md
+#    (a path baked into the ported script), so keep that path valid from this
+#    repo now that claude-hooks no longer owns the doc.
+mkdir -p "$HOME/.claude/docs"
+cp "$REPO/qa/docs/qa-status-postures.md" "$HOME/.claude/docs/qa-status-postures.md"
+echo "deployed: ~/.claude/docs/qa-status-postures.md (qa-status-gate contract)"
 
 echo
 # Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's

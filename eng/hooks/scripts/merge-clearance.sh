@@ -235,8 +235,13 @@ fi
 QPG_MARKER_FILE=""
 [ -n "$TOPLEVEL" ] && [ -f "$TOPLEVEL/.qa-plan-gate.json" ] && QPG_MARKER_FILE="$TOPLEVEL/.qa-plan-gate.json"
 if [ -n "$QPG_MARKER_FILE" ]; then
+  # qa-plan-gate-lib.sh ships in the qa plugin, not this (eng) one. Try the
+  # sibling first (flat deployments), then the newest installed qa plugin copy.
   QPG_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
-  if [ -f "$QPG_LIB" ]; then
+  if [ ! -f "$QPG_LIB" ]; then
+    QPG_LIB="$(ls -t "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*/hooks/scripts/qa-plan-gate-lib.sh 2>/dev/null | head -1 || true)"
+  fi
+  if [ -n "$QPG_LIB" ] && [ -f "$QPG_LIB" ]; then
     # shellcheck source=/dev/null
     . "$QPG_LIB"
     # Only enforce when the deploy gate is on AND this PR's base is in the

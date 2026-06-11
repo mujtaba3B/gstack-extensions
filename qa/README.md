@@ -21,10 +21,10 @@ The plugin ships its gates in `hooks/hooks.json`; installing the plugin activate
 | Hook | Event | What it enforces |
 |---|---|---|
 | `qa-plan-present-gate.sh` | PreToolUse AskUserQuestion | Gate 0: a `"QA plan"`-headered approval question must carry the fit-in-box plan summary (both phase headings, <= 20x60, single-select). |
-| `qa-plan-build-gate.sh` | PreToolUse Edit/Write | Gate 1: no application-source edits on a feature branch until the branch has a `/qa:plan` approval stamp. Docs/tests/config are carved out; `spike/` branches bypass. |
+| `qa-plan-build-gate.sh` | PreToolUse Edit/Write | Gate 1: no application-source edits on a feature branch until the branch has a `/qa:qa-plan` approval stamp. Docs/tests/config are carved out; `spike/` branches bypass. |
 | `qa-plan-pr-gate.sh` | PreToolUse Bash | Gate 2: no `gh pr create` until the branch has an approval stamp. |
 | `qa-status-gate.sh` | Stop | A turn that claims coding work is done on a branch with shippable commits must state a QA posture (`dev_verified` / `prod_verified` / `blocked` / a signed skip) with evidence. |
-| `qa-plan-stamp.sh` | (utility) | Writes / reads / clears the branch-keyed approval stamp; called by `/qa:plan` on the human's Approve. |
+| `qa-plan-stamp.sh` | (utility) | Writes / reads / clears the branch-keyed approval stamp; called by `/qa:qa-plan` on the human's Approve. |
 
 Pure decision logic lives in `qa-plan-gate-lib.sh` / `qa-status-gate-lib.sh`, unit-tested by the bats suites in `hooks/tests/` (run them as individual files). The QA-driver roster is `qa-roster.json` at the plugin root; the real-host Development QA mechanic is documented in `docs/deploy-branch-for-manual-qa.md`.
 

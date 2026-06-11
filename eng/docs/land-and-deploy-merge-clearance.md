@@ -6,14 +6,16 @@
 re-appliable record. After an upgrade, if `merge-clearance` calls are gone from
 that SKILL.md, re-apply both hunks.
 
-The heavy logic lives in this repo (`scripts/merge-clearance.sh`,
-`scripts/merge-clearance-lib.sh`, `scripts/pr-merge-gate.sh`), so these SKILL.md
-edits are intentionally tiny - only the two call sites change.
+The heavy logic lives in the eng plugin (`eng/hooks/scripts/merge-clearance.sh`,
+`eng/hooks/scripts/merge-clearance-lib.sh`, `eng/hooks/scripts/pr-merge-gate.sh`),
+reached through the stable shim `~/.claude/scripts/merge-clearance.sh` that
+`bin/install` writes, so these SKILL.md edits are intentionally tiny - only the
+two call sites change.
 
 Verify whether the patch is present:
 
 ```bash
-grep -c 'merge-clearance.sh' ~/.claude/skills/gstack/land-and-deploy/SKILL.md   # expect 4
+grep -c 'merge-clearance.sh' ~/.claude/skills/gstack/land-and-deploy/SKILL.md   # expect 6
 ```
 
 ## Hunk 1 - read-only check inside the readiness gate (Step 3.5)
@@ -31,9 +33,17 @@ same objective gauntlet the local merge gate and the GitHub `local-review/merge-
 required check enforce. This call is READ-ONLY - it does not write the stamp yet.
 
 ```bash
-test -f ~/.claude/scripts/merge-clearance.sh && test -f "$(git rev-parse --show-toplevel)/.merge-clearance.json" \
-  && ~/.claude/scripts/merge-clearance.sh check 2>&1 || echo "merge-clearance gate not active for this repo (skipping)"
+if test -f ~/.claude/scripts/merge-clearance.sh && test -f "$(git rev-parse --show-toplevel)/.merge-clearance.json"; then
+  ~/.claude/scripts/merge-clearance.sh check 2>&1
+else
+  echo "merge-clearance gate not active for this repo (skipping)"
+fi
 ```
+
+(The `if` form matters: only the two `test -f` probes may downgrade to
+"not active". A failing `check` run, including a shim that cannot resolve an
+installed eng plugin copy, must surface as a failure, never be relabeled
+"not active".)
 
 Include its rendered checklist verbatim in the readiness report below. A **NOT
 CLEAR** verdict for CodeRabbit (unresolved threads / changes requested / still
