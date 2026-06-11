@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 1.4.0
+version: 1.5.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -9,7 +9,7 @@ description: |
   Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
   the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
   run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
-  presenting the plan (and a recommended QA driver from claude-hooks/qa-roster.json,
+  presenting the plan (and a recommended QA driver from the qa plugin's qa-roster.json,
   default mutwo, named in the PR body with their handle) for the human's approval
   and, on a yes, writing the approval stamp the QA-plan gates read (build / PR /
   deploy). It is step 3 of
@@ -98,7 +98,7 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 
 <!-- qa-plan: managed by /qa:plan -->
 
-**QA driver:** <Label> (`<@handle>`) -- <one-line why>. Who is on the hook to run the Development QA, recommended by /qa:plan and approved by the human (roster: `claude-hooks/qa-roster.json`). For the agent (`claude`) write "the building agent (this session)" with no handle.
+**QA driver:** <Label> (`<@handle>`) -- <one-line why>. Who is on the hook to run the Development QA, recommended by /qa:plan and approved by the human (roster: the qa plugin's `qa-roster.json`). For the agent (`claude`) write "the building agent (this session)" with no handle.
 
 ### Development QA (must pass before merge)
 - [ ] <Given/When/Then or EARS criterion> via `<tool/command>`, expect <result>
@@ -120,7 +120,7 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 - Post-deploy: state `QA_STATUS: prod_verified` + `EVIDENCE:` once Production QA is verified live.
 ```
 
-**Pick the QA driver** for the `**QA driver:**` line: read `claude-hooks/qa-roster.json` and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
+**Pick the QA driver** for the `**QA driver:**` line: read `../../qa-roster.json` (the plugin root, relative to this skill's base directory) and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
 
 Mechanics:
 - With a PR open: read the current body, replace the existing `## QA`...marker block if present (idempotent) else append it, and `gh pr edit <n> --body-file <tmp>`.
@@ -132,7 +132,7 @@ Mechanics:
 Tell the user, in one tight readout:
 - The **Development QA** checkboxes gate the merge: while any is unchecked, the merge-clearance QA dimension blocks. Checking them all is what lets you state `QA_STATUS: dev_verified`.
 - The **Production QA** bullets are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
-- Point at `~/dev/BUILD-PROCEDURE.md` (the procedure) and the aligned QA-status gate (`claude-hooks/scripts/qa-status-gate.sh`) for the posture contract.
+- Point at `~/dev/BUILD-PROCEDURE.md` (the procedure) and the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
@@ -153,10 +153,10 @@ The load-bearing step: it makes QA approval come **before** building. BUILD-PROC
 
    If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
 
-2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree):
+2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree). The stamp script ships inside this plugin at `../../hooks/scripts/qa-plan-stamp.sh` relative to this skill's base directory (named in the preamble); resolve it from there:
 
    ```bash
-   ~/.claude/scripts/qa-plan-stamp.sh write \
+   "<this skill's base directory>/../../hooks/scripts/qa-plan-stamp.sh" write \
      --digest "$(printf '%s' "<your QA section text>" | shasum -a 256 | cut -d' ' -f1)"
    ```
 

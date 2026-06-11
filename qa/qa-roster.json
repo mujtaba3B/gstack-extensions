@@ -1,0 +1,49 @@
+{
+  "_comment": "QA driver roster: who can be recommended to run QA for a change. /qa:plan and qa-status-gate.sh recommend a driver (default = the entry whose `default` is true); the agent takes a best guess, the human approves or refines, and the chosen driver is named IN THE PR BODY with their `handle`. Handles verified 2026-06-07 against GitHub: the Mu fleet accounts carry the -ai suffix (the bare mutwo/muthree/mufour logins are unrelated). Keep this list current as the fleet changes.",
+  "default": "mutwo",
+  "drivers": [
+    {
+      "id": "mutwo",
+      "label": "MuTwo",
+      "kind": "clone",
+      "handle": "@mutwo-ai",
+      "default": true,
+      "notes": "Primary Mu clone. Deploys the feature branch to the real host and drives the real flow, then records EVIDENCE. The default driver when nothing points elsewhere."
+    },
+    {
+      "id": "muthree",
+      "label": "MuThree",
+      "kind": "clone",
+      "handle": "@muthree-ai",
+      "notes": "Mu clone. Recommend when MuThree owns the repo or host the change runs on."
+    },
+    {
+      "id": "mufour",
+      "label": "MuFour",
+      "kind": "clone",
+      "handle": "@mufour-ai",
+      "notes": "Mu clone. Recommend when MuFour owns the repo or host the change runs on."
+    },
+    {
+      "id": "mujtaba",
+      "label": "Mujtaba",
+      "kind": "human",
+      "handle": "@mujtaba3B",
+      "notes": "The human. Recommend when the change needs his taste/judgment, or when only he holds the live session or real data to exercise it. Hand him the exact command; this ends the turn, with dev_verified recorded after his thumbs-up."
+    },
+    {
+      "id": "claude",
+      "label": "Claude (this session's agent)",
+      "kind": "agent",
+      "handle": null,
+      "notes": "The building agent. Recommend when the flow is automatable and this session can deploy + drive it now and record EVIDENCE. No GitHub handle: name it in the PR as 'the building agent (this session)'."
+    }
+  ],
+  "excluded": [
+    {
+      "id": "mufive",
+      "handle": "@mufive-ai",
+      "reason": "GitHub-flagged / ineligible (account parked); do not recommend."
+    }
+  ]
+}
