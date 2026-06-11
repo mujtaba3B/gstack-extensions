@@ -140,7 +140,8 @@ if [ "$VERB" = "enable" ]; then
   cat >&2 <<EOF
 
 Next steps to finish opting $REPO into the gate:
-  1. Commit .merge-clearance.json on a branch and open a PR (it must reach $BASE).
+  1. Keep .merge-clearance.json LOCAL (it is git-ignored by convention; the marker
+     is a machine-local policy switch, recreated per clone at bootstrap).
   2. Ensure the repo has CodeRabbit installed and a CI check named in required_checks.
 $([ "$APPLY_PROTECTION" -eq 1 ] || echo "  3. Flip branch protection: $0 enable --repo $REPO --base $BASE --apply-protection (or run apply-merge-clearance-protection.sh).")
   $([ "$APPLY_PROTECTION" -eq 1 ] && echo "3." || echo "4.") From now on, land PRs via /land-and-deploy (it posts the clearance).
