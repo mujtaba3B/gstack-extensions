@@ -28,21 +28,26 @@
 #     check too. Keep conversation-resolution ON for this reason.
 #
 # Usage:
-#   apply-merge-clearance-protection.sh <owner/repo> [base-branch] [--yes] [--dry-run]
+#   apply-merge-clearance-protection.sh <owner/repo> [base-branch] [--yes] [--dry-run] [--soft]
 #     base-branch defaults to the repo's default branch.
 #     --dry-run  print the payload, change nothing.
 #     --yes      skip the confirmation prompt (for automation).
+#     --soft     enforce_admins=false (the soft protection tier: required checks
+#                bind PRs and the web button for non-admins, but the repo admin
+#                can still self-merge in an emergency; use on solo repos where
+#                no other account authors PRs).
 #
 # Idempotent: a PUT replaces the protection wholesale, so re-running converges.
 # Requires admin on the repo (the PUT 403s otherwise).
 
 set -euo pipefail
 
-REPO=""; BRANCH=""; ASSUME_YES=0; DRY_RUN=0
+REPO=""; BRANCH=""; ASSUME_YES=0; DRY_RUN=0; ENFORCE_ADMINS=true
 for arg in "$@"; do
   case "$arg" in
     --yes) ASSUME_YES=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --soft) ENFORCE_ADMINS=false ;;
     -*) echo "unknown flag: $arg" >&2; exit 2 ;;
     *) if [ -z "$REPO" ]; then REPO="$arg"; elif [ -z "$BRANCH" ]; then BRANCH="$arg"; else echo "unexpected extra argument: $arg" >&2; exit 2; fi ;;
   esac
@@ -58,21 +63,32 @@ if [ -z "$BRANCH" ]; then
   [ -n "$BRANCH" ] || { echo "default branch for $REPO came back empty; pass [base-branch] explicitly" >&2; exit 2; }
 fi
 
-# The required checks: CI plus the clearance context. Pull the CI context name(s)
-# from the repo's .merge-clearance.json marker if we can read it from the API,
-# else default to "ci". The clearance context is always appended.
+# The required checks: the repo's CI context name(s) plus the clearance context.
+# The .merge-clearance.json marker is machine-local and git-ignored (2026-06-11),
+# so read it from the LOCAL checkout when cwd is a clone of the target repo; the
+# API contents fallback only helps for repos that still track a marker. Without
+# a readable marker, default to ["ci"], and warn: requiring a check context the
+# repo never produces would deadlock merges.
 REQUIRED='["ci","local-review/merge-clearance"]'
+marker=""
+LOCAL_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$LOCAL_TOP" ] && [ -f "$LOCAL_TOP/.merge-clearance.json" ]; then
+  LOCAL_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+  [ "$LOCAL_REPO" = "$REPO" ] && marker=$(cat "$LOCAL_TOP/.merge-clearance.json")
+fi
 # Fetch the raw file (raw media type) rather than the base64 `.content` field, so
 # we avoid `base64 -d` (GNU) vs `-D` (BSD/macOS) portability gotchas entirely.
-marker=$(gh api "repos/$REPO/contents/.merge-clearance.json" -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
+[ -z "$marker" ] && marker=$(gh api "repos/$REPO/contents/.merge-clearance.json" -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
 if [ -n "$marker" ]; then
   checks=$(printf '%s' "$marker" | jq -c '(.required_checks // ["ci"]) + ["local-review/merge-clearance"] | unique' 2>/dev/null || true)
   [ -n "$checks" ] && REQUIRED="$checks"
+else
+  echo "WARNING: no readable .merge-clearance.json for $REPO (markers are machine-local; run from a checkout). Defaulting to required checks $REQUIRED; verify the repo actually produces a 'ci' check or merges will deadlock." >&2
 fi
 
-PAYLOAD=$(jq -nc --argjson contexts "$REQUIRED" '{
+PAYLOAD=$(jq -nc --argjson contexts "$REQUIRED" --argjson ea "$ENFORCE_ADMINS" '{
   required_status_checks: { strict: false, contexts: $contexts },
-  enforce_admins: true,
+  enforce_admins: $ea,
   required_pull_request_reviews: null,
   restrictions: null,
   required_linear_history: false,
