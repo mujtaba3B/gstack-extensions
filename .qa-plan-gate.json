@@ -1,5 +1,0 @@
-{
-  "_comment": "Opt-in marker for the QA-plan approval gates (claude-hooks/scripts/qa-plan-*-gate.sh). Presence enables, before build: source edits blocked until /qa:plan approval stamp exists; before PR: gh pr create blocked until approved; before deploy: merge blocked until Dev QA passed. Spike/ branches bypass the build gate. Authored by the qa-plan-approval-gates work.",
-  "base_branches": ["main"],
-  "gates": ["build", "pr", "deploy"]
-}

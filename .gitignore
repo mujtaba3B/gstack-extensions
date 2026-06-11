@@ -16,3 +16,9 @@
 /CLAUDE.md
 /LOG.md
 /INDEX.md
+
+# Gate opt-in markers are machine-local (the gates ship in this repo's qa/eng
+# plugins; a marker arms them for one repo). Recreate at bootstrap; never commit.
+.qa-plan-gate.json
+.ship-gate.json
+.merge-clearance.json
