@@ -112,6 +112,29 @@ for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
 done
 shopt -u nullglob
 
+# 4. Stable-path shim for merge-clearance.sh. The real script ships inside the
+#    eng plugin (eng/hooks/scripts/), but external callers invoke it by the
+#    long-standing fixed path ~/.claude/scripts/merge-clearance.sh: the gstack
+#    /land-and-deploy patch (eng/docs/land-and-deploy-merge-clearance.md) and
+#    the pr-merge-gate block message both name it. The shim execs the newest
+#    installed cache copy, so the path stays valid across version bumps.
+mkdir -p "$HOME/.claude/scripts"
+cat > "$HOME/.claude/scripts/merge-clearance.sh" <<'SHIM'
+#!/usr/bin/env bash
+# Shim installed by gstack-extensions bin/install. The real merge-clearance.sh
+# ships inside the eng plugin; exec the newest installed cache copy.
+set -euo pipefail
+CACHE="$HOME/.claude/plugins/cache/gstack-extensions/eng"
+real="$(ls -t "$CACHE"/*/hooks/scripts/merge-clearance.sh 2>/dev/null | head -1)"
+if [ -z "$real" ] || [ ! -x "$real" ]; then
+  echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
+  exit 1
+fi
+exec "$real" "$@"
+SHIM
+chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
+echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
+
 echo
 # Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's
 # `if ! bin/install` guard catches it instead of reporting a clean upgrade.
