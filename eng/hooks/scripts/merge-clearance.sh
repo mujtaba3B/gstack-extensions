@@ -236,10 +236,18 @@ QPG_MARKER_FILE=""
 [ -n "$TOPLEVEL" ] && [ -f "$TOPLEVEL/.qa-plan-gate.json" ] && QPG_MARKER_FILE="$TOPLEVEL/.qa-plan-gate.json"
 if [ -n "$QPG_MARKER_FILE" ]; then
   # qa-plan-gate-lib.sh ships in the qa plugin, not this (eng) one. Try the
-  # sibling first (flat deployments), then the newest installed qa plugin copy.
+  # sibling first (flat deployments), then the HIGHEST-VERSION installed qa
+  # plugin copy (sort -V on the version dirs; deterministic, unlike mtime,
+  # which selects whatever was installed or touched last).
   QPG_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
   if [ ! -f "$QPG_LIB" ]; then
-    QPG_LIB="$(ls -t "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*/hooks/scripts/qa-plan-gate-lib.sh 2>/dev/null | head -1 || true)"
+    QPG_LIB=""
+    for _qadir in $(ls -d "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*/ 2>/dev/null | sort -rV); do
+      if [ -f "${_qadir}hooks/scripts/qa-plan-gate-lib.sh" ]; then
+        QPG_LIB="${_qadir}hooks/scripts/qa-plan-gate-lib.sh"
+        break
+      fi
+    done
   fi
   if [ -n "$QPG_LIB" ] && [ -f "$QPG_LIB" ]; then
     # shellcheck source=/dev/null

@@ -260,3 +260,10 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
 }
+
+@test "build gate: sibling lib resolution ignores a bogus CLAUDE_PLUGIN_ROOT (env-independence)" {
+  opt_in
+  run bash -c "CLAUDE_PLUGIN_ROOT=/nonexistent/other-plugin printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"decision":"block"'* ]]
+}

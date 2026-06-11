@@ -125,7 +125,15 @@ cat > "$HOME/.claude/scripts/merge-clearance.sh" <<'SHIM'
 # ships inside the eng plugin; exec the newest installed cache copy.
 set -euo pipefail
 CACHE="$HOME/.claude/plugins/cache/gstack-extensions/eng"
-real="$(ls -t "$CACHE"/*/hooks/scripts/merge-clearance.sh 2>/dev/null | head -1 || true)"
+# Highest installed version wins (sort -V), not newest mtime: deterministic
+# when multiple cache version dirs coexist.
+real=""
+for d in $(ls -d "$CACHE"/*/ 2>/dev/null | sort -rV); do
+  if [ -x "${d}hooks/scripts/merge-clearance.sh" ]; then
+    real="${d}hooks/scripts/merge-clearance.sh"
+    break
+  fi
+done
 if [ -z "$real" ] || [ ! -x "$real" ]; then
   echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
   exit 1

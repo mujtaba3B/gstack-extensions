@@ -81,3 +81,10 @@ stamp()   { printf '{"head":"%s","checked_at_epoch":%s,"ttl_seconds":600,"tool":
   run bash -c "printf '%s' '$(payload "cd $REPO && /opt/homebrew/bin/gh pr merge")' | bash '$GATE'"
   echo "$output" | grep -q '"decision":"block"'
 }
+
+@test "merge gate: sibling lib resolution ignores a bogus CLAUDE_PLUGIN_ROOT (env-independence)" {
+  opt_in
+  run bash -c "cd '$REPO' && CLAUDE_PLUGIN_ROOT=/nonexistent/other-plugin printf '%s' '$(payload "gh pr merge 1 --squash")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"decision":"block"'* ]]
+}

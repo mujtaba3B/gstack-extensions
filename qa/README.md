@@ -16,7 +16,7 @@ QA Quincey will accrete sibling skills over time (mobile, accessibility, perform
 
 ## Hooks (Quincey's enforcement arm)
 
-The plugin ships its gates in `hooks/hooks.json`; installing the plugin activates them, uninstalling deactivates them. They are opt-in per repo (a `.qa-plan-gate.json` marker at the repo root) and scoped to git repos under `~/dev`; everything else is untouched. All gates fail open on missing dependencies.
+The plugin ships its gates in `hooks/hooks.json`; installing the plugin activates them, uninstalling deactivates them. They are opt-in per repo (a `.qa-plan-gate.json` marker at the repo root) and scoped to git repos under `~/dev`; everything else is untouched. All gates fail open on missing dependencies. Path convention: `hooks.json` commands locate entrypoints via `${CLAUDE_PLUGIN_ROOT}`; inside the scripts, sibling libs resolve via `BASH_SOURCE` so the executing copy always binds its own dependencies (the scripts are dual-use: skills, the shim, and the bats suites invoke them without the hook env).
 
 | Hook | Event | What it enforces |
 |---|---|---|
