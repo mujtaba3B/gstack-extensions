@@ -8,7 +8,7 @@ Copy editing isn't just for new content. Existing pages and posts decay over tim
 - **Stats or data** are more than 12 months old
 - **Product has changed** - features, pricing, or positioning no longer match
 - **Competitors updated** their version of the same content
-- **AI search visibility** matters - outdated content gets cited less (see ai-seo skill)
+- **AI search visibility** matters - outdated content gets cited less (upstream marketingskills ships an ai-seo skill; not vendored here)
 
 ## Content Refresh Checklist
 

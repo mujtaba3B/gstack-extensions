@@ -11,7 +11,7 @@ Unlike the sibling personas, Cora's skills are **vendored** from third-party MIT
 | Invocation | What it does |
 |---|---|
 | `/copy:copywriting` | Write or rewrite marketing copy for a page: context gathering (reads `.agents/product-marketing.md` when present), page structure framework, headline formulas, CTA guidelines, annotated output with alternatives. Vendored from Corey Haines' marketingskills. |
-| `/copy:copy-editing` | Improve existing copy via the Seven Sweeps framework (clarity, voice, persuasion, concision, scannability, error, conversion), plus quick-pass checks and content-refresh editing. Vendored from Corey Haines' marketingskills. |
+| `/copy:copy-editing` | Improve existing copy via the Seven Sweeps framework (Clarity; Voice and Tone; So What; Prove It; Specificity; Heightened Emotion; Zero Risk), plus quick-pass checks and content-refresh editing. Vendored from Corey Haines' marketingskills. |
 | `/copy:stop-slop` | Strip predictable AI writing patterns from prose: filler phrases, formulaic structures, em-dashes, metronomic rhythm. Run it on every draft. Vendored from Hardik Pandya's stop-slop. |
 
 The intended flow: draft with `copy:copywriting`, de-slop with `copy:stop-slop`, polish with `copy:copy-editing`.

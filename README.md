@@ -16,7 +16,7 @@ Then restart your Claude Code session. Skills become invokable as `/pm:bug`, `/q
 
 ## What's included
 
-Five persona plugins (each a top-level dir with a `.claude-plugin/plugin.json`, a `skills/` tree, and shared context):
+Five persona plugins (each a top-level dir with a `.claude-plugin/plugin.json`, a `skills/` tree, and usually shared context):
 
 - **PM Penny** (`pm/`): product-manager persona. `/pm:feature`, `/pm:bug`, `/pm:next-issue`, `/pm:first-principles`. Turns ideas, bug reports, and "what next?" into well-structured GitHub issues, and reframes problems from first principles.
 - **QA Quincey** (`qa/`): manual-QA persona. `/qa:browser`, `/qa:headless`, `/qa:qa-plan`. Verifies one defined flow against the spec or mockup, in the browser (driving the gstack browse daemon, AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects), and authors the two-phase QA plan. Ships Quincey's enforcement hooks: the QA-plan gates (presentation / build / PR) and the QA-status Stop gate (see `qa/README.md`).
@@ -62,7 +62,7 @@ git pull --ff-only   # must be on a clean main
 ./bin/uninstall
 ```
 
-Uninstalls the four plugins and removes this repo's local marketplace (and sweeps any leftover symlinks from the old installer). Leaves gstack and any other marketplaces alone.
+Uninstalls the five plugins and removes this repo's local marketplace (and sweeps any leftover symlinks from the old installer). Leaves gstack and any other marketplaces alone.
 
 ## Adding to the repo
 

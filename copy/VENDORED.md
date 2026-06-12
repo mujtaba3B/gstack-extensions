@@ -6,7 +6,7 @@ Every skill in this plugin is vendored from a third-party MIT-licensed repo and 
 |---|---|---|---|---|---|
 | copywriting | [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) | `skills/copywriting/` | `4b377f289bd37be457a7154626e109ec3affad50` | 2.0.0 (repo 2.4.1) | MIT ([licenses/marketingskills.LICENSE](licenses/marketingskills.LICENSE)) |
 | copy-editing | [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) | `skills/copy-editing/` | `4b377f289bd37be457a7154626e109ec3affad50` | 2.0.0 (repo 2.4.1) | MIT ([licenses/marketingskills.LICENSE](licenses/marketingskills.LICENSE)) |
-| stop-slop | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) | repo root | `8da1f030185bdfe8471220585162991eaeb970e9` | 2.0.0 | MIT ([licenses/stop-slop.LICENSE](licenses/stop-slop.LICENSE)) |
+| stop-slop | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) | repo root | `8da1f030185bdfe8471220585162991eaeb970e9` | n/a (upstream is unversioned; date-headed CHANGELOG) | MIT ([licenses/stop-slop.LICENSE](licenses/stop-slop.LICENSE)) |
 
 Imported 2026-06-12. Upstream `evals/` subdirs were omitted (CI fixtures, not needed at runtime).
 
@@ -20,7 +20,7 @@ The verbatim import is its own commit; every local change is a normal commit on 
 - No-em-dash rule added to the copywriting style rules and the copy-editing checks.
 - Slash-trigger lines (`/copy:<skill>`) added to descriptions.
 
-When porting an upstream update, re-apply nothing: patch the live file by hand and keep the patches listed here current.
+When porting an upstream update there are no patch files to re-apply: edit the live file by hand and keep the standing-patch list above current.
 
 ## Update play (manual, roughly quarterly)
 
