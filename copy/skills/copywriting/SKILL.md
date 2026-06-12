@@ -1,9 +1,24 @@
 ---
 name: copywriting
-description: When the user wants to write, rewrite, or improve marketing copy for any page — including homepage, landing pages, pricing pages, feature pages, about pages, or product pages. Also use when the user says "write copy for," "improve this copy," "rewrite this page," "marketing copy," "headline help," "CTA copy," "value proposition," "tagline," "subheadline," "hero section copy," "above the fold," "this copy is weak," "make this more compelling," or "help me describe my product." Use this whenever someone is working on website text that needs to persuade or convert. For email copy, see emails. For popup copy, see popups. For editing existing copy, see copy-editing.
+description: When the user wants to write, rewrite, or improve marketing copy for any page - including homepage, landing pages, pricing pages, feature pages, about pages, or product pages. Also use when the user says "write copy for," "improve this copy," "rewrite this page," "marketing copy," "headline help," "CTA copy," "value proposition," "tagline," "subheadline," "hero section copy," "above the fold," "this copy is weak," "make this more compelling," or "help me describe my product." Use this whenever someone is working on website text that needs to persuade or convert. For editing existing copy, see copy-editing. For stripping AI writing patterns from a draft, see stop-slop. Also fires on "/copy:copywriting".
 metadata:
   version: 2.0.0
 ---
+
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and refreshes the installed plugins, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
 
 # Copywriting
 
@@ -62,12 +77,13 @@ Each section should advance one argument. Build a logical flow down the page.
 
 ### Core Principles
 
-1. **Simple over complex** — "Use" not "utilize," "help" not "facilitate"
-2. **Specific over vague** — Avoid "streamline," "optimize," "innovative"
-3. **Active over passive** — "We generate reports" not "Reports are generated"
-4. **Confident over qualified** — Remove "almost," "very," "really"
-5. **Show over tell** — Describe the outcome instead of using adverbs
-6. **Honest over sensational** — Fabricated statistics or testimonials erode trust and create legal liability
+1. **Simple over complex** - "Use" not "utilize," "help" not "facilitate"
+2. **Specific over vague** - Avoid "streamline," "optimize," "innovative"
+3. **Active over passive** - "We generate reports" not "Reports are generated"
+4. **Confident over qualified** - Remove "almost," "very," "really"
+5. **Show over tell** - Describe the outcome instead of using adverbs
+6. **Honest over sensational** - Fabricated statistics or testimonials erode trust and create legal liability
+7. **No em-dashes, ever** (local rule) - never use the em-dash character in produced copy; restructure with a period, comma, colon, semicolon, parentheses, or hyphen
 
 ### Quick Quality Check
 
@@ -75,9 +91,10 @@ Each section should advance one argument. Build a logical flow down the page.
 - Sentences trying to do too much?
 - Passive voice constructions?
 - Exclamation points? (remove them)
+- Em-dash characters? (banned; restructure the sentence)
 - Marketing buzzwords without substance?
 
-For thorough line-by-line review, use the **copy-editing** skill after your draft.
+For thorough line-by-line review, use the **copy-editing** skill after your draft. To strip AI writing patterns, run **stop-slop** on the draft.
 
 ---
 
@@ -99,7 +116,7 @@ Questions engage readers and make them think about their own situation.
 Analogies make abstract concepts concrete and memorable.
 
 ### Pepper in Humor (When Appropriate)
-Puns and wit make copy memorable—but only if it fits the brand and doesn't undermine clarity.
+Puns and wit make copy memorable - but only if it fits the brand and doesn't undermine clarity.
 
 ---
 
@@ -234,8 +251,8 @@ For key elements, explain:
 
 ### Alternatives
 For headlines and CTAs, provide 2-3 options:
-- Option A: [copy] — [rationale]
-- Option B: [copy] — [rationale]
+- Option A: [copy] - [rationale]
+- Option B: [copy] - [rationale]
 
 ### Meta Content (if relevant)
 - Page title (for SEO)
@@ -245,8 +262,7 @@ For headlines and CTAs, provide 2-3 options:
 
 ## Related Skills
 
-- **copy-editing**: For polishing existing copy (use after your draft)
-- **cro**: If page structure/strategy needs work, not just copy
-- **emails**: For email copywriting
-- **popups**: For popup and modal copy
-- **ab-testing**: To test copy variations
+- **copy-editing** (`copy:copy-editing`): For polishing existing copy (use after your draft)
+- **stop-slop** (`copy:stop-slop`): Run on every draft to remove AI writing patterns
+
+Upstream marketingskills also ships cro, emails, popups, and ab-testing skills; they are not vendored here (see the plugin's VENDORED.md).

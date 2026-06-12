@@ -5,7 +5,7 @@
     "email": "mj@belalbadat.com"
   },
   "metadata": {
-    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Ernie, Designer Denise. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:cr, /design:pencil-mockup)."
+    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Ernie, Designer Denise, Copywriter Cora. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:cr, /design:pencil-mockup, /copy:copywriting)."
   },
   "plugins": [
     {
@@ -27,6 +27,11 @@
       "name": "design",
       "source": "./design",
       "description": "Designer Denise, the design persona. Creates and updates Pencil (.pen) mockups via the Pencil MCP, the Pencil-native counterpart to gstack's HTML-oriented design skills. Skills: design:pencil-mockup."
+    },
+    {
+      "name": "copy",
+      "source": "./copy",
+      "description": "Copywriter Cora, the copywriting persona. Drafts conversion copy for landing pages and marketing surfaces, runs the Seven Sweeps edit pass on existing copy, and strips AI writing patterns from prose. Skills vendored from Corey Haines' marketingskills and Hardik Pandya's stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in copy/VENDORED.md. Skills: copy:copywriting, copy:copy-editing, copy:stop-slop."
     }
   ]
 }

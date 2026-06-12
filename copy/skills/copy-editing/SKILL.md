@@ -1,9 +1,24 @@
 ---
 name: copy-editing
-description: "When the user wants to edit, review, or improve existing marketing copy, or refresh outdated content. Also use when the user mentions 'edit this copy,' 'review my copy,' 'copy feedback,' 'proofread,' 'polish this,' 'make this better,' 'copy sweep,' 'tighten this up,' 'this reads awkwardly,' 'clean up this text,' 'too wordy,' 'sharpen the messaging,' 'refresh this content,' 'update this page,' 'this content is outdated,' or 'content audit.' Use this when the user already has copy and wants it improved or refreshed rather than rewritten from scratch. For writing new copy, see copywriting."
+description: "When the user wants to edit, review, or improve existing marketing copy, or refresh outdated content. Also use when the user mentions 'edit this copy,' 'review my copy,' 'copy feedback,' 'proofread,' 'polish this,' 'make this better,' 'copy sweep,' 'tighten this up,' 'this reads awkwardly,' 'clean up this text,' 'too wordy,' 'sharpen the messaging,' 'refresh this content,' 'update this page,' 'this content is outdated,' or 'content audit.' Use this when the user already has copy and wants it improved or refreshed rather than rewritten from scratch. For writing new copy, see copywriting. Also fires on '/copy:copy-editing'."
 metadata:
   version: 2.0.0
 ---
+
+## Update check (run first)
+
+Before the skill body, check whether the gstack-extensions repo has merged updates this clone has not pulled. Silent unless an upgrade is available; never changes anything:
+
+```bash
+~/dev/gstack-extensions/bin/gstack-extensions-update-check 2>/dev/null || true
+```
+
+If there is no output, proceed straight to the skill body. If it prints `UPGRADE_AVAILABLE <n> <range>`, tell the user via AskUserQuestion that gstack-extensions is `<n>` commit(s) behind `origin/main` and offer:
+
+- **Upgrade now (recommended)**: run `~/dev/gstack-extensions/bin/gstack-extensions-upgrade`, then continue. It fast-forwards `main` and refreshes the installed plugins, and refuses safely (printing why) if the clone is not on a clean `main`; relay that message and continue without upgrading if so.
+- **Skip this time**: run `~/dev/gstack-extensions/bin/gstack-extensions-update-check --snooze` to suppress the prompt for ~8h (so other skills do not re-ask this session), then continue without upgrading.
+
+Do not upgrade without asking. Ask at most once per session: if you have already prompted (or the user skipped) this session, proceed silently.
 
 # Copy Editing
 
@@ -14,7 +29,7 @@ You are an expert copy editor specializing in marketing and conversion copy. You
 **Check for product marketing context first:**
 If `.agents/product-marketing.md` exists (or `.claude/product-marketing.md`, or the legacy `product-marketing-context.md` filename, in older setups), read it before editing. Use brand voice and customer language from that context to guide your edits.
 
-Good copy editing isn't about rewriting—it's about enhancing. Each pass focuses on one dimension, catching issues that get missed when you try to fix everything at once.
+Good copy editing isn't about rewriting - it's about enhancing. Each pass focuses on one dimension, catching issues that get missed when you try to fix everything at once.
 
 **Key principles:**
 - Don't change the core message; focus on enhancing it
@@ -47,7 +62,7 @@ Edit copy through seven sequential passes, each focusing on one dimension. After
 
 **Process:**
 1. Read through quickly, highlighting unclear parts
-2. Don't correct yet—just note problem areas
+2. Don't correct yet - just note problem areas
 3. After marking issues, recommend specific edits
 4. Verify edits maintain the original intent
 
@@ -96,7 +111,7 @@ For every statement, ask "Okay, so what?" If the copy doesn't answer that questi
 
 ❌ "Our platform uses AI-powered analytics"
 *So what?*
-✅ "Our AI-powered analytics surface insights you'd miss manually—so you can make better decisions in half the time"
+✅ "Our AI-powered analytics surface insights you'd miss manually - so you can make better decisions in half the time"
 
 **Common So What failures:**
 - Feature lists without benefit connections
@@ -211,7 +226,7 @@ For every statement, ask "Okay, so what?" If the copy doesn't answer that questi
 - Ask questions that prompt reflection
 
 **Process:**
-1. Read for emotional impact—does it move you?
+1. Read for emotional impact - does it move you?
 2. Identify flat sections that should resonate
 3. Add emotional texture while staying authentic
 4. Ensure emotion serves the message (not manipulation)
@@ -264,9 +279,9 @@ Use this after completing the Seven Sweeps for an additional quality gate. For h
 
 1. **Assemble 3-5 expert personas** relevant to the copy type
 2. **Each persona scores the copy 1-10** on their area of expertise
-3. **Collect specific critiques** — not just scores, but what to fix
-4. **Revise based on feedback** — address the lowest-scoring areas first
-5. **Re-score after revisions** — iterate until all personas score 7+, with an average of 8+ across the panel
+3. **Collect specific critiques** - not just scores, but what to fix
+4. **Revise based on feedback** - address the lowest-scoring areas first
+5. **Re-score after revisions** - iterate until all personas score 7+, with an average of 8+ across the panel
 
 ### Recommended Expert Panels
 
@@ -337,6 +352,7 @@ Use these for faster reviews when a full seven-sweep process isn't needed.
 - Adverbs (usually unnecessary)
 - Passive voice (switch to active)
 - Nominalizations (verb → noun: "make a decision" → "decide")
+- Em-dash characters (banned in this workspace; restructure with a period, comma, colon, semicolon, parentheses, or hyphen)
 
 ### Sentence-Level Checks
 
@@ -358,7 +374,7 @@ Use these for faster reviews when a full seven-sweep process isn't needed.
 
 ## Copy Editing Checklist
 
-For a final QA pass before delivering edits, work through the full checklist in [references/checklist.md](references/checklist.md) — covering all seven sweeps plus pre-start and final-check items.
+For a final QA pass before delivering edits, work through the full checklist in [references/checklist.md](references/checklist.md) - covering all seven sweeps plus pre-start and final-check items.
 
 ---
 
@@ -422,7 +438,7 @@ This iterative process ensures each edit doesn't create new problems while respe
 
 ## Content Refresh Editing
 
-Copy editing isn't just for new content. Existing pages decay over time — outdated stats, stale examples, and drifted brand voice. Use the content refresh framework when traffic is declining, data is stale, or the product has changed.
+Copy editing isn't just for new content. Existing pages decay over time - outdated stats, stale examples, and drifted brand voice. Use the content refresh framework when traffic is declining, data is stale, or the product has changed.
 
 **For the full refresh checklist, refresh vs. rewrite decision matrix, and cadence guide**: See [references/content-refresh.md](references/content-refresh.md)
 
@@ -440,10 +456,10 @@ Copy editing isn't just for new content. Existing pages decay over time — outd
 
 ## Related Skills
 
-- **copywriting**: For writing new copy from scratch (use this skill to edit after your first draft is complete)
-- **cro**: For broader page optimization beyond copy
-- **marketing-psychology**: For understanding why certain edits improve conversion
-- **ab-testing**: For testing copy variations
+- **copywriting** (`copy:copywriting`): For writing new copy from scratch (use this skill to edit after your first draft is complete)
+- **stop-slop** (`copy:stop-slop`): For stripping AI writing patterns from a draft
+
+Upstream marketingskills also ships cro, marketing-psychology, and ab-testing skills; they are not vendored here (see the plugin's VENDORED.md).
 
 ---
 
@@ -454,4 +470,4 @@ Copy editing isn't just for new content. Existing pages decay over time — outd
 | Writing new page copy from scratch | copywriting |
 | Reviewing and improving existing copy | copy-editing (this skill) |
 | Editing copy you just wrote | copy-editing (this skill) |
-| Structural or strategic page changes | cro |
+| Stripping AI tells from a draft | stop-slop |
