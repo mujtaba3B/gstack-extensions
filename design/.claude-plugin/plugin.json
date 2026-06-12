@@ -1,6 +1,6 @@
 {
   "name": "design",
-  "version": "1.1.0",
-  "description": "Designer Denise, the design persona. Creates and updates Pencil (.pen) mockups via the Pencil MCP, the Pencil-native counterpart to gstack's HTML-oriented design skills. Skills: design:pencil-mockup.",
+  "version": "1.2.0",
+  "description": "Designer Denise, the design persona. Creates and updates Pencil (.pen) mockups via the Pencil MCP, the Pencil-native counterpart to gstack's HTML-oriented design skills. Every mockup canvas carries a style guide frame. Skills: design:pencil-mockup, design:style-guide.",
   "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
 }
