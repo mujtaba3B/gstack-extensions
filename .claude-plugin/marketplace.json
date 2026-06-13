@@ -5,7 +5,7 @@
     "email": "mj@belalbadat.com"
   },
   "metadata": {
-    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Ernie, Designer Denise. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:cr, /design:pencil-mockup)."
+    "description": "Personal persona plugins layered on top of gstack: PM Penny, QA Quincey, Engineer Ernie, Designer Denise, Marketing Mindy. Each plugin's skills invoke namespaced as <persona>:<skill> (e.g. /pm:bug, /qa:browser, /eng:cr, /design:pencil-mockup, /marketing:copywriting)."
   },
   "plugins": [
     {
@@ -27,6 +27,11 @@
       "name": "design",
       "source": "./design",
       "description": "Designer Denise, the design persona. Creates and updates Pencil (.pen) mockups via the Pencil MCP, the Pencil-native counterpart to gstack's HTML-oriented design skills. Every mockup canvas carries a style guide frame; design:style-guide owns from-scratch style guide creation. Skills: design:pencil-mockup, design:style-guide."
+    },
+    {
+      "name": "marketing",
+      "source": "./marketing",
+      "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces; today she drafts conversion copy for landing pages (copywriting), runs the Seven Sweeps edit pass and an AI-tell strip on existing copy (copy-editing, stop-slop), and offers a single review front door that runs the edit + de-slop passes over existing copy (copy-review-wip, work in progress), with room to grow into the wider marketing toolkit (CRO, ads, email, SEO). The vendored skills come from Corey Haines' marketingskills and Hardik Pandya's stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in marketing/VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop, marketing:copy-review-wip."
     }
   ]
 }

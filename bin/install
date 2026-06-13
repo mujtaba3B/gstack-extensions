@@ -161,4 +161,4 @@ if [[ "$fail" -ne 0 ]]; then
 fi
 echo "Done. Restart your Claude Code session to load new/changed plugins."
 echo "Verify with: claude plugin list"
-echo "Skills invoke as /pm:<skill>, /qa:<skill>, /eng:<skill>, /design:<skill>."
+echo "Skills invoke as /pm:<skill>, /qa:<skill>, /eng:<skill>, /design:<skill>, /marketing:<skill>."
