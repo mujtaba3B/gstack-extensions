@@ -31,7 +31,7 @@
     {
       "name": "marketing",
       "source": "./marketing",
-      "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces; today she drafts conversion copy for landing pages, runs the Seven Sweeps edit pass on existing copy, and strips AI writing patterns from prose, with room to grow into the wider marketing toolkit (CRO, ads, email, SEO). Skills vendored from Corey Haines' marketingskills and Hardik Pandya's stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in marketing/VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop."
+      "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces; today she drafts conversion copy for landing pages (copywriting), runs the Seven Sweeps edit pass and an AI-tell strip on existing copy (copy-editing, stop-slop), and offers a single review front door that runs the edit + de-slop passes over existing copy (copy-review-wip, work in progress), with room to grow into the wider marketing toolkit (CRO, ads, email, SEO). The vendored skills come from Corey Haines' marketingskills and Hardik Pandya's stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in marketing/VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop, marketing:copy-review-wip."
     }
   ]
 }

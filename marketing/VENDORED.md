@@ -1,6 +1,6 @@
 # Vendored skills: provenance and update play
 
-Every skill in this plugin is vendored from a third-party MIT-licensed repo and patched in place. This file is the **single canonical provenance record** (do not duplicate pins into skill frontmatter).
+Three of this plugin's skills (copywriting, copy-editing, stop-slop) are vendored from a third-party MIT-licensed repo and patched in place; this file is their **single canonical provenance record** (do not duplicate pins into skill frontmatter). The fourth skill, `copy-review-wip`, is **first-party** (no upstream, no pin): it is a thin orchestrator whose body invokes `copy-editing` then `stop-slop` via the Skill tool, so the vendored three stay the only source of review logic.
 
 | Skill | Upstream repo | Upstream path | Pinned SHA | Upstream skill version | License |
 |---|---|---|---|---|---|

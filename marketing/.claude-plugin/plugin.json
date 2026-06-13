@@ -1,6 +1,6 @@
 {
   "name": "marketing",
-  "version": "1.0.0",
-  "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces end to end: today, conversion copywriting (copywriting), the seven-sweep edit pass on existing copy (copy-editing), and stripping AI writing patterns from prose (stop-slop); the basket grows as more of the marketing toolkit (CRO, ads, email, SEO) is vendored. Skills vendored from coreyhaines31/marketingskills and hardikpandya/stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop.",
+  "version": "1.1.0",
+  "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces end to end: today, conversion copywriting (copywriting), a structural/voice edit pass (copy-editing), stripping AI writing patterns from prose (stop-slop), and a single review front door that runs the edit + de-slop passes over existing copy (copy-review-wip, work in progress); the basket grows as more of the marketing toolkit (CRO, ads, email, SEO) is vendored. The vendored skills come from coreyhaines31/marketingskills and hardikpandya/stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop, marketing:copy-review-wip.",
   "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
 }
