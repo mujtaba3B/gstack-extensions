@@ -1,6 +1,0 @@
-{
-  "name": "copy",
-  "version": "1.0.0",
-  "description": "Copywriter Cora, the copywriting persona. Conversion copywriting for landing pages and marketing surfaces: drafting new copy (copywriting), the seven-sweep edit pass on existing copy (copy-editing), and stripping AI writing patterns from prose (stop-slop). Skills vendored from coreyhaines31/marketingskills and hardikpandya/stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in VENDORED.md. Skills: copy:copywriting, copy:copy-editing, copy:stop-slop.",
-  "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
-}

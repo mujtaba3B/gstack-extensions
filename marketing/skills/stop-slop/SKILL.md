@@ -1,6 +1,6 @@
 ---
 name: stop-slop
-description: Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells. Run it on every copy:copywriting draft. Also fires on "/copy:stop-slop".
+description: Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells. Run it on every marketing:copywriting draft. Also fires on "/marketing:stop-slop".
 metadata:
   trigger: Writing prose, editing drafts, reviewing content for AI patterns
   author: Hardik Pandya (https://hvpandya.com)

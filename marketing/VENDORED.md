@@ -12,13 +12,13 @@ Imported 2026-06-12. Upstream `evals/` subdirs were omitted (CI fixtures, not ne
 
 ## Local patches
 
-The verbatim import is its own commit; every local change is a normal commit on top, so `git log copy/skills/` separates "as imported" from "as patched". Standing patches:
+The verbatim import is its own commit; every local change is a normal commit on top, so `git log marketing/skills/` separates "as imported" from "as patched". Standing patches:
 
 - Em-dash characters stripped throughout (workspace-wide hard rule).
 - The repo's `## Update check (run first)` preamble added to each `SKILL.md`.
 - Cross-skill references rewritten to vendored reality (pointers to non-vendored upstream skills like cro / emails / popups / ab-testing removed or marked upstream-only).
 - No-em-dash rule added to the copywriting style rules and the copy-editing checks.
-- Slash-trigger lines (`/copy:<skill>`) added to descriptions.
+- Slash-trigger lines (`/marketing:<skill>`) added to descriptions.
 
 When porting an upstream update there are no patch files to re-apply: edit the live file by hand and keep the standing-patch list above current.
 

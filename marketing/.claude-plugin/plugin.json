@@ -1,0 +1,6 @@
+{
+  "name": "marketing",
+  "version": "1.0.0",
+  "description": "Marketing Mindy, the marketing persona. Owns marketing surfaces end to end: today, conversion copywriting (copywriting), the seven-sweep edit pass on existing copy (copy-editing), and stripping AI writing patterns from prose (stop-slop); the basket grows as more of the marketing toolkit (CRO, ads, email, SEO) is vendored. Skills vendored from coreyhaines31/marketingskills and hardikpandya/stop-slop at pinned SHAs, patched for local voice rules (no em-dashes); provenance in VENDORED.md. Skills: marketing:copywriting, marketing:copy-editing, marketing:stop-slop.",
+  "author": { "name": "Mujtaba Badat", "email": "mj@belalbadat.com" }
+}
