@@ -8,7 +8,9 @@ description: >
   "add a state/variant to the .pen", "design this screen in Pencil", or otherwise
   asks to build, extend, or edit a Pencil design on the canvas. Use this skill
   whenever the design surface is a `.pen` file, NOT gstack's design-html (which
-  outputs HTML/CSS). Also fires on "/design:pencil-mockup".
+  outputs HTML/CSS). Every new mockup canvas also gets a style guide frame,
+  kept in sync on style-changing updates (from-scratch style guide creation is
+  design:style-guide). Also fires on "/design:pencil-mockup".
 ---
 
 ## Update check (run first)
@@ -59,6 +61,7 @@ For each new screen/frame/variant:
 3. Pick the position with `find_empty_space_on_canvas` (padding 40) in the intended direction. Never hand-pick a y.
 4. Build the frame with `batch_design`, following the loaded Pencil schema. Use sticky notes (`type: "note"`) for annotations, never naked text. When you place more than one note, position each by the previous note's real bottom (`y + height` from `snapshot_layout`), never a guessed pitch, and prefer one larger note over a stack of tiny ones (see `core.md`'s note-overlap rules). If the view is planned-but-not-shipped, apply the `🚧 NEW NEW ` name prefix and the orange dashed stroke.
 5. `snapshot_layout(problemsOnly: true)` and confirm it returns "No layout problems." Fix any overlap before moving on. **This gate does not catch note-on-note overlap** (the detector is blind to it), so if you placed any sticky notes, also run the explicit note-rectangle check from `core.md` and confirm in the screenshot that no note buries another.
+6. **Style guide frame.** A new mockup canvas is not done without one. If the canvas has no `Style guide · <Project>` frame, create it per the "Style guide frame" section of `references/wireframes.md` (placement, five-card anatomy). When the style decisions themselves are still open (display font, palette), do not guess: run `/design:style-guide` for the questionnaire + research flow, then continue here. If a style guide frame already exists, make the new frame conform to it.
 
 ## Step 4b: Update path
 
@@ -66,6 +69,7 @@ For each new screen/frame/variant:
 2. Apply the change with `batch_design`.
 3. If the frame **grew** (taller/wider), re-flow everything stacked below it in the same column to keep the canvas tight, then re-run the overlap check. Growing a frame is the most common cause of new overlaps.
 4. `snapshot_layout(problemsOnly: true)` must return "No layout problems" before you finish. If the edit touched any sticky notes, that gate is **not** sufficient (it does not flag note-on-note overlap), so also run the explicit note-rectangle check from `core.md`.
+5. **Style guide sync.** If the update changed styles (palette, fonts, button treatments, logos), update the `Style guide · <Project>` frame in the same pass, per the sync rule in `references/wireframes.md`. If the canvas predates the convention and has no style guide frame, create one now (step 4a.6).
 
 ## Step 5: Show the result
 
@@ -75,5 +79,6 @@ For each new screen/frame/variant:
 ## What this skill does NOT do
 
 - It does not generate HTML/CSS. That is gstack's `design-html`.
+- It does not run the style-guide questionnaire / research / font-options flow; that is `/design:style-guide`. This skill builds the style guide frame when the decisions are already settled, and keeps it in sync on updates.
 - It does not run the post-deploy `🚧 NEW NEW` demotion sweep; that belongs to `/close-out` / `/land-and-deploy`.
 - It does not review an existing mockup for visual quality as its primary job; that is a future Denise skill. (It will still fix an overlap it creates.)

@@ -83,6 +83,26 @@ The demotion sweep (removing the `🚧 NEW NEW ` prefix and orange stroke once a
 
 ---
 
+## Style guide frame (every mockup canvas carries one)
+
+Every mockup canvas gets a companion style guide: a root-level frame named `Style guide · <Project>`, sitting in its own column past the last view column (it is reference material, not a view in the flow, so it never participates in the horizontal/vertical axes). It is a sibling of the screen frames, never nested inside one.
+
+**Anatomy (the five-card shape).** One vertical frame (light gray fill such as `#F5F5F5`, ~760px wide, `padding: 32`, `gap: 24`) with a small mono panel title. The panel title carries a 1-2 word **named direction** for the project's aesthetic (e.g. "Clinical brutalism", "Warm editorial") so the design language is quotable in later sessions. Below the title, five rounded cards (`cornerRadius: 12`, `width: fill_container`), top to bottom:
+
+1. **Type · Display**: card on the product's primary surface color, rendering the REAL headline copy in the chosen display font, plus a one-line role description (which weights, which elements).
+2. **Type · Body + Labels**: card with the body font sample and the label/mono font sample at their real sizes, plus a one-line spec (sizes, where each is used).
+3. **Color**: card with a swatch row; each swatch is a chip + hex + a short role caption ("dark sections", "actions on dark", etc.).
+4. **Buttons**: card on the surface the buttons actually live on, with primary (filled), secondary (stroked), and chip samples in their real treatments.
+5. **Logos**: card with the brand mark, the wordmark, any partner logos, and a note pointing at the SVG source path on disk so future sessions can re-derive the vectors.
+
+Adapt card surfaces and content to the project (a light-themed product flips the dark cards), but keep the five sections and the order. Reference implementation: the frame `Style guide · Hackers & Healers` in `~/dev/apps/hackers-and-healers/spec/wireframes/hh-landing.pen` (inspect via the Pencil MCP only; `.pen` files are encrypted).
+
+**Sync rule.** The style guide is load-bearing, not decorative: any mockup edit that changes styles (palette, fonts, button treatments, logos) also updates the style guide frame in the same pass. A style guide that disagrees with the mockup beside it is worse than none.
+
+**Division of labor.** Creating a style guide from scratch (the questionnaire, the research, the font option panels) is `/design:style-guide`'s job. `pencil-mockup` creates the frame inline when the style decisions are already settled, and keeps it in sync on every update.
+
+---
+
 ## LEGEND frame on the canvas
 
 Every wireframe file should have a `LEGEND` frame (or sticky note) somewhere on the canvas explaining:

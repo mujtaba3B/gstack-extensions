@@ -8,7 +8,8 @@ This directory is a Claude Code plugin named `design` (installed from this repo'
 
 | Invocation | What it does |
 |---|---|
-| `/design:pencil-mockup` | Create or update a Pencil mockup. Owns all creates and updates to `.pen` files: lays out new screens/variants per the canvas axes, makes surgical edits to existing frames, enforces the no-overlap protocol, and screenshots the result. |
+| `/design:pencil-mockup` | Create or update a Pencil mockup. Owns all creates and updates to `.pen` files: lays out new screens/variants per the canvas axes, makes surgical edits to existing frames, enforces the no-overlap protocol, and screenshots the result. Every new mockup canvas also gets a `Style guide · <Project>` frame, kept in sync on style-changing updates. |
+| `/design:style-guide` | Create a project style guide from scratch: interview (one question at a time), light research (reference-site palette extraction, repo brand assets), on-canvas font option panels for taste decisions, then the standard five-card style guide frame (display type, body type, color, buttons, logos). |
 
 Denise is a basket; more skills (review, variant exploration, and so on) will land here over time as sibling `design:*` skills.
 
