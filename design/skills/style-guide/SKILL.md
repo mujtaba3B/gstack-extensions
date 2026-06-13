@@ -56,6 +56,8 @@ Ask a FEW questions before designing anything. Hard rule: one question per turn,
 3. **Font taste.** Standing preference: the user hates stereotypically-AI font picks. Fraunces and Space Grotesk are the canonical offenders; never propose them, and treat "this font is suddenly on every AI-generated landing page" as a disqualifier. Ask for direction (serif vs sans, sharp vs warm, any loved/hated fonts) rather than naming candidates yet; candidates come as an on-canvas panel in step 6.
 4. **Audience and tone.** Who is this for and how should it feel (clinical, playful, premium, brutalist)?
 
+**No-anchor fallback (direction menu).** If the interview surfaces no reference brand (Q1) AND no palette anchors (Q2), you have nothing to ground a proposal on, so do not invent a direction silently. Fire one `AskUserQuestion` offering 4-5 named aesthetic directions as the options: editorial / magazine, brutalist / raw, luxury / refined, organic / natural, retro-futuristic (adapt the set to the audience and tone from Q4). The user's pick becomes the anchor the research and font panels build on. Skip this whenever a brand or anchor already exists.
+
 ## Step 4: Light research before proposing
 
 Do the research that grounds the proposal; do not design from vibes alone.
@@ -81,7 +83,7 @@ Build an options panel per the **font panel recipe** in `references/recipes.md`:
 
 ## Step 7: Generate the style guide frame
 
-Build the `Style guide · <Project>` frame per the "Style guide frame" section of `../pencil-mockup/references/wireframes.md`: root-level frame in its own column, five cards top to bottom (Type · Display, Type · Body + Labels, Color, Buttons, Logos), card surfaces adapted to the project. That section is the single home for the anatomy; follow it, do not improvise the shape.
+Build the `Style guide · <Project>` frame per the "Style guide frame" section of `../pencil-mockup/references/wireframes.md`: root-level frame in its own column, five cards top to bottom (Type · Display, Type · Body + Labels, Color, Buttons, Logos), card surfaces adapted to the project. That section is the single home for the anatomy; follow it, do not improvise the shape. Set the panel title's **named direction** (the 1-2 word aesthetic name the anatomy calls for) from the interview's tone answer or the direction-menu pick from step 3.
 
 All canvas writes obey the overlap protocol from the reference: `snapshot_layout(maxDepth: 0)` before, `find_empty_space_on_canvas` (padding 40) to place, `snapshot_layout(problemsOnly: true)` must return "No layout problems" after, plus the explicit note-rectangle check for any sticky notes (the detector is blind to note-on-note overlap).
 

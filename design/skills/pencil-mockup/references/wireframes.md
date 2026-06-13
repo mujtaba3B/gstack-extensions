@@ -87,7 +87,7 @@ The demotion sweep (removing the `🚧 NEW NEW ` prefix and orange stroke once a
 
 Every mockup canvas gets a companion style guide: a root-level frame named `Style guide · <Project>`, sitting in its own column past the last view column (it is reference material, not a view in the flow, so it never participates in the horizontal/vertical axes). It is a sibling of the screen frames, never nested inside one.
 
-**Anatomy (the five-card shape).** One vertical frame (light gray fill such as `#F5F5F5`, ~760px wide, `padding: 32`, `gap: 24`) with a small mono panel title, then five rounded cards (`cornerRadius: 12`, `width: fill_container`), top to bottom:
+**Anatomy (the five-card shape).** One vertical frame (light gray fill such as `#F5F5F5`, ~760px wide, `padding: 32`, `gap: 24`) with a small mono panel title. The panel title carries a 1-2 word **named direction** for the project's aesthetic (e.g. "Clinical brutalism", "Warm editorial") so the design language is quotable in later sessions. Below the title, five rounded cards (`cornerRadius: 12`, `width: fill_container`), top to bottom:
 
 1. **Type · Display**: card on the product's primary surface color, rendering the REAL headline copy in the chosen display font, plus a one-line role description (which weights, which elements).
 2. **Type · Body + Labels**: card with the body font sample and the label/mono font sample at their real sizes, plus a one-line spec (sizes, where each is used).

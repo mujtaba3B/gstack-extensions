@@ -50,3 +50,13 @@ The user picks fonts by looking at real renderings, never from font names in cha
 - Ask for the pick with `AskUserQuestion` (one option per letter, plus the vibe line). After the pick, delete the panel unless the user wants to keep the record.
 
 The same panel pattern works for any contested taste call (two palette directions, button shapes): render the real thing side by side, label the options, let the user point.
+
+## Taste guardrails (distilled baseline)
+
+The minimum bar for the proposal, so the style guide does not read as generic AI output. These are this skill's own baseline; do not depend on anything external for them.
+
+- **Commit to one direction.** A timid palette that hedges across many colors reads as generic. Pick a dominant color and a sharp accent, and a clear type personality, then execute it consistently. Refined-minimal and bold-maximal both work; indecision does not.
+- **Display fonts carry the personality; pick a characterful one.** Avoid the overused display picks (the stereotypically-AI set from the interview step, plus the usual generic faces). This rule is scoped to **display / heading** type only. A neutral workhorse body font (Inter, and similar) is a legitimate, deliberate body choice and is not penalized: the reference Hackers & Healers guide pairs an Archivo display with an Inter body on purpose.
+- **Color with intent.** Dominant surface plus one or two sharp accents beats an evenly distributed rainbow. Every swatch in the Color card earns a role caption; if a color has no role, it does not belong.
+
+**Optional enrichment, soft pointer (no hard dependency).** Anthropic ships an official `frontend-design` skill that is a fuller catalog of this taste vocabulary. If it is installed, you may read its `SKILL.md` for richer aesthetic language to inform a proposal: locate it with `find ~/.claude/plugins -path '*frontend-design*/SKILL.md'` and read the first hit. Treat it as inspiration, not authority: it is prose, it can change or disappear upstream, and at least one of its rules (it bans Inter outright) conflicts with the display-scoped rule above, which wins here. When it is absent, the distilled baseline above is complete on its own; never make the skill require it.

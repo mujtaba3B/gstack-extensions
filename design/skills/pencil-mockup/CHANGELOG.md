@@ -2,7 +2,7 @@
 
 ## v1.2.0
 
-Style guides become a first-class artifact of every mockup: the create path builds a `Style guide · <Project>` root frame beside the mockup (five-card anatomy in `references/wireframes.md`), and the update path syncs that frame whenever an edit changes styles. The from-scratch flow (questionnaire, research, font options) lives in the new sibling skill `/design:style-guide`.
+Style guides become a first-class artifact of every mockup: the create path builds a `Style guide · <Project>` root frame beside the mockup (five-card anatomy in `references/wireframes.md`), and the update path syncs that frame whenever an edit changes styles. The from-scratch flow (questionnaire, research, font options) lives in the new sibling skill `/design:style-guide`. The frame's panel title carries a 1-2 word named direction so the aesthetic is quotable later. `style-guide` borrows from Anthropic's official skills via a soft pointer, never a hard plugin dependency: distilled taste guardrails with an optional read of `frontend-design` when installed (the anti-slop rule scoped to display fonts, so neutral body fonts like Inter stay legitimate), and a named-aesthetic-direction menu fallback when the interview finds no brand or palette anchors.
 
 ## v1.1.0
 
