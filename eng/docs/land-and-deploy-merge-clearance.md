@@ -18,6 +18,46 @@ Verify whether the patch is present:
 grep -c 'merge-clearance.sh' ~/.claude/skills/gstack/land-and-deploy/SKILL.md   # expect 6
 ```
 
+## The `/land-and-deploy` sentinel makes it the SINGLE merge path (no patch needed)
+
+As of eng `v2.1.0`, the merge gate requires TWO things, not one: a valid
+merge-clearance stamp AND a fresh, target-matched `/land-and-deploy` sentinel.
+
+The stamp alone can be written by a bare `merge-clearance clear`, so the stamp by
+itself never proved the merge came through `/land-and-deploy`. The sentinel closes
+that gap: it is minted ONLY by invoking `/land-and-deploy` (the
+`land-deploy-sentinel.sh` hook fires on the Skill invocation and on a prompt
+starting with `/land-and-deploy`), and `pr-merge-gate.sh` now blocks a bare
+`gh pr merge` unless that sentinel is present, fresh, and bound to this PR's HEAD.
+A manual `merge-clearance clear` followed by `gh pr merge` no longer merges: it has
+the stamp but not the sentinel. This is **default-on fleet-wide** in every repo
+carrying a `.merge-clearance.json` marker.
+
+Crucially, the sentinel needs **no patch to the upstream skill**. It is minted by
+an eng-plugin hook wired in `hooks/hooks.json`, so a `/gstack-upgrade` that clobbers
+the two SKILL.md hunks above cannot remove it. The clobber's only effect stays the
+same as before: `/land-and-deploy` would stop writing the clearance stamp (Hunk 2),
+so the merge would block on the missing stamp until the hunks are re-applied. The
+gate still fails open on its own errors (missing `jq`/`git`/`gh`); the sentinel is
+target-bound (repo + HEAD sha + PR number when resolvable) and lives per-worktree
+in `<gitdir>/land-deploy-clearance`. A generous default TTL (1800s, override via
+`ld_sentinel_ttl_seconds` in the marker) covers long CI / merge-queue waits, which
+is safe because the binding is to a specific commit, not just freshness.
+
+Ceiling: a local hook can only gate the CLI `gh pr merge`. The GitHub web Merge
+button stays gated by the `local-review/merge-clearance` required status check
+(clearance), which GitHub cannot tie to `/land-and-deploy` provenance. So the
+sentinel makes `/land-and-deploy` the only CLI merge path; the web button remains
+clearance-gated.
+
+Verify the sentinel wiring is installed:
+
+```bash
+jq -r '.hooks.PreToolUse[].hooks[].command' \
+  ~/.claude/plugins/cache/gstack-extensions/eng/*/hooks/hooks.json | grep -c land-deploy-sentinel
+# expect >= 1
+```
+
 ## Hunk 1 - read-only check inside the readiness gate (Step 3.5)
 
 Anchor: the line `### 3.5e: Readiness report and confirmation`, preceded by

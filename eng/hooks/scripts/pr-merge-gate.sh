@@ -111,11 +111,30 @@ LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/merge-clearance-lib.sh"
 # shellcheck source=/dev/null
 . "$LIB"
 
-STAMP=$(cat "$GITDIR/merge-clearance-head" 2>/dev/null || echo "")
 NOW=$(date +%s)
-VERDICT=$(mc_stamp_valid "$STAMP" "$PRHEAD" "$NOW" 900)
-[ "$VERDICT" = "valid" ] && exit 0
 
-REASON="Merge gate: no valid merge-clearance for this PR HEAD (${PRHEAD:-unknown}) [${VERDICT}]. This repo requires the full pre-merge gauntlet before \`gh pr merge\`: CodeRabbit resolved + CI green + local /review + QA. Run /land-and-deploy (the sanctioned path) - it verifies all four, writes the clearance stamp, and posts the required GitHub check. To clear manually: \`~/.claude/scripts/merge-clearance.sh clear\` on the PR HEAD. A stale-head/expired verdict means the clearance no longer matches the current HEAD or its TTL lapsed; re-clear on the current HEAD."
+# Dimension 1: the clearance stamp (CodeRabbit + CI + local /review + QA all green).
+# Written by `merge-clearance clear`, which /land-and-deploy runs before it merges.
+STAMP=$(cat "$GITDIR/merge-clearance-head" 2>/dev/null || echo "")
+VERDICT=$(mc_stamp_valid "$STAMP" "$PRHEAD" "$NOW" 900)
+if [ "$VERDICT" != "valid" ]; then
+  REASON="Merge gate: no valid merge-clearance for this PR HEAD (${PRHEAD:-unknown}) [${VERDICT}]. This repo merges ONLY through /land-and-deploy: it runs the full pre-merge gauntlet (CodeRabbit resolved + CI green + local /review + QA), writes the clearance stamp, posts the required GitHub check, and then deploys. Run /land-and-deploy. A stale-head/expired verdict means the clearance no longer matches the current HEAD or its TTL lapsed; re-run /land-and-deploy on the current HEAD."
+  jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+  exit 0
+fi
+
+# Dimension 2: the land-deploy sentinel. The stamp alone can be minted by a bare
+# `merge-clearance clear`; this sentinel can ONLY be minted by actually invoking
+# /land-and-deploy (land-deploy-sentinel.sh on Skill / UserPromptSubmit). Requiring
+# both is what makes /land-and-deploy the single sanctioned CLI merge path. It is
+# target-bound to this PR HEAD (and, when resolvable, repo + PR number), so a
+# sentinel minted for an earlier commit cannot authorize merging a newer one.
+# Default-on fleet-wide: enforced in every opted-in repo, no per-marker flag.
+SENTINEL=$(cat "$GITDIR/land-deploy-clearance" 2>/dev/null || echo "")
+TREPO=$(git -C "$WORKDIR" remote get-url origin 2>/dev/null | sed -E 's#^[^:]+://[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##')
+SVERDICT=$(ld_sentinel_valid "$SENTINEL" "$NOW" 1800 "$PRHEAD" "$TREPO" "$PRNUM")
+[ "$SVERDICT" = "valid" ] && exit 0
+
+REASON="Merge gate: clearance is green but this merge did not come through /land-and-deploy [sentinel: ${SVERDICT}]. A bare \`gh pr merge\` (or a manual \`merge-clearance clear\` followed by \`gh pr merge\`) is no longer a merge path: /land-and-deploy is the single sanctioned way to merge, because it also runs the production deploy. Run /land-and-deploy to merge this PR. (no-sentinel = land-and-deploy was never invoked here; expired = its run window lapsed, re-run it; mismatch = the sentinel is for a different commit/PR, re-run it on the current HEAD.)"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

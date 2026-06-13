@@ -23,6 +23,10 @@ teardown() { rm -rf "$REPO" "${REPO2:-/nonexistent}"; }
 payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
 opt_in()  { echo '{"base_branches":["main"]}' > "$REPO/.merge-clearance.json"; }
 stamp()   { printf '{"head":"%s","checked_at_epoch":%s,"ttl_seconds":600,"tool":"land-and-deploy"}' "$1" "$2" > "$GITDIR/merge-clearance-head"; }
+# ld_sentinel <head> <epoch>: the /land-and-deploy sentinel. repo/pr left as the
+# test repo has no remote (gate resolves target_repo="" -> repo match skipped) and
+# no PR (target_pr="" -> pr match skipped); head_sha is the binding under test.
+ld_sentinel() { printf '{"set_at_epoch":%s,"ttl_seconds":1800,"repo":"owner/name","head_sha":"%s","pr_number":"","source":"skill"}' "$2" "$1" > "$GITDIR/land-deploy-clearance"; }
 
 @test "allow: non-merge command is ignored" {
   run bash -c "printf '%s' '$(payload "git status")' | bash '$GATE'"
@@ -46,10 +50,30 @@ stamp()   { printf '{"head":"%s","checked_at_epoch":%s,"ttl_seconds":600,"tool":
   echo "$output" | grep -q '"decision":"block"'
 }
 
-@test "allow: opted-in repo with a valid fresh stamp for HEAD" {
-  opt_in; stamp "$HEAD" "$NOW"
+@test "allow: opted-in repo with a valid stamp AND matching land-deploy sentinel" {
+  opt_in; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
   run bash -c "printf '%s' '$(payload "cd $REPO && gh pr merge")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "block: valid stamp but NO sentinel (bare merge / manual clear is not a path)" {
+  opt_in; stamp "$HEAD" "$NOW"
+  run bash -c "printf '%s' '$(payload "cd $REPO && gh pr merge")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+  echo "$output" | grep -q 'land-and-deploy'
+}
+
+@test "block: valid stamp + expired sentinel" {
+  opt_in; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$((NOW-2000))"
+  run bash -c "printf '%s' '$(payload "cd $REPO && gh pr merge")' | bash '$GATE'"
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "block: valid stamp + head-mismatched sentinel (sentinel for an older commit)" {
+  opt_in; stamp "$HEAD" "$NOW"; ld_sentinel "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "$NOW"
+  run bash -c "printf '%s' '$(payload "cd $REPO && gh pr merge")' | bash '$GATE'"
+  echo "$output" | grep -q '"decision":"block"'
 }
 
 @test "block: opted-in repo with an expired stamp" {
