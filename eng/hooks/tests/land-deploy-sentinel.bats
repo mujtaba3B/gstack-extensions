@@ -50,6 +50,18 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   [ "$(jq -r .pr_number "$SENTINEL")" = "123" ]
 }
 
+@test "does NOT capture stray digits from prose args (only a #-prefixed token)" {
+  printf '%s' "$(prompt_payload "/land-and-deploy v2 ship it now")" | bash "$WRITER"
+  [ -f "$SENTINEL" ]
+  [ "$(jq -r .pr_number "$SENTINEL")" = "" ]
+}
+
+@test "does NOT capture path digits from a bare URL arg" {
+  printf '%s' "$(prompt_payload "/land-and-deploy https://github.com/owner/name/pull/77")" | bash "$WRITER"
+  [ -f "$SENTINEL" ]
+  [ "$(jq -r .pr_number "$SENTINEL")" = "" ]
+}
+
 @test "does NOT write for a different skill" {
   printf '%s' "$(skill_payload "ship")" | bash "$WRITER"
   [ ! -f "$SENTINEL" ]

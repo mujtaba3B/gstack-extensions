@@ -91,9 +91,12 @@ HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null || echo "")
 REMOTE_URL=$(git -C "$CWD" remote get-url origin 2>/dev/null || echo "")
 REPO=$(printf '%s' "$REMOTE_URL" | sed -E 's#^[^:]+://[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##')
 
-# Best-effort PR number from the invocation args ("#123" or a bare "123"). Omitted
-# when absent; the gate enforces pr only when both sides carry one.
-PR_NUMBER=$(printf '%s' "$ARGS" | grep -oE '#?[0-9]+' | head -1 | tr -d '#')
+# Best-effort PR number from the invocation args. Anchored to a "#123" token (the
+# documented /land-and-deploy arg form): a bare digit run is NOT accepted, so prose
+# like "/land-and-deploy v2 ship it" or a URL's path digits never become a spurious
+# pr_number that would later false-block a `gh pr merge <other-number>`. Omitted when
+# absent; the gate enforces pr only when both sides carry one.
+PR_NUMBER=$(printf '%s' "$ARGS" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
 
 # TTL: the repo's .merge-clearance.json may set ld_sentinel_ttl_seconds; else 1800s
 # (30m). Generous on purpose: /land-and-deploy can wait on CI and a merge queue for

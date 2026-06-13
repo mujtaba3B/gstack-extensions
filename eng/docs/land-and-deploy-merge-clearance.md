@@ -44,7 +44,37 @@ in `<gitdir>/land-deploy-clearance`. A generous default TTL (1800s, override via
 `ld_sentinel_ttl_seconds` in the marker) covers long CI / merge-queue waits, which
 is safe because the binding is to a specific commit, not just freshness.
 
-Ceiling: a local hook can only gate the CLI `gh pr merge`. The GitHub web Merge
+### Threat model and limitations (read before trusting it)
+
+This is an **accident-guard**, not an adversary-proof sandbox, the same posture
+`pr-merge-gate.sh` already states for the stamp. Two things defeat the local hook
+by construction, and both are accepted because the GitHub required status check is
+the real authority:
+
+- A direct write to `<gitdir>/land-deploy-clearance` (the `.git` dir is writable)
+  forges a sentinel. So does the stamp file.
+- The sentinel is minted on the `/land-and-deploy` **Skill invocation** (before the
+  skill body runs), so invoking the skill and aborting it instantly still mints a
+  sentinel for the current HEAD.
+
+Both require deliberately invoking `/land-and-deploy` or hand-writing a `.git` file,
+neither of which is the "agent took a lazy shortcut" path this guards against. The
+hard backstop for an actual bypass is the GitHub `local-review/merge-clearance`
+required check, which binds the web Merge button and `--admin` too.
+
+**Run `/land-and-deploy` from the PR's branch.** The sentinel records the local
+`git rev-parse HEAD` at invocation; the gate matches it against the PR's remote
+`headRefOid`. On the PR branch (pushed, no unpushed local commits) these are equal.
+Invoking `/land-and-deploy #N` from a *different* branch records that branch's HEAD,
+which will not match PR #N's head, so the gate false-blocks (safe direction: it
+never lets a wrong merge through, it just makes you re-run from the PR branch). This
+is also why the binding is a strict equality, not an ancestor check: an
+ancestor-match would let a sentinel minted on an old commit authorize merging a
+newer pushed commit, which is exactly the stale-sentinel hole the HEAD binding closes.
+
+### Ceiling
+
+A local hook can only gate the CLI `gh pr merge`. The GitHub web Merge
 button stays gated by the `local-review/merge-clearance` required status check
 (clearance), which GitHub cannot tie to `/land-and-deploy` provenance. So the
 sentinel makes `/land-and-deploy` the only CLI merge path; the web button remains
