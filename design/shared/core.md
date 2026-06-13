@@ -23,6 +23,7 @@ The canonical canvas rules ship with this plugin at `skills/pencil-mockup/refere
 - **Annotations are sticky notes** (`type: "note"`), not naked `type: "text"`.
 - **Planned-but-not-shipped views** get the `🚧 NEW NEW ` name prefix plus an orange dashed stroke (`stroke: { align: "outside", fill: "#f59e0b", thickness: 4, dashPattern: [8, 6] }`). Remove both when the view ships (the post-deploy demotion sweep, handled by `/close-out` / `/land-and-deploy`, not by you).
 - **LEGEND frame:** if the file has none and you are starting fresh, add one explaining the axis + marker conventions.
+- **Style guide frame:** every mockup canvas carries a root-level `Style guide · <Project>` frame (five-card shape: display type, body type, color, buttons, logos), and style-changing edits update it in the same pass. The anatomy and sync rule live in the reference; creating one from scratch is `/design:style-guide`.
 
 ## Sticky notes overlap silently (the detector is blind to them)
 
