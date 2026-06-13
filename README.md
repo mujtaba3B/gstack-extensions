@@ -16,14 +16,15 @@ Then restart your Claude Code session. Skills become invokable as `/pm:bug`, `/q
 
 ## What's included
 
-Four persona plugins (each a top-level dir with a `.claude-plugin/plugin.json`, a `skills/` tree, and shared context):
+Five persona plugins (each a top-level dir with a `.claude-plugin/plugin.json`, a `skills/` tree, and usually shared context):
 
 - **PM Penny** (`pm/`): product-manager persona. `/pm:feature`, `/pm:bug`, `/pm:next-issue`, `/pm:first-principles`. Turns ideas, bug reports, and "what next?" into well-structured GitHub issues, and reframes problems from first principles.
 - **QA Quincey** (`qa/`): manual-QA persona. `/qa:browser`, `/qa:headless`, `/qa:qa-plan`. Verifies one defined flow against the spec or mockup, in the browser (driving the gstack browse daemon, AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects), and authors the two-phase QA plan. Ships Quincey's enforcement hooks: the QA-plan gates (presentation / build / PR) and the QA-status Stop gate (see `qa/README.md`).
 - **Engineer Ernie** (`eng/`): engineering persona. `/eng:cr`, `/eng:cr-teammate`, `/eng:address-pr-feedback`, `/eng:pr-watcher`, `/eng:spike`, `/eng:coderabbit-config`, `/eng:shortcut`. `cr` is his master code-review skill (the single local review path the `~/dev` merge gate keys on); it routes to `cr-teammate` (review others' PRs), `address-pr-feedback` and `pr-watcher` (respond to feedback). Also spikes risky unknowns, configures CodeRabbit, and builds macOS Shortcuts. Ships Ernie's PR-lifecycle enforcement hooks: the ship-PR gate, the merge-clearance gate, the `/ship` sentinel, and the review stamp recorder (see `eng/README.md`).
 - **Designer Denise** (`design/`): design persona. `/design:pencil-mockup`, `/design:style-guide`. The Pencil-native counterpart to gstack's HTML design skills: creates and updates `.pen` mockups on the canvas via the Pencil MCP, with a style guide frame as a first-class part of every mockup; `style-guide` owns the from-scratch questionnaire + research + generation flow.
+- **Marketing Mindy** (`marketing/`): marketing persona. `/marketing:copywriting`, `/marketing:copy-editing`, `/marketing:stop-slop`, `/marketing:copy-review-wip`. Owns marketing surfaces; today the basket is copywriting (draft new copy, or review existing copy via the `copy-review-wip` front door that edits + de-slops in one pass), with room to grow into the wider marketing toolkit (CRO, ads, email, SEO). Three skills are vendored from third-party MIT repos (Corey Haines' marketingskills, Hardik Pandya's stop-slop) at pinned SHAs and patched for local voice rules; `copy-review-wip` is a first-party orchestrator over them. `marketing/VENDORED.md` carries provenance and the update play.
 
-The persona name (Penny / Quincey / Ernie / Denise) lives in each plugin's `description` and README as a memory hook; you invoke by the short role prefix, not the name.
+The persona name (Penny / Quincey / Ernie / Denise / Mindy) lives in each plugin's `description` and README as a memory hook; you invoke by the short role prefix, not the name.
 
 ## How it works
 
@@ -61,7 +62,7 @@ git pull --ff-only   # must be on a clean main
 ./bin/uninstall
 ```
 
-Uninstalls the four plugins and removes this repo's local marketplace (and sweeps any leftover symlinks from the old installer). Leaves gstack and any other marketplaces alone.
+Uninstalls the five plugins and removes this repo's local marketplace (and sweeps any leftover symlinks from the old installer). Leaves gstack and any other marketplaces alone.
 
 ## Adding to the repo
 
