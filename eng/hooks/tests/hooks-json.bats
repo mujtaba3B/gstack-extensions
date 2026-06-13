@@ -29,7 +29,9 @@ tuples() {
     'PostToolUse|Bash|review-skill-stamp.sh' \
     'PreToolUse|Bash|pr-merge-gate.sh' \
     'PreToolUse|Bash|ship-pr-gate.sh' \
+    'PreToolUse|Skill|land-deploy-sentinel.sh' \
     'PreToolUse|Skill|ship-gate-sentinel.sh' \
+    'UserPromptSubmit||land-deploy-sentinel.sh' \
     'UserPromptSubmit||ship-gate-sentinel.sh' \
     | sort)
   run tuples

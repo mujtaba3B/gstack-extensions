@@ -410,6 +410,17 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) verdict=${CR_VERDICT}, status=${CR_STATUS_STATE}, ${cr_head_note}"
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
+  # Local merge-gate readiness (informational; NOT a clearance dimension, so it
+  # never blocks `clear`). The land-deploy sentinel is what makes /land-and-deploy
+  # the single CLI merge path; showing its state lets `status` explain why a bare
+  # `gh pr merge` would be blocked even when clearance is green.
+  if [ -n "$GITDIR" ]; then
+    ld_sentinel=$(cat "$GITDIR/land-deploy-clearance" 2>/dev/null || echo "")
+    ld_repo=$(git remote get-url origin 2>/dev/null | sed -E 's#^[^:]+://[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##')
+    ld_verdict=$(ld_sentinel_valid "$ld_sentinel" "$(date +%s)" 1800 "$HEAD" "$ld_repo" "$PR_NUM")
+    ld_mark=warn; [ "$ld_verdict" = valid ] && ld_mark=ok
+    echo "- [$([ $ld_mark = ok ] && echo x || echo ' ')] **land-deploy sentinel** - $(mark $ld_mark) ${ld_verdict} (required for \`gh pr merge\`; minted only by /land-and-deploy, not by a bare clear)"
+  fi
   echo
   if [ "$CLEAR" -eq 1 ]; then
     echo "**Verdict: CLEAR.** Safe to clear and merge."

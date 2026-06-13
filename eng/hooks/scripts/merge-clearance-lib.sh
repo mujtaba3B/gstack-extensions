@@ -57,6 +57,69 @@ mc_stamp_valid() {
   echo "valid"; return 0
 }
 
+# ld_sentinel_valid <sentinel_json> <now_epoch> <default_ttl> <target_head> [<target_repo>] [<target_pr>]
+#   Decide whether a land-deploy sentinel authorizes merging <target_head> right
+#   now. Echoes "valid" on success; otherwise a single-word reason
+#   (no-sentinel | malformed | expired | mismatch). Return code mirrors the
+#   verdict (0 valid, 1 otherwise).
+#
+#   The sentinel is a JSON object written by land-deploy-sentinel.sh when the
+#   /land-and-deploy skill is invoked (the agent calls the Skill tool with skill
+#   "land-and-deploy", or the user types "/land-and-deploy" at the prompt):
+#     { "set_at_epoch": <int>, "ttl_seconds": <int>, "repo": "owner/name",
+#       "head_sha": "<sha>", "pr_number": "<int|empty>", "source": "skill|prompt" }
+#   It is stored in <gitdir>/land-deploy-clearance, so repo + worktree binding is
+#   already implied by location; head_sha is the strong extra binding (it prevents
+#   a stale sentinel from authorizing a NEWER pushed commit). repo and pr_number
+#   are matched defensively only when BOTH sides carry a non-empty value, so an
+#   unresolvable repo/pr in the gate never false-blocks a legitimate merge.
+#
+#   This is the half that makes /land-and-deploy the single CLI merge path: the
+#   sentinel can ONLY be minted by invoking /land-and-deploy, never by a bare
+#   `merge-clearance clear`. The sentinel's own ttl_seconds wins when positive;
+#   <default_ttl> is the fallback. A generous TTL is safe here because the binding
+#   is to a specific head_sha, not just freshness: the window only ever authorizes
+#   merging the exact commit land-and-deploy was invoked on.
+ld_sentinel_valid() {
+  local sentinel="$1" now="$2" default_ttl="$3" t_head="$4" t_repo="${5:-}" t_pr="${6:-}"
+
+  if [ -z "$sentinel" ]; then echo "no-sentinel"; return 1; fi
+
+  # Join with "|" (a non-whitespace delimiter), NOT @tsv: tab is an IFS-whitespace
+  # character, so `read` would collapse consecutive empty fields and shift the
+  # columns (a missing head_sha would silently borrow the repo value). None of the
+  # five fields (epochs, ttl, sha, owner/name, pr digits) can contain "|".
+  local parsed
+  parsed=$(printf '%s' "$sentinel" | jq -r '
+    [ (.set_at_epoch // "") , (.ttl_seconds // "") , (.head_sha // "") , (.repo // "") , (.pr_number // "") ] | join("|")
+  ' 2>/dev/null) || { echo "malformed"; return 1; }
+
+  local s_epoch s_ttl s_head s_repo s_pr
+  IFS='|' read -r s_epoch s_ttl s_head s_repo s_pr <<<"$parsed"
+
+  case "$s_epoch" in ''|*[!0-9]*) echo "malformed"; return 1 ;; esac
+  case "$now"     in ''|*[!0-9]*) echo "malformed"; return 1 ;; esac
+  [ -n "$s_head" ] || { echo "malformed"; return 1; }
+
+  # ttl: sentinel's own value if it is a positive integer, else the caller default.
+  local ttl="$default_ttl"
+  case "$s_ttl" in ''|*[!0-9]*) : ;; *) [ "$s_ttl" -gt 0 ] && ttl="$s_ttl" ;; esac
+  case "$ttl" in ''|*[!0-9]*) echo "malformed"; return 1 ;; esac
+
+  local age=$(( now - s_epoch ))
+  if [ "$age" -lt 0 ] || [ "$age" -gt "$ttl" ]; then echo "expired"; return 1; fi
+
+  # head_sha is the strong binding; it must match when a target head is supplied.
+  if [ -n "$t_head" ] && [ "$s_head" != "$t_head" ]; then echo "mismatch"; return 1; fi
+  # repo + pr are belt-and-suspenders: enforce only when BOTH sides are non-empty,
+  # so an unresolvable target repo/pr in the gate degrades to head-only matching
+  # rather than false-blocking.
+  if [ -n "$t_repo" ] && [ -n "$s_repo" ] && [ "$s_repo" != "$t_repo" ]; then echo "mismatch"; return 1; fi
+  if [ -n "$t_pr" ] && [ -n "$s_pr" ] && [ "$s_pr" != "$t_pr" ]; then echo "mismatch"; return 1; fi
+
+  echo "valid"; return 0
+}
+
 # mc_cr_verdict <threads_json> <reviews_json>
 #   Turn GitHub GraphQL output for one PR into a CodeRabbit-resolution verdict.
 #   Echoes one of: clear | unresolved | changes_requested. Returns 0 only for

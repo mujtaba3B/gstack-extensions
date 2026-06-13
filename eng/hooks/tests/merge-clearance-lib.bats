@@ -386,3 +386,76 @@ stamp() {
   run mc_head_cr_unreviewable "$files" '["*.pen"]'
   [ "$output" = "no" ]
 }
+
+# ---- ld_sentinel_valid ------------------------------------------------------
+# Signature: ld_sentinel_valid <json> <now> <default_ttl> <target_head> [<repo>] [<pr>]
+
+sentinel() {
+  # sentinel <epoch> <head> [repo] [pr] [ttl]
+  local e="$1" h="$2" repo="${3:-owner/name}" pr="${4:-}" t="${5:-1800}"
+  printf '{"set_at_epoch":%s,"ttl_seconds":%s,"repo":"%s","head_sha":"%s","pr_number":"%s","source":"skill"}' \
+    "$e" "$t" "$repo" "$h" "$pr"
+}
+
+@test "sentinel valid: fresh, matching head + repo + pr" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "$HEAD" "owner/name" "55")" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "valid" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "sentinel valid: head matches, repo/pr omitted on target side -> head-only match" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "$HEAD")" "$NOW" "$TTL" "$HEAD" "" ""
+  [ "$output" = "valid" ]
+}
+
+@test "sentinel invalid: empty -> no-sentinel" {
+  run ld_sentinel_valid "" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "no-sentinel" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "sentinel invalid: corrupt json -> malformed" {
+  run ld_sentinel_valid '{not json' "$NOW" "$TTL" "$HEAD" "" ""
+  [ "$output" = "malformed" ]
+}
+
+@test "sentinel invalid: missing head_sha -> malformed" {
+  run ld_sentinel_valid '{"set_at_epoch":1700000000,"ttl_seconds":1800,"repo":"owner/name"}' "$NOW" "$TTL" "$HEAD" "" ""
+  [ "$output" = "malformed" ]
+}
+
+@test "sentinel invalid: older than its own ttl -> expired" {
+  run ld_sentinel_valid "$(sentinel $((NOW-1801)) "$HEAD" "owner/name" "55" 1800)" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "expired" ]
+}
+
+@test "sentinel valid: exactly at ttl boundary still valid" {
+  run ld_sentinel_valid "$(sentinel $((NOW-1800)) "$HEAD" "owner/name" "55" 1800)" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "valid" ]
+}
+
+@test "sentinel invalid: head mismatch (newer pushed commit) -> mismatch" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "oldcommit" "owner/name" "55")" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "mismatch" ]
+}
+
+@test "sentinel invalid: repo mismatch -> mismatch" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "$HEAD" "owner/other" "55")" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "mismatch" ]
+}
+
+@test "sentinel invalid: pr mismatch when both sides carry one -> mismatch" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "$HEAD" "owner/name" "99")" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "mismatch" ]
+}
+
+@test "sentinel valid: pr enforced only when both sides have one (sentinel pr empty -> ignored)" {
+  run ld_sentinel_valid "$(sentinel $((NOW-60)) "$HEAD" "owner/name" "")" "$NOW" "$TTL" "$HEAD" "owner/name" "55"
+  [ "$output" = "valid" ]
+}
+
+@test "sentinel ttl: sentinel's own ttl overrides the default (shorter -> expired)" {
+  # default 1800 would pass, but sentinel says 120 and age is 200 -> expired
+  run ld_sentinel_valid "$(sentinel $((NOW-200)) "$HEAD" "owner/name" "55" 120)" "$NOW" 1800 "$HEAD" "owner/name" "55"
+  [ "$output" = "expired" ]
+}
