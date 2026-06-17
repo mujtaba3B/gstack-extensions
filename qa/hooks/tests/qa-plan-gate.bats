@@ -113,6 +113,45 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 }
 
 # ========================================================================
+# Pure: qpg_is_bookkeeping <newline-separated-paths>
+# ========================================================================
+
+@test "bookkeeping: all markdown -> yes" {
+  run qpg_is_bookkeeping "$(printf 'README.md\ndocs/guide.md')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: docs + the cross-host inventory -> yes" {
+  run qpg_is_bookkeeping "$(printf 'LOG.md\nwhere-things-run.json')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: a single source file makes the whole set no (fails closed)" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nsrc/main.py')"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: an arbitrary .json is NOT bookkeeping (tighter than build carve-out)" {
+  run qpg_is_bookkeeping "config/settings.json"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: a .yaml app config is NOT bookkeeping (buckets.yaml stays gated)" {
+  run qpg_is_bookkeeping "automations/triage/buckets.yaml"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: empty changeset -> no (fails closed)" {
+  run qpg_is_bookkeeping ""
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: where-things-run.json matches at any depth, by basename" {
+  run qpg_is_bookkeeping "sub/dir/where-things-run.json"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+# ========================================================================
 # Pure: qpg_marker_gates / qpg_gate_enabled / qpg_base_in_scope
 # ========================================================================
 
@@ -227,6 +266,24 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 @test "pr gate block: spike branch is NOT exempt at PR time" {
   opt_in
   git -C "$REPO" checkout -q -b spike/poke
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate allow: bookkeeping-only branch needs no stamp (fast lane)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  git -C "$REPO" add NOTES.md && git -C "$REPO" commit -q -m "docs"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate block: mixed docs + code branch still needs a stamp (fast lane fails closed)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  printf 'x=1\n' > "$REPO/app.py"
+  git -C "$REPO" add NOTES.md app.py && git -C "$REPO" commit -q -m "docs+code"
   run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'

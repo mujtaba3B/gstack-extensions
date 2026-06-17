@@ -29,6 +29,11 @@
 #   - Fails CLOSED here (refuse to clear on doubt) - the opposite of the gate hook,
 #     which fails OPEN. Producing a clearance is the privileged act; withholding one
 #     is always safe.
+#   - Bookkeeping fast lane: a PR whose ENTIRE file list is docs / the cross-host
+#     inventory (mc_is_bookkeeping) internally forces --skip-review + --skip-qa, so
+#     zero-risk non-code changes do not pay the soft human-judgment ceremony. CI +
+#     CR stay HARD. Recorded in the checklist, the stamp evidence, and the posted
+#     status description so the fast lane is always auditable, never silent.
 
 set -uo pipefail
 
@@ -169,6 +174,7 @@ GQL=$(gh api graphql -F owner="$OWNER" -F repo="$NAME" -F pr="$PR_ARG" -f query=
     repository(owner:$owner,name:$repo){
       pullRequest(number:$pr){
         number title headRefOid baseRefName state isDraft body
+        files(first:300){ nodes { path } pageInfo { hasNextPage } }
         reviewThreads(first:100){ nodes { isResolved comments(first:1){ nodes { author{ login } } } } }
         reviews(first:100){ nodes { author{ login } state submittedAt commit{ oid } } }
       }
@@ -194,6 +200,24 @@ IS_DRAFT=$(printf '%s' "$PR_JSON" | jq -r '.isDraft')
 BODY=$(printf '%s' "$PR_JSON" | jq -r '.body // ""')
 THREADS=$(printf '%s' "$PR_JSON" | jq -c '.reviewThreads.nodes')
 REVIEWS=$(printf '%s' "$PR_JSON" | jq -c '.reviews.nodes')
+
+# ---- bookkeeping fast lane --------------------------------------------------
+# A PR whose ENTIRE file list is docs / the cross-host inventory is a zero-risk,
+# non-code change. It should not pay the soft human-judgment ceremony (the /eng:cr
+# stamp + the QA checklist), so we internally force the same --skip-review /
+# --skip-qa hatches the operator could pass by hand. CI and CodeRabbit stay HARD
+# (they are machine-objective and cheap), so a bookkeeping PR still needs green CI
+# and a clean CR pass. mc_is_bookkeeping fails CLOSED: any one non-allowlisted
+# path -> "no". A truncated file list (>300 files, hasNextPage) can never be
+# bookkeeping, so we refuse to fast-lane it rather than classify a partial list.
+PR_FILES=$(printf '%s' "$PR_JSON" | jq -r '.files.nodes[]?.path // empty')
+FILES_TRUNCATED=$(printf '%s' "$PR_JSON" | jq -r '.files.pageInfo.hasNextPage // false')
+IS_BOOKKEEPING=no
+if [ "$FILES_TRUNCATED" != "true" ] && [ "$(mc_is_bookkeeping "$PR_FILES")" = "yes" ]; then
+  IS_BOOKKEEPING=yes
+  SKIP_REVIEW=1
+  SKIP_QA=1
+fi
 
 # ---- required CI checks from the repo's opt-in marker -----------------------
 # The marker lists which check contexts must be green. We deliberately do NOT
@@ -410,6 +434,7 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) verdict=${CR_VERDICT}, status=${CR_STATUS_STATE}, ${cr_head_note}"
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
+  [ "$IS_BOOKKEEPING" = "yes" ] && echo "- ⚡ **Bookkeeping fast-lane** - diff is docs/inventory only; /review + QA auto-waived (CI + CodeRabbit still enforced)"
   # Local merge-gate readiness (informational; NOT a clearance dimension, so it
   # never blocks `clear`). The land-deploy sentinel is what makes /land-and-deploy
   # the single CLI merge path; showing its state lets `status` explain why a bare
@@ -436,10 +461,11 @@ if [ "$WANT_JSON" -eq 1 ]; then
     --arg ci "$CI_STATE" --arg cr "$CR_VERDICT" --arg crstatus "$CR_STATUS_STATE" \
     --arg review "$REVIEW_STATE" --arg qa "$QA_STATE" --argjson clear "$CLEAR" \
     --arg crhead "$CR_REVIEWED_HEAD" --arg crheadauto "$CR_HEAD_UNREVIEWABLE" \
+    --argjson bk "$([ "$IS_BOOKKEEPING" = "yes" ] && echo true || echo false)" \
     --argjson blockers "$(printf '%s\n' "${BLOCKERS[@]:-}" | jq -R . | jq -sc 'map(select(length>0))')" \
     '{repo:$repo, pr:$pr, head:$head, base:$base, ci:$ci, coderabbit:$cr, coderabbit_status:$crstatus,
       coderabbit_reviewed_head:$crhead, coderabbit_head_auto_satisfied:($crheadauto=="yes"),
-      review:$review, qa:$qa, clear:($clear==1), blockers:$blockers}'
+      review:$review, qa:$qa, bookkeeping_fast_lane:$bk, clear:($clear==1), blockers:$blockers}'
 fi
 
 # ---- check: exit reflects the verdict --------------------------------------
@@ -468,15 +494,18 @@ STAMP_JSON=$(jq -nc \
   --arg iso "$ISO" --argjson epoch "$NOW" --argjson ttl "$TTL" \
   --arg ci "$CI_STATE" --arg cr "$CR_VERDICT" --arg review "$REVIEW_STATE" --arg qa "$QA_STATE" \
   --arg crhead "$CR_HEAD_EVIDENCE" \
+  --argjson bk "$([ "$IS_BOOKKEEPING" = "yes" ] && echo true || echo false)" \
   '{pr:$pr, head:$head, base:$base, checked_at:$iso, checked_at_epoch:$epoch,
     ttl_seconds:$ttl, tool:"land-and-deploy",
-    evidence:{ci:$ci, coderabbit:$cr, coderabbit_head:$crhead, review:$review, qa:$qa}}')
+    evidence:{ci:$ci, coderabbit:$cr, coderabbit_head:$crhead, review:$review, qa:$qa,
+              bookkeeping_fast_lane:$bk}}')
 
 # GitHub commit status - the hard authority the branch ruleset requires. The
 # description carries the auto-satisfy note when it applied, so the audit trail
 # is visible on the commit status itself (descriptions cap ~140 chars).
 STATUS_DESC="Cleared by merge-clearance ($ISO)"
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR-head auto-satisfied: unreviewable-only HEAD"
+[ "$IS_BOOKKEEPING" = "yes" ] && STATUS_DESC="Cleared ($ISO) via bookkeeping fast-lane: docs/inventory only, review+QA waived"
 if gh api -X POST "repos/$REPO/statuses/$HEAD" \
      -f state=success \
      -f context="$CLEARANCE_CONTEXT" \

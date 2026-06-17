@@ -112,6 +112,42 @@ qpg_path_needs_plan() {
   echo "source"; return 0
 }
 
+# qpg_is_bookkeeping <newline-separated-paths>
+#   Echo "yes" iff the changeset is NON-EMPTY and EVERY path is a "bookkeeping"
+#   file: documentation or the cross-host service inventory. These are zero-risk,
+#   non-code changes that should not pay the full ship-time ceremony (the /qa:plan
+#   approval modal, the /eng:cr stamp, the CodeRabbit re-stamp cycle). Echoes "no"
+#   and returns 1 otherwise. Fails CLOSED: an empty list, OR a single path outside
+#   the allowlist, yields "no", so a code change can never ride the fast lane by
+#   being bundled with docs.
+#
+#   Allowlist (matched on the basename):
+#     - docs:      *.md *.mdx *.markdown *.txt *.rst
+#     - inventory: where-things-run.json  (the cross-host service inventory ONLY;
+#                  NOT *.json broadly - app config like buckets.yaml stays gated)
+#   Deliberately TIGHTER than qpg_path_needs_plan's build-gate carve-out, which is
+#   lenient on all *.json/*.yaml because an edit is cheap to undo before it ships.
+#   A ship gate must be narrow: merging is the act that reaches production.
+#   Twin of mc_is_bookkeeping in the eng plugin's merge-clearance-lib.sh; keep the
+#   two allowlists in lockstep (each plugin is self-contained and binds its own).
+qpg_is_bookkeeping() {
+  local paths="$1" p base any=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    any=1
+    base="${p##*/}"
+    case "$base" in
+      *.md|*.mdx|*.markdown|*.txt|*.rst) ;;
+      where-things-run.json) ;;
+      *) echo "no"; return 1 ;;
+    esac
+  done <<EOF
+$paths
+EOF
+  [ "$any" -eq 1 ] && { echo "yes"; return 0; }
+  echo "no"; return 1
+}
+
 # qpg_marker_gates <marker_json>
 #   Which gates this repo's .qa-plan-gate.json marker turns on. Echoes a
 #   space-separated subset of "build pr deploy". A marker that omits "gates"
