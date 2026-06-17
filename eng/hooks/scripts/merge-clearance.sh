@@ -174,7 +174,7 @@ GQL=$(gh api graphql -F owner="$OWNER" -F repo="$NAME" -F pr="$PR_ARG" -f query=
     repository(owner:$owner,name:$repo){
       pullRequest(number:$pr){
         number title headRefOid baseRefName state isDraft body
-        files(first:300){ nodes { path } pageInfo { hasNextPage } }
+        files(first:100){ nodes { path } pageInfo { hasNextPage } }
         reviewThreads(first:100){ nodes { isResolved comments(first:1){ nodes { author{ login } } } } }
         reviews(first:100){ nodes { author{ login } state submittedAt commit{ oid } } }
       }
@@ -208,10 +208,12 @@ REVIEWS=$(printf '%s' "$PR_JSON" | jq -c '.reviews.nodes')
 # --skip-qa hatches the operator could pass by hand. CI and CodeRabbit stay HARD
 # (they are machine-objective and cheap), so a bookkeeping PR still needs green CI
 # and a clean CR pass. mc_is_bookkeeping fails CLOSED: any one non-allowlisted
-# path -> "no". A truncated file list (>300 files, hasNextPage) can never be
+# path -> "no". A truncated file list (>100 files, hasNextPage) can never be
 # bookkeeping, so we refuse to fast-lane it rather than classify a partial list.
-# This 300-file cap is intentionally stricter than the PR-create gate (which reads
-# an uncapped local `git diff`): a >300-file docs-only PR can fast-lane at create
+# 100 is GitHub's hard cap on the `files` connection's `first` (a larger value is
+# rejected with EXCESSIVE_PAGINATION), and it is stricter than the PR-create gate
+# (which reads an uncapped local `git diff`): a >100-file docs-only PR can fast-lane
+# at create
 # time but lands here with no plan and is correctly told to get the stamps. The
 # merge gate is the authoritative one, and refusing on truncation is the safe
 # direction; the divergence is friction on a pathological PR, never a wrongful clear.

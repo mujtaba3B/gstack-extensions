@@ -521,3 +521,13 @@ sentinel() {
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
 }
+
+@test "merge-clearance GraphQL files connection respects GitHub's first<=100 cap" {
+  # GitHub rejects files(first:>100) with EXCESSIVE_PAGINATION, which made the
+  # whole clearance query die. Pin the cap so a future bump past 100 fails here.
+  script="$BATS_TEST_DIRNAME/../scripts/merge-clearance.sh"
+  run grep -oE 'files\(first:[0-9]+\)' "$script"
+  [ "$status" -eq 0 ]
+  n=$(printf '%s' "$output" | grep -oE '[0-9]+' | head -1)
+  [ "$n" -le 100 ]
+}
