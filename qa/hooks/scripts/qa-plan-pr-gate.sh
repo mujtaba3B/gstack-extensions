@@ -61,6 +61,29 @@ if [ -n "$PRBASE" ] && [ "$(qpg_base_in_scope "$MARKER" "$PRBASE")" = "out" ]; t
 BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || exit 0
 
+# Bookkeeping fast lane: a branch whose ENTIRE diff vs base is docs / the
+# cross-host inventory is a zero-risk, non-code change. Opening its PR does not
+# need an approved two-phase plan - the merge gate still runs CI + CodeRabbit on
+# it, only the plan ceremony is waived. Fails safe: if the base ref cannot be
+# resolved or the diff is empty, we fall through to the normal stamp check below,
+# never to a false allow. The classifier (qpg_is_bookkeeping, sourced from LIB)
+# itself fails closed: any one non-allowlisted path means "no".
+DIFFBASE="$PRBASE"
+[ -n "$DIFFBASE" ] || DIFFBASE=$(printf '%s' "$MARKER" | jq -r '(.base_branches // ["main"])[0] // "main"' 2>/dev/null || echo "main")
+BASEREF=""
+for _cand in "origin/$DIFFBASE" "$DIFFBASE"; do
+  if git -C "$WORKDIR" rev-parse -q --verify "$_cand" >/dev/null 2>&1; then BASEREF="$_cand"; break; fi
+done
+if [ -n "$BASEREF" ]; then
+  CHANGED=$(git -C "$WORKDIR" diff --name-only "$BASEREF...HEAD" 2>/dev/null)
+  if [ -n "$CHANGED" ] && [ "$(qpg_is_bookkeeping "$CHANGED")" = "yes" ]; then
+    LOG="$HOME/.claude/qa-plan-gate.log"
+    printf '%s pr-gate ALLOW(bookkeeping) branch=%s files=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$(printf '%s' "$CHANGED" | tr '\n' ',')" >> "$LOG" 2>/dev/null || true
+    exit 0
+  fi
+fi
+
 GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")

@@ -113,6 +113,96 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 }
 
 # ========================================================================
+# Pure: qpg_is_bookkeeping <newline-separated-paths>
+# ========================================================================
+
+@test "bookkeeping: all markdown -> yes" {
+  run qpg_is_bookkeeping "$(printf 'README.md\ndocs/guide.md')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: non-.md docs extensions are also bookkeeping" {
+  run qpg_is_bookkeeping "$(printf 'docs/a.mdx\ndocs/b.markdown\ndocs/c.txt\ndocs/d.rst')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: docs + the cross-host inventory -> yes" {
+  run qpg_is_bookkeeping "$(printf 'LOG.md\nwhere-things-run.json')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: a single source file makes the whole set no (fails closed)" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nsrc/main.py')"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: an arbitrary .json is NOT bookkeeping (tighter than build carve-out)" {
+  run qpg_is_bookkeeping "config/settings.json"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: a .yaml app config is NOT bookkeeping (buckets.yaml stays gated)" {
+  run qpg_is_bookkeeping "automations/triage/buckets.yaml"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: empty changeset -> no (fails closed)" {
+  run qpg_is_bookkeeping ""
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: where-things-run.json matches at any depth, by basename" {
+  run qpg_is_bookkeeping "sub/dir/where-things-run.json"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: SKILL.md is behavior, not bookkeeping (excluded despite .md)" {
+  run qpg_is_bookkeeping "qa/skills/qa-plan/SKILL.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: a docs PR that also touches a SKILL.md is NOT bookkeeping" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nqa/skills/x/SKILL.md')"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: CLAUDE.md and AGENTS.md are excluded too (behavior, not prose)" {
+  run qpg_is_bookkeeping "CLAUDE.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "AGENTS.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: README.md and CHANGELOG.md stay inert prose (still yes)" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nCHANGELOG.md')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+# ========================================================================
+# Lockstep: qpg_is_bookkeeping (qa) and mc_is_bookkeeping (eng twin) agree
+# ========================================================================
+
+@test "lockstep: the two bookkeeping classifiers agree on a fixture set" {
+  ENG_LIB="$BATS_TEST_DIRNAME/../../../eng/hooks/scripts/merge-clearance-lib.sh"
+  [ -f "$ENG_LIB" ] || skip "eng twin lib not present at $ENG_LIB"
+  # shellcheck source=/dev/null
+  . "$ENG_LIB"
+  local fx q m qr mr bad=0
+  # Compare BOTH stdout token AND exit status: callers branch on rc too, so a twin
+  # that diverged on rc semantics (while agreeing on the token) must still fail.
+  for fx in "README.md" "CHANGELOG.md" "src/main.py" "settings.json" \
+            "automations/triage/buckets.yaml" "SKILL.md" "CLAUDE.md" "AGENTS.md" \
+            "where-things-run.json" "x/where-things-run.json" ""; do
+    q=$(qpg_is_bookkeeping "$fx"); qr=$?
+    m=$(mc_is_bookkeeping "$fx"); mr=$?
+    if [ "$q" != "$m" ] || [ "$qr" != "$mr" ]; then
+      echo "DISAGREE [$fx]: qpg=$q/rc$qr mc=$m/rc$mr"; bad=1
+    fi
+  done
+  [ "$bad" -eq 0 ]
+}
+
+# ========================================================================
 # Pure: qpg_marker_gates / qpg_gate_enabled / qpg_base_in_scope
 # ========================================================================
 
@@ -229,6 +319,35 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   git -C "$REPO" checkout -q -b spike/poke
   run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate allow: bookkeeping-only branch needs no stamp (fast lane)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  git -C "$REPO" add NOTES.md && git -C "$REPO" commit -q -m "docs"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate block: mixed docs + code branch still needs a stamp (fast lane fails closed)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  printf 'x=1\n' > "$REPO/app.py"
+  git -C "$REPO" add NOTES.md app.py && git -C "$REPO" commit -q -m "docs+code"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate block: unresolved base ref falls through to the stamp check (no false allow)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  git -C "$REPO" add NOTES.md && git -C "$REPO" commit -q -m "docs"
+  git -C "$REPO" branch -D main   # make the base ref (main) unresolvable
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  # bookkeeping-only diff, but base unresolvable -> must NOT fast-lane; blocks for the stamp.
   echo "$output" | grep -q '"decision":"block"'
 }
 

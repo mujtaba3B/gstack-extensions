@@ -459,3 +459,65 @@ sentinel() {
   run ld_sentinel_valid "$(sentinel $((NOW-200)) "$HEAD" "owner/name" "55" 120)" "$NOW" 1800 "$HEAD" "owner/name" "55"
   [ "$output" = "expired" ]
 }
+
+# ---- mc_is_bookkeeping ------------------------------------------------------
+# Twin of qpg_is_bookkeeping in the qa plugin; the two allowlists are kept in
+# lockstep. A PR whose every path is docs / the cross-host inventory rides the
+# bookkeeping fast lane (review + QA waived; CI + CR stay hard).
+
+@test "bookkeeping: all docs -> yes" {
+  run mc_is_bookkeeping "$(printf 'README.md\ndocs/x.md')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: docs + cross-host inventory -> yes" {
+  run mc_is_bookkeeping "$(printf 'CHANGELOG.md\nwhere-things-run.json')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: where-things-run.json matches at any depth, by basename" {
+  run mc_is_bookkeeping "sub/dir/where-things-run.json"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: any code file makes the set no (fails closed)" {
+  run mc_is_bookkeeping "$(printf 'README.md\nlib/x.sh')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "bookkeeping: arbitrary json is not bookkeeping" {
+  run mc_is_bookkeeping "settings.json"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "bookkeeping: app yaml config is not bookkeeping (buckets.yaml stays gated)" {
+  run mc_is_bookkeeping "automations/triage/buckets.yaml"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "bookkeeping: empty changeset -> no" {
+  run mc_is_bookkeeping ""
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "bookkeeping: SKILL.md/CLAUDE.md/AGENTS.md are behavior, excluded despite .md" {
+  run mc_is_bookkeeping "SKILL.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "CLAUDE.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "AGENTS.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "$(printf 'README.md\nx/SKILL.md')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}

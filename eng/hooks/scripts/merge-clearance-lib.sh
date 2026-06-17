@@ -120,6 +120,46 @@ ld_sentinel_valid() {
   echo "valid"; return 0
 }
 
+# mc_is_bookkeeping <newline-separated-paths>
+#   Echo "yes" iff the changeset is NON-EMPTY and EVERY path is a "bookkeeping"
+#   file: documentation or the cross-host service inventory. These are zero-risk,
+#   non-code changes that should not pay the full ship-time ceremony. Echoes "no"
+#   and returns 1 otherwise. Fails CLOSED: an empty list, OR a single path outside
+#   the allowlist, yields "no", so a code change bundled with docs never rides the
+#   fast lane. merge-clearance.sh uses this to internally force --skip-review /
+#   --skip-qa for an all-bookkeeping PR while KEEPING CI + CodeRabbit hard.
+#
+#   Allowlist (matched on the basename):
+#     - docs:      *.md *.mdx *.markdown *.txt *.rst
+#     - inventory: where-things-run.json  (the cross-host service inventory ONLY;
+#                  NOT *.json broadly - app config stays gated)
+#   Excluded even though they end in .md: SKILL.md / CLAUDE.md / AGENTS.md are
+#   agent-instruction files - executable contracts that change runtime behavior
+#   when edited, NOT inert prose. A PR rewriting one is a behavior change and must
+#   get the full review, so it is forced off the fast lane (checked before the
+#   *.md arm so it wins).
+#   Twin of qpg_is_bookkeeping in the qa plugin's qa-plan-gate-lib.sh; the two
+#   allowlists are kept in lockstep (each plugin is self-contained and binds its
+#   own copy, per the BASH_SOURCE self-containment rule).
+mc_is_bookkeeping() {
+  local paths="$1" p base any=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    any=1
+    base="${p##*/}"
+    case "$base" in
+      SKILL.md|CLAUDE.md|AGENTS.md) echo "no"; return 1 ;;
+      *.md|*.mdx|*.markdown|*.txt|*.rst) ;;
+      where-things-run.json) ;;
+      *) echo "no"; return 1 ;;
+    esac
+  done <<EOF
+$paths
+EOF
+  [ "$any" -eq 1 ] && { echo "yes"; return 0; }
+  echo "no"; return 1
+}
+
 # mc_cr_verdict <threads_json> <reviews_json>
 #   Turn GitHub GraphQL output for one PR into a CodeRabbit-resolution verdict.
 #   Echoes one of: clear | unresolved | changes_requested. Returns 0 only for
