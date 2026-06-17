@@ -125,6 +125,11 @@ qpg_path_needs_plan() {
 #     - docs:      *.md *.mdx *.markdown *.txt *.rst
 #     - inventory: where-things-run.json  (the cross-host service inventory ONLY;
 #                  NOT *.json broadly - app config like buckets.yaml stays gated)
+#   Excluded even though they end in .md: SKILL.md / CLAUDE.md / AGENTS.md are
+#   agent-instruction files - executable contracts that change runtime behavior
+#   when edited, NOT inert prose. A PR that rewrites one is a behavior change and
+#   must get the full review, so it is forced off the fast lane (checked before
+#   the *.md arm so it wins).
 #   Deliberately TIGHTER than qpg_path_needs_plan's build-gate carve-out, which is
 #   lenient on all *.json/*.yaml because an edit is cheap to undo before it ships.
 #   A ship gate must be narrow: merging is the act that reaches production.
@@ -137,6 +142,7 @@ qpg_is_bookkeeping() {
     any=1
     base="${p##*/}"
     case "$base" in
+      SKILL.md|CLAUDE.md|AGENTS.md) echo "no"; return 1 ;;
       *.md|*.mdx|*.markdown|*.txt|*.rst) ;;
       where-things-run.json) ;;
       *) echo "no"; return 1 ;;

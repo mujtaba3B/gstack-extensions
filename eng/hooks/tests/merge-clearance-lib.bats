@@ -500,3 +500,15 @@ sentinel() {
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
 }
+
+@test "bookkeeping: SKILL.md/CLAUDE.md/AGENTS.md are behavior, excluded despite .md" {
+  run mc_is_bookkeeping "SKILL.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "CLAUDE.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "$(printf 'README.md\nx/SKILL.md')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}

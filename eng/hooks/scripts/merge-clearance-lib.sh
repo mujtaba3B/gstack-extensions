@@ -133,6 +133,11 @@ ld_sentinel_valid() {
 #     - docs:      *.md *.mdx *.markdown *.txt *.rst
 #     - inventory: where-things-run.json  (the cross-host service inventory ONLY;
 #                  NOT *.json broadly - app config stays gated)
+#   Excluded even though they end in .md: SKILL.md / CLAUDE.md / AGENTS.md are
+#   agent-instruction files - executable contracts that change runtime behavior
+#   when edited, NOT inert prose. A PR rewriting one is a behavior change and must
+#   get the full review, so it is forced off the fast lane (checked before the
+#   *.md arm so it wins).
 #   Twin of qpg_is_bookkeeping in the qa plugin's qa-plan-gate-lib.sh; the two
 #   allowlists are kept in lockstep (each plugin is self-contained and binds its
 #   own copy, per the BASH_SOURCE self-containment rule).
@@ -143,6 +148,7 @@ mc_is_bookkeeping() {
     any=1
     base="${p##*/}"
     case "$base" in
+      SKILL.md|CLAUDE.md|AGENTS.md) echo "no"; return 1 ;;
       *.md|*.mdx|*.markdown|*.txt|*.rst) ;;
       where-things-run.json) ;;
       *) echo "no"; return 1 ;;

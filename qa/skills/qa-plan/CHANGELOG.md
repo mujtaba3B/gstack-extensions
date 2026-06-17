@@ -11,6 +11,9 @@ inventory `where-things-run.json` skip the approved-plan requirement at
 CodeRabbit stay hard gates; the fast lane is recorded in the clearance checklist,
 stamp evidence, and commit status. Fails closed: any one non-allowlisted path
 (including app config like `*.json`/`buckets.yaml`) means full ceremony.
+Agent-instruction markdown (`SKILL.md` / `CLAUDE.md` / `AGENTS.md`) is excluded
+from the allowlist despite ending in `.md`: editing one is a behavior change, not
+inert prose, so it must get the full review.
 
 ## v1.5.0
 

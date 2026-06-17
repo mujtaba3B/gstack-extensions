@@ -210,6 +210,13 @@ REVIEWS=$(printf '%s' "$PR_JSON" | jq -c '.reviews.nodes')
 # and a clean CR pass. mc_is_bookkeeping fails CLOSED: any one non-allowlisted
 # path -> "no". A truncated file list (>300 files, hasNextPage) can never be
 # bookkeeping, so we refuse to fast-lane it rather than classify a partial list.
+# This 300-file cap is intentionally stricter than the PR-create gate (which reads
+# an uncapped local `git diff`): a >300-file docs-only PR can fast-lane at create
+# time but lands here with no plan and is correctly told to get the stamps. The
+# merge gate is the authoritative one, and refusing on truncation is the safe
+# direction; the divergence is friction on a pathological PR, never a wrongful clear.
+# mc_is_bookkeeping returns rc=1 on "no", but it is in a $(...) compared by string,
+# so only its stdout token is authoritative here; the rc is intentionally ignored.
 PR_FILES=$(printf '%s' "$PR_JSON" | jq -r '.files.nodes[]?.path // empty')
 FILES_TRUNCATED=$(printf '%s' "$PR_JSON" | jq -r '.files.pageInfo.hasNextPage // false')
 IS_BOOKKEEPING=no

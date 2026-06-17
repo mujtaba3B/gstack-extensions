@@ -151,6 +151,51 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "yes" ]; [ "$status" -eq 0 ]
 }
 
+@test "bookkeeping: SKILL.md is behavior, not bookkeeping (excluded despite .md)" {
+  run qpg_is_bookkeeping "qa/skills/qa-plan/SKILL.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: a docs PR that also touches a SKILL.md is NOT bookkeeping" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nqa/skills/x/SKILL.md')"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: CLAUDE.md and AGENTS.md are excluded too (behavior, not prose)" {
+  run qpg_is_bookkeeping "CLAUDE.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "AGENTS.md"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: README.md and CHANGELOG.md stay inert prose (still yes)" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nCHANGELOG.md')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+# ========================================================================
+# Lockstep: qpg_is_bookkeeping (qa) and mc_is_bookkeeping (eng twin) agree
+# ========================================================================
+
+@test "lockstep: the two bookkeeping classifiers agree on a fixture set" {
+  ENG_LIB="$BATS_TEST_DIRNAME/../../../eng/hooks/scripts/merge-clearance-lib.sh"
+  [ -f "$ENG_LIB" ] || skip "eng twin lib not present at $ENG_LIB"
+  # shellcheck source=/dev/null
+  . "$ENG_LIB"
+  local fx q m bad=0
+  for fx in "README.md" "CHANGELOG.md" "src/main.py" "settings.json" \
+            "automations/triage/buckets.yaml" "SKILL.md" "CLAUDE.md" "AGENTS.md" \
+            "where-things-run.json" "x/where-things-run.json"; do
+    q=$(qpg_is_bookkeeping "$fx") || true
+    m=$(mc_is_bookkeeping "$fx") || true
+    if [ "$q" != "$m" ]; then echo "DISAGREE [$fx]: qpg=$q mc=$m"; bad=1; fi
+  done
+  q=$(qpg_is_bookkeeping "") || true
+  m=$(mc_is_bookkeeping "") || true
+  if [ "$q" != "$m" ]; then echo "DISAGREE [empty]: qpg=$q mc=$m"; bad=1; fi
+  [ "$bad" -eq 0 ]
+}
+
 # ========================================================================
 # Pure: qpg_marker_gates / qpg_gate_enabled / qpg_base_in_scope
 # ========================================================================
@@ -286,6 +331,17 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   git -C "$REPO" add NOTES.md app.py && git -C "$REPO" commit -q -m "docs+code"
   run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate block: unresolved base ref falls through to the stamp check (no false allow)" {
+  opt_in
+  printf 'notes\n' > "$REPO/NOTES.md"
+  git -C "$REPO" add NOTES.md && git -C "$REPO" commit -q -m "docs"
+  git -C "$REPO" branch -D main   # make the base ref (main) unresolvable
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --base main")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  # bookkeeping-only diff, but base unresolvable -> must NOT fast-lane; blocks for the stamp.
   echo "$output" | grep -q '"decision":"block"'
 }
 
