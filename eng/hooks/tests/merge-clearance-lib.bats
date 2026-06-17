@@ -477,6 +477,12 @@ sentinel() {
   [ "$status" -eq 0 ]
 }
 
+@test "bookkeeping: where-things-run.json matches at any depth, by basename" {
+  run mc_is_bookkeeping "sub/dir/where-things-run.json"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
 @test "bookkeeping: any code file makes the set no (fails closed)" {
   run mc_is_bookkeeping "$(printf 'README.md\nlib/x.sh')"
   [ "$output" = "no" ]
@@ -506,6 +512,9 @@ sentinel() {
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
   run mc_is_bookkeeping "CLAUDE.md"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "AGENTS.md"
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
   run mc_is_bookkeeping "$(printf 'README.md\nx/SKILL.md')"

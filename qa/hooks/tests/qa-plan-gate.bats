@@ -121,6 +121,11 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "yes" ]; [ "$status" -eq 0 ]
 }
 
+@test "bookkeeping: non-.md docs extensions are also bookkeeping" {
+  run qpg_is_bookkeeping "$(printf 'docs/a.mdx\ndocs/b.markdown\ndocs/c.txt\ndocs/d.rst')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
 @test "bookkeeping: docs + the cross-host inventory -> yes" {
   run qpg_is_bookkeeping "$(printf 'LOG.md\nwhere-things-run.json')"
   [ "$output" = "yes" ]; [ "$status" -eq 0 ]
@@ -182,17 +187,18 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ -f "$ENG_LIB" ] || skip "eng twin lib not present at $ENG_LIB"
   # shellcheck source=/dev/null
   . "$ENG_LIB"
-  local fx q m bad=0
+  local fx q m qr mr bad=0
+  # Compare BOTH stdout token AND exit status: callers branch on rc too, so a twin
+  # that diverged on rc semantics (while agreeing on the token) must still fail.
   for fx in "README.md" "CHANGELOG.md" "src/main.py" "settings.json" \
             "automations/triage/buckets.yaml" "SKILL.md" "CLAUDE.md" "AGENTS.md" \
-            "where-things-run.json" "x/where-things-run.json"; do
-    q=$(qpg_is_bookkeeping "$fx") || true
-    m=$(mc_is_bookkeeping "$fx") || true
-    if [ "$q" != "$m" ]; then echo "DISAGREE [$fx]: qpg=$q mc=$m"; bad=1; fi
+            "where-things-run.json" "x/where-things-run.json" ""; do
+    q=$(qpg_is_bookkeeping "$fx"); qr=$?
+    m=$(mc_is_bookkeeping "$fx"); mr=$?
+    if [ "$q" != "$m" ] || [ "$qr" != "$mr" ]; then
+      echo "DISAGREE [$fx]: qpg=$q/rc$qr mc=$m/rc$mr"; bad=1
+    fi
   done
-  q=$(qpg_is_bookkeeping "") || true
-  m=$(mc_is_bookkeeping "") || true
-  if [ "$q" != "$m" ]; then echo "DISAGREE [empty]: qpg=$q mc=$m"; bad=1; fi
   [ "$bad" -eq 0 ]
 }
 
