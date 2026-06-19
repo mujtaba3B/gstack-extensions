@@ -1,6 +1,6 @@
 {
   "name": "qa",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup and records a QA posture. qa:browser drives the real running app through the user's persistent agent-browser session (click/pixel level), walks the spec, seeds and tears down tagged data via the repo's recipe, and ends with the QA_STATUS contract that satisfies the build-time Stop hook and the PR qa-gate CI. qa:headless does the same for backend features with no UI (capturing side effects). qa:qa-plan authors the two-phase QA plan and writes the approval stamp. The plugin also SHIPS Quincey's enforcement hooks (hooks/hooks.json): the QA-plan gates (presentation, build, PR) and the QA-status Stop gate, active in opted-in repos (.qa-plan-gate.json) under ~/dev. Skills: qa:browser, qa:headless, qa:qa-plan.",
   "author": {
     "name": "Mujtaba Badat",

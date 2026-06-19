@@ -178,6 +178,75 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "yes" ]; [ "$status" -eq 0 ]
 }
 
+@test "bookkeeping: vcs/meta dotfiles are inert -> yes (.gitignore et al.)" {
+  run qpg_is_bookkeeping "$(printf '.gitignore\n.gitattributes\n.editorconfig\n.dockerignore\n.npmignore\n.prettierignore\n.eslintignore\n.gcloudignore')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: a .gitignore-only changeset rides the fast lane" {
+  run qpg_is_bookkeeping ".gitignore"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+  run qpg_is_bookkeeping "sub/dir/.gitignore"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: empty placeholders .keep / .gitkeep -> yes" {
+  run qpg_is_bookkeeping "$(printf 'data/.keep\nassets/.gitkeep')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: legal/governance files are inert -> yes" {
+  run qpg_is_bookkeeping "$(printf 'LICENSE\nLICENSE.txt\nLICENCE\nCOPYING\nNOTICE\nAUTHORS\nCONTRIBUTORS\nCODEOWNERS')"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: requirements manifests excluded despite .txt (both naming orders)" {
+  run qpg_is_bookkeeping "requirements.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "requirements-dev.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  # reverse-order naming (dev-requirements.txt) must also be caught, not fall
+  # through the *requirements*.txt glob to the *.txt fast lane.
+  run qpg_is_bookkeeping "dev-requirements.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "test-requirements.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: LICENSE.txt still rides via the *.txt doc arm (no LICENSE.* glob)" {
+  run qpg_is_bookkeeping "LICENSE.txt"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: runtime.txt / constraints.txt excluded despite .txt" {
+  run qpg_is_bookkeeping "runtime.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "constraints.txt"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: a docs PR bundled with requirements.txt is NOT bookkeeping" {
+  run qpg_is_bookkeeping "$(printf 'README.md\nrequirements.txt')"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: plain robots.txt stays inert prose (still yes)" {
+  run qpg_is_bookkeeping "public/robots.txt"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: .coderabbit.yaml stays gated (tunes the reviewer backstop)" {
+  run qpg_is_bookkeeping ".coderabbit.yaml"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
+@test "bookkeeping: version pins / lockfiles stay gated despite dotfile/ext shape" {
+  run qpg_is_bookkeeping ".python-version"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+  run qpg_is_bookkeeping "Gemfile.lock"
+  [ "$output" = "no" ]; [ "$status" -ne 0 ]
+}
+
 # ========================================================================
 # Lockstep: qpg_is_bookkeeping (qa) and mc_is_bookkeeping (eng twin) agree
 # ========================================================================
@@ -192,9 +261,19 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   # that diverged on rc semantics (while agreeing on the token) must still fail.
   for fx in "README.md" "CHANGELOG.md" "src/main.py" "settings.json" \
             "automations/triage/buckets.yaml" "SKILL.md" "CLAUDE.md" "AGENTS.md" \
-            "where-things-run.json" "x/where-things-run.json" ""; do
-    q=$(qpg_is_bookkeeping "$fx"); qr=$?
-    m=$(mc_is_bookkeeping "$fx"); mr=$?
+            "where-things-run.json" "x/where-things-run.json" "" \
+            ".gitignore" "sub/.gitignore" ".gitattributes" ".editorconfig" \
+            ".dockerignore" ".npmignore" ".prettierignore" ".eslintignore" \
+            ".gcloudignore" "data/.keep" "assets/.gitkeep" \
+            "LICENSE" "LICENSE.txt" "LICENCE" "COPYING" "NOTICE" "AUTHORS" \
+            "CONTRIBUTORS" "CODEOWNERS" "requirements.txt" "requirements-dev.txt" \
+            "dev-requirements.txt" "runtime.txt" "constraints.txt" "public/robots.txt" \
+            ".coderabbit.yaml" ".python-version" "Gemfile.lock"; do
+    # errexit-safe rc capture: under bats' `set -e`, a bare `q=$(cmd)` whose cmd
+    # returns nonzero (the excluded / empty fixtures) would abort the test, so
+    # branch on the substitution instead of reading $? after a failed assignment.
+    if q=$(qpg_is_bookkeeping "$fx"); then qr=0; else qr=$?; fi
+    if m=$(mc_is_bookkeeping "$fx"); then mr=0; else mr=$?; fi
     if [ "$q" != "$m" ] || [ "$qr" != "$mr" ]; then
       echo "DISAGREE [$fx]: qpg=$q/rc$qr mc=$m/rc$mr"; bad=1
     fi
