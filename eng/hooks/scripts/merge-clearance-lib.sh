@@ -279,16 +279,17 @@ mc_cr_reviewed_head() {
 #
 #   comments_json: the PR's issue comments, shape [ { "author": "login",
 #     "body": "..." }, ... ] (the caller maps gh's user.login -> author).
-#   Echoes "yes" iff at least one comment authored by a coderabbit* bot contains
-#   the marker; else "no". A non-array / unparseable input is "no" (fail closed:
-#   never auto-satisfy on input we could not read).
+#   Echoes "yes" iff at least one comment authored by the CodeRabbit bot
+#   (login contains "coderabbitai", matching mc_cr_reviewed_head's convention)
+#   contains the marker; else "no". A non-array / unparseable input is "no"
+#   (fail closed: never auto-satisfy on input we could not read).
 mc_cr_rate_limited() {
   local comments="$1"
   printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "no"; return 1; }
   local hit
   hit=$(printf '%s' "$comments" | jq -r '
     [ .[]
-      | select( (.author // "") | ascii_downcase | contains("coderabbit") )
+      | select( (.author // "") | ascii_downcase | contains("coderabbitai") )
       | select( (.body // "") | contains("rate limited by coderabbit.ai") )
     ] | length' 2>/dev/null) || { echo "no"; return 1; }
   if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; return 0; fi
