@@ -121,15 +121,33 @@ qpg_path_needs_plan() {
 #   the allowlist, yields "no", so a code change can never ride the fast lane by
 #   being bundled with docs.
 #
-#   Allowlist (matched on the basename):
-#     - docs:      *.md *.mdx *.markdown *.txt *.rst
-#     - inventory: where-things-run.json  (the cross-host service inventory ONLY;
-#                  NOT *.json broadly - app config like buckets.yaml stays gated)
+#   Allowlist (matched on the basename), all of which are INERT - editing them
+#   cannot change what runs in production:
+#     - docs:       *.md *.mdx *.markdown *.txt *.rst
+#     - inventory:  where-things-run.json  (the cross-host service inventory ONLY;
+#                   NOT *.json broadly - app config like buckets.yaml stays gated)
+#     - vcs holders: .keep .gitkeep  (empty placeholder files)
+#     - vcs/meta:   .gitignore .gitattributes .editorconfig .dockerignore
+#                   .npmignore .prettierignore .eslintignore .gcloudignore
+#                   (ignore lists + editor hints; never executed)
+#     - legal/gov:  LICENSE LICENCE COPYING NOTICE AUTHORS CONTRIBUTORS
+#                   CODEOWNERS  (a LICENSE.txt / LICENSE.md rides via the doc
+#                   extension arms; no LICENSE.* glob, which would also match an
+#                   executable LICENSE.sh)
 #   Excluded even though they end in .md: SKILL.md / CLAUDE.md / AGENTS.md are
 #   agent-instruction files - executable contracts that change runtime behavior
 #   when edited, NOT inert prose. A PR that rewrites one is a behavior change and
 #   must get the full review, so it is forced off the fast lane (checked before
 #   the *.md arm so it wins).
+#   Excluded even though they end in .txt: *requirements*.txt / constraints.txt /
+#   runtime.txt are dependency / runtime-version manifests - editing them changes
+#   what gets installed or which interpreter runs, so they are forced off the fast
+#   lane (checked before the *.txt arm so it wins). The *requirements*.txt glob is
+#   intentionally broad (catches requirements.txt, requirements-dev.txt,
+#   dev-requirements.txt): a docs file that merely matches gets the full gate,
+#   which fails safe. Deliberately NOT on the lane:
+#   .coderabbit.yaml (tunes the CodeRabbit backstop), .htaccess / CI yaml
+#   (executable), version pins (.ruby-version / .python-version / .nvmrc), *.lock.
 #   Deliberately TIGHTER than qpg_path_needs_plan's build-gate carve-out, which is
 #   lenient on all *.json/*.yaml because an edit is cheap to undo before it ships.
 #   A ship gate must be narrow: merging is the act that reaches production.
@@ -142,9 +160,20 @@ qpg_is_bookkeeping() {
     any=1
     base="${p##*/}"
     case "$base" in
+      # behavior contracts - excluded despite .md
       SKILL.md|CLAUDE.md|AGENTS.md) echo "no"; return 1 ;;
+      # dependency / runtime manifests - excluded despite .txt
+      *requirements*.txt|constraints.txt|runtime.txt) echo "no"; return 1 ;;
+      # docs prose
       *.md|*.mdx|*.markdown|*.txt|*.rst) ;;
+      # cross-host service inventory
       where-things-run.json) ;;
+      # vcs placeholders
+      .keep|.gitkeep) ;;
+      # vcs / meta / ignore-list dotfiles (inert)
+      .gitignore|.gitattributes|.editorconfig|.dockerignore|.npmignore|.prettierignore|.eslintignore|.gcloudignore) ;;
+      # legal / governance (LICENSE.txt / LICENSE.md ride the doc-extension arms)
+      LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS) ;;
       *) echo "no"; return 1 ;;
     esac
   done <<EOF

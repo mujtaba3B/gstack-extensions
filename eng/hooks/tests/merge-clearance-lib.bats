@@ -522,6 +522,64 @@ sentinel() {
   [ "$status" -eq 1 ]
 }
 
+@test "bookkeeping: vcs/meta dotfiles + placeholders are inert -> yes" {
+  run mc_is_bookkeeping "$(printf '.gitignore\n.gitattributes\n.editorconfig\n.dockerignore\n.npmignore\n.prettierignore\n.eslintignore\n.gcloudignore\ndata/.keep\nassets/.gitkeep')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: a .gitignore-only changeset rides the fast lane" {
+  run mc_is_bookkeeping "sub/dir/.gitignore"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: legal/governance files are inert -> yes" {
+  run mc_is_bookkeeping "$(printf 'LICENSE\nLICENSE.txt\nLICENCE\nCOPYING\nNOTICE\nAUTHORS\nCONTRIBUTORS\nCODEOWNERS')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: requirements/runtime/constraints .txt are manifests, excluded" {
+  run mc_is_bookkeeping "requirements.txt"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "requirements-dev.txt"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  # reverse-order naming must also be caught by the *requirements*.txt glob
+  run mc_is_bookkeeping "dev-requirements.txt"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "runtime.txt"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "constraints.txt"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "$(printf 'README.md\nrequirements.txt')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "bookkeeping: LICENSE.txt still rides via the *.txt doc arm (no LICENSE.* glob)" {
+  run mc_is_bookkeeping "LICENSE.txt"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "bookkeeping: .coderabbit.yaml + version pins stay gated" {
+  run mc_is_bookkeeping ".coderabbit.yaml"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping ".python-version"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_is_bookkeeping "Gemfile.lock"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
 @test "merge-clearance GraphQL files connection respects GitHub's first<=100 cap" {
   # GitHub rejects files(first:>100) with EXCESSIVE_PAGINATION, which made the
   # whole clearance query die. Pin the cap so a future bump past 100 fails here.
