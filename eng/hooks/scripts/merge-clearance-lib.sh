@@ -260,6 +260,41 @@ mc_cr_reviewed_head() {
   if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; else echo "no"; fi
 }
 
+# mc_cr_rate_limited <comments_json>
+#   Decide whether CodeRabbit has SIGNALLED that it is rate-limited / could not
+#   start a review on this PR - as opposed to merely being silent or mid-review.
+#   CodeRabbit posts a stable auto-generated marker comment in every rate-limit
+#   flavour ("reached your PR review rate limit", "Rate limit exceeded ... please
+#   wait N minutes", "used up its prepaid credits", "Reviews paused"); they all
+#   carry the literal marker string:
+#       rate limited by coderabbit.ai
+#   (inside an HTML comment: "<!-- This is an auto-generated comment: rate limited
+#   by coderabbit.ai -->"). The in-progress notice ("Currently processing new
+#   changes ... please wait") does NOT carry that marker, so this cleanly
+#   separates "rate-limited" (CR never started) from "still reviewing" (CR is
+#   working). That separation is WHY the caller only consults this when CR's
+#   commit status is "missing" (CR never started), never "pending" (mid-review):
+#   a stale rate-limit comment from an earlier commit must not relax a HEAD that
+#   CR is actively reviewing now.
+#
+#   comments_json: the PR's issue comments, shape [ { "author": "login",
+#     "body": "..." }, ... ] (the caller maps gh's user.login -> author).
+#   Echoes "yes" iff at least one comment authored by a coderabbit* bot contains
+#   the marker; else "no". A non-array / unparseable input is "no" (fail closed:
+#   never auto-satisfy on input we could not read).
+mc_cr_rate_limited() {
+  local comments="$1"
+  printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "no"; return 1; }
+  local hit
+  hit=$(printf '%s' "$comments" | jq -r '
+    [ .[]
+      | select( (.author // "") | ascii_downcase | contains("coderabbit") )
+      | select( (.body // "") | contains("rate limited by coderabbit.ai") )
+    ] | length' 2>/dev/null) || { echo "no"; return 1; }
+  if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
 # mc_head_cr_unreviewable <files_json> <globs_json>
 #   Decide whether the INCREMENTAL change at a PR HEAD is something CodeRabbit
 #   legitimately cannot (or will not) review. This is the ONLY condition under

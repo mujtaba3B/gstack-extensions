@@ -589,3 +589,71 @@ sentinel() {
   n=$(printf '%s' "$output" | grep -oE '[0-9]+' | head -1)
   [ "$n" -le 100 ]
 }
+
+# ---- mc_cr_rate_limited -----------------------------------------------------
+# CodeRabbit's rate-limit notice carries a stable auto-generated marker string
+# ("rate limited by coderabbit.ai"). These tests pin detection vs the in-progress
+# notice (which must NOT match) and the fail-closed behaviour on bad input.
+
+rlmarker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+
+@test "cr rate-limited: 'reached your PR review rate limit' flavour detected" {
+  body="$rlmarker"$'\n'"\`@mujtaba3B\`, we couldn't start this review because you've reached your PR review rate limit."
+  run mc_cr_rate_limited "$(jq -nc --arg b "$body" '[{author:"coderabbitai[bot]", body:$b}]')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr rate-limited: 'Rate limit exceeded ... please wait' flavour detected" {
+  body="$rlmarker"$'\n'"## Rate limit exceeded
+\`@mujtaba3B\` has exceeded the limit for the number of commits that can be reviewed per hour. Please wait 4 minutes and 29 seconds before requesting another review."
+  run mc_cr_rate_limited "$(jq -nc --arg b "$body" '[{author:"coderabbitai[bot]", body:$b}]')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr rate-limited: in-progress 'Currently processing' notice is NOT rate-limit" {
+  body="Currently processing new changes in this PR. This may take a few minutes, please wait..."
+  run mc_cr_rate_limited "$(jq -nc --arg b "$body" '[{author:"coderabbitai[bot]", body:$b}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited: marker from a NON-coderabbit author does not count" {
+  body="$rlmarker someone quoting the rate limited by coderabbit.ai marker"
+  run mc_cr_rate_limited "$(jq -nc --arg b "$body" '[{author:"mujtaba3B", body:$b}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited: no CR comments at all -> no" {
+  run mc_cr_rate_limited "$(jq -nc '[{author:"mujtaba3B", body:"lgtm"}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited: empty array -> no" {
+  run mc_cr_rate_limited "[]"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited: non-array input fails closed -> no" {
+  run mc_cr_rate_limited '{"not":"an array"}'
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_cr_rate_limited "garbage"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited: marker among many comments is found (mixed authors)" {
+  json=$(jq -nc --arg m "$rlmarker" '[
+    {author:"mujtaba3B", body:"first pass looks good"},
+    {author:"coderabbitai[bot]", body:($m + "\nyou have reached your PR review rate limit")},
+    {author:"some-other-bot", body:"ci passed"}
+  ]')
+  run mc_cr_rate_limited "$json"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}

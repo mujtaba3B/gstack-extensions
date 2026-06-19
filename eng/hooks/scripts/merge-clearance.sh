@@ -6,6 +6,9 @@
 # "Clear" means, on the PR's CURRENT head commit:
 #   - CI required checks are green
 #   - CodeRabbit has finished reviewing and left nothing unresolved
+#       (escape hatch: if CR posts its rate-limit notice on a HEAD it never
+#        reviewed, a CURRENT local /eng:cr review backstops it - the "CR reviewed
+#        HEAD" dimension auto-satisfies, fully audited. Never both reviewers down.)
 #   - a local /review was recorded (gstack review-skill stamp)   [soft, --skip-review]
 #   - the PR body's QA checklist has no unchecked boxes          [soft, --skip-qa]
 #
@@ -345,6 +348,21 @@ head_changed_files() {
   [ -n "$out" ] && [ "$out" != "null" ] && printf '%s' "$out" || echo '[]'
 }
 
+# cr_issue_comments -> JSON [ {author, body}, ... ] of the PR's ISSUE comments
+# (the timeline comments, where CodeRabbit posts its rate-limit notice - NOT the
+# review threads the GraphQL query already fetched). Lazy: only called from the
+# CR-silence branch, so the happy path makes no extra API call (mirrors
+# head_changed_files). Echoes "[]" on any failure (fail closed: feeds
+# mc_cr_rate_limited, which then reports "not rate-limited" so the gate keeps
+# blocking - the safe direction).
+cr_issue_comments() {
+  local out
+  out=$(gh api --paginate "repos/$REPO/issues/$PR_NUM/comments" \
+          -q '[.[] | {author: (.user.login // ""), body: (.body // "")}]' 2>/dev/null \
+        | jq -sc 'add // []' 2>/dev/null)
+  [ -n "$out" ] && [ "$out" != "null" ] && printf '%s' "$out" || echo '[]'
+}
+
 # ---- evaluate each dimension -----------------------------------------------
 
 # 1) CI required checks
@@ -371,8 +389,21 @@ CR_INPROGRESS=0
 # This relaxes ONLY the reviewed-head dimension - the separate "CR clear" verdict
 # (unresolved threads / changes-requested) still blocks regardless.
 CR_HEAD_UNREVIEWABLE=no
+CR_RATE_LIMITED=no
 if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$CR_STATUS_STATE" = "missing" ]; then
   CR_HEAD_UNREVIEWABLE=$(mc_head_cr_unreviewable "$(head_changed_files "$HEAD")" "$CR_UNREVIEWABLE_GLOBS")
+  # Second auto-satisfy path for the same "CR silent on HEAD" gap: CodeRabbit
+  # itself posted its rate-limit notice (mc_cr_rate_limited finds the stable
+  # "rate limited by coderabbit.ai" marker), so its silence is "couldn't start",
+  # not "nothing to review". UNLIKE the *.pen path, this one is NOT safe on its
+  # own - there IS reviewable code, CR just didn't see it - so it only relaxes
+  # the gate when a CURRENT local /eng:cr review backstops it (CR_RL_BACKSTOPPED,
+  # computed in the verdict section once REVIEW_STATE is known). Detection here is
+  # independent of that interlock; the gating combines the two. Skip the extra API
+  # call when the *.pen path already auto-satisfied.
+  if [ "$CR_HEAD_UNREVIEWABLE" != "yes" ]; then
+    CR_RATE_LIMITED=$(mc_cr_rate_limited "$(cr_issue_comments)")
+  fi
 fi
 
 # 3) local /review stamp (best-effort; keyed to the local checkout's git dir)
@@ -394,6 +425,14 @@ QA_STATE=$(mc_qa_state "$BODY" "$REQUIRE_QA_PLAN")
 # ---- verdict ----------------------------------------------------------------
 # Hard blockers: CI not green, CR not clear, CR mid-review, CR hasn't seen HEAD.
 # Soft blockers (block unless --skip-*): /review missing-or-stale, QA incomplete.
+
+# CR rate-limit escape hatch (gated): when CodeRabbit signalled rate-limit on a
+# HEAD it never reviewed, fall back to the local /eng:cr review IFF that review is
+# current for this HEAD. Never lose both reviewers - CR down + no local review
+# still blocks. Computed here because it needs REVIEW_STATE (section 3).
+CR_RL_BACKSTOPPED=no
+[ "$CR_RATE_LIMITED" = "yes" ] && [ "$REVIEW_STATE" = "current" ] && CR_RL_BACKSTOPPED=yes
+
 BLOCKERS=()
 [ "$CI_STATE" = "success" ] || BLOCKERS+=("CI is ${CI_STATE} (${CI_DETAIL})")
 if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); fi
@@ -405,8 +444,14 @@ if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); fi
 # (missing) case. The reviewed-head blocker then handles only the missing case.
 [ "$CR_STATUS_STATE" != "failure" ] || BLOCKERS+=("CodeRabbit status is failure on this head")
 if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$CR_STATUS_STATE" = "missing" ] \
-   && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ]; then
-  BLOCKERS+=("CodeRabbit has not reviewed the current head yet")
+   && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ]; then
+  if [ "$CR_RATE_LIMITED" = "yes" ]; then
+    # Rate-limited but no current local review to backstop it: tell the operator
+    # exactly how to clear it rather than emitting the generic "not reviewed" line.
+    BLOCKERS+=("CodeRabbit is rate-limited and no current local review backstops it (run /eng:cr on this head, then land)")
+  else
+    BLOCKERS+=("CodeRabbit has not reviewed the current head yet")
+  fi
 fi
 if [ "$SKIP_REVIEW" -eq 0 ] && { [ "$REVIEW_STATE" = "missing" ] || [ "$REVIEW_STATE" = "stale" ]; }; then
   BLOCKERS+=("local /review ${REVIEW_STATE} for this head (run /review, or pass --skip-review)")
@@ -440,6 +485,7 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   echo "- [$([ $ci_mark = ok ] && echo x || echo ' ')] **CI** - $(mark $ci_mark) ${CI_DETAIL:-no required checks}"
   cr_head_note="reviewed-head=${CR_REVIEWED_HEAD}"
   [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: HEAD diff is CR-unreviewable, e.g. *.pen)"
+  [ "$CR_RL_BACKSTOPPED" = "yes" ] && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: CR rate-limited, current local /eng:cr review backstops)"
   echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) verdict=${CR_VERDICT}, status=${CR_STATUS_STATE}, ${cr_head_note}"
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
@@ -470,10 +516,12 @@ if [ "$WANT_JSON" -eq 1 ]; then
     --arg ci "$CI_STATE" --arg cr "$CR_VERDICT" --arg crstatus "$CR_STATUS_STATE" \
     --arg review "$REVIEW_STATE" --arg qa "$QA_STATE" --argjson clear "$CLEAR" \
     --arg crhead "$CR_REVIEWED_HEAD" --arg crheadauto "$CR_HEAD_UNREVIEWABLE" \
+    --arg crratelimited "$CR_RATE_LIMITED" --arg crrlbackstop "$CR_RL_BACKSTOPPED" \
     --argjson bk "$([ "$IS_BOOKKEEPING" = "yes" ] && echo true || echo false)" \
     --argjson blockers "$(printf '%s\n' "${BLOCKERS[@]:-}" | jq -R . | jq -sc 'map(select(length>0))')" \
     '{repo:$repo, pr:$pr, head:$head, base:$base, ci:$ci, coderabbit:$cr, coderabbit_status:$crstatus,
       coderabbit_reviewed_head:$crhead, coderabbit_head_auto_satisfied:($crheadauto=="yes"),
+      coderabbit_rate_limited:($crratelimited=="yes"), coderabbit_rate_limit_backstopped:($crrlbackstop=="yes"),
       review:$review, qa:$qa, bookkeeping_fast_lane:$bk, clear:($clear==1), blockers:$blockers}'
 fi
 
@@ -497,6 +545,7 @@ case "$TTL" in ''|*[!0-9]*) TTL="$DEFAULT_TTL" ;; esac
 # status description so the bypass is greppable later, never silent.
 CR_HEAD_EVIDENCE="reviewed-head=${CR_REVIEWED_HEAD}"
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && CR_HEAD_EVIDENCE="auto-satisfied: CR-unreviewable-only HEAD"
+[ "$CR_RL_BACKSTOPPED" = "yes" ] && CR_HEAD_EVIDENCE="auto-satisfied: CR rate-limited, local review backstops"
 
 STAMP_JSON=$(jq -nc \
   --argjson pr "$PR_NUM" --arg head "$HEAD" --arg base "$BASE" \
@@ -514,6 +563,7 @@ STAMP_JSON=$(jq -nc \
 # is visible on the commit status itself (descriptions cap ~140 chars).
 STATUS_DESC="Cleared by merge-clearance ($ISO)"
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR-head auto-satisfied: unreviewable-only HEAD"
+[ "$CR_RL_BACKSTOPPED" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR rate-limited, local /eng:cr review backstops"
 [ "$IS_BOOKKEEPING" = "yes" ] && STATUS_DESC="Cleared ($ISO) via bookkeeping fast-lane: docs/inventory only, review+QA waived"
 if gh api -X POST "repos/$REPO/statuses/$HEAD" \
      -f state=success \
