@@ -657,3 +657,71 @@ rlmarker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai 
   [ "$output" = "yes" ]
   [ "$status" -eq 0 ]
 }
+
+# ---- mc_cr_rate_limited_latest (the STUCK-PENDING freshness guard) -----------
+# CodeRabbit posts a "pending" commit status the moment it starts, then can hit
+# the limit mid-flight and post its notice, leaving the status stuck "pending".
+# This stricter variant fires ONLY when the rate-limit notice is CR's LATEST
+# comment, so a genuine in-flight review (which posts a newer "Currently
+# processing ..." comment) keeps blocking. The caller gates the pending escape
+# hatch on this AND a current local /eng:cr review backstop.
+
+@test "cr rate-limited (latest): notice is CR's most recent comment -> yes" {
+  json=$(jq -nc --arg m "$rlmarker" '[
+    {author:"coderabbitai[bot]", body:"Currently processing new changes ... please wait"},
+    {author:"mujtaba3B", body:"ping"},
+    {author:"coderabbitai[bot]", body:($m + "\nyou have reached your PR review rate limit")}
+  ]')
+  run mc_cr_rate_limited_latest "$json"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr rate-limited (latest): a later 'Currently processing' supersedes a stale notice -> no" {
+  # freshness guard: CR was rate-limited earlier, then resumed and is reviewing now
+  json=$(jq -nc --arg m "$rlmarker" '[
+    {author:"coderabbitai[bot]", body:($m + "\nyou have reached your PR review rate limit")},
+    {author:"coderabbitai[bot]", body:"Currently processing new changes ... please wait"}
+  ]')
+  run mc_cr_rate_limited_latest "$json"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited (latest): a HUMAN comment after the notice does not unset it (CR's latest still the notice) -> yes" {
+  json=$(jq -nc --arg m "$rlmarker" '[
+    {author:"coderabbitai[bot]", body:($m + "\nRate limit exceeded")},
+    {author:"mujtaba3B", body:"acknowledged, running local review"}
+  ]')
+  run mc_cr_rate_limited_latest "$json"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr rate-limited (latest): no rate-limit notice at all -> no" {
+  json=$(jq -nc '[{author:"coderabbitai[bot]", body:"Currently processing new changes ... please wait"}]')
+  run mc_cr_rate_limited_latest "$json"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited (latest): no CR comments at all -> no" {
+  run mc_cr_rate_limited_latest "$(jq -nc '[{author:"mujtaba3B", body:"lgtm"}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited (latest): empty array -> no" {
+  run mc_cr_rate_limited_latest "[]"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr rate-limited (latest): non-array / garbage input fails closed -> no" {
+  run mc_cr_rate_limited_latest '{"not":"an array"}'
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_cr_rate_limited_latest "garbage"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}

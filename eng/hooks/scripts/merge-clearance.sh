@@ -7,8 +7,10 @@
 #   - CI required checks are green
 #   - CodeRabbit has finished reviewing and left nothing unresolved
 #       (escape hatch: if CR posts its rate-limit notice on a HEAD it never
-#        reviewed, a CURRENT local /eng:cr review backstops it - the "CR reviewed
-#        HEAD" dimension auto-satisfies, fully audited. Never both reviewers down.)
+#        finished - whether its commit status is "missing" (never started) or stuck
+#        "pending" (started, then hit the limit mid-flight) - a CURRENT local
+#        /eng:cr review backstops it: the "CR reviewed HEAD" / in-progress dimension
+#        auto-satisfies, fully audited. Never both reviewers down.)
 #   - a local /review was recorded (gstack review-skill stamp)   [soft, --skip-review]
 #   - the PR body's QA checklist has no unchecked boxes          [soft, --skip-qa]
 #
@@ -404,6 +406,19 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$
   if [ "$CR_HEAD_UNREVIEWABLE" != "yes" ]; then
     CR_RATE_LIMITED=$(mc_cr_rate_limited "$(cr_issue_comments)")
   fi
+elif [ "$CR_STATUS_STATE" = "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ]; then
+  # Stuck-pending rate-limit: CodeRabbit posts a "pending" commit status the moment
+  # it STARTS a review, then can hit the limit mid-flight and post its rate-limit
+  # notice, leaving the status stuck "pending" forever. That reads as "review in
+  # progress, wait" and wedges the PR. We treat it as rate-limited ONLY when the
+  # notice is CR's LATEST comment (mc_cr_rate_limited_latest) - a genuine in-flight
+  # review posts a newer "Currently processing ..." comment, which keeps this "no"
+  # and the in-progress wait intact. Like the missing path, this RELAXES the gate
+  # only when a current local /eng:cr review backstops it (CR_RL_BACKSTOPPED, in the
+  # verdict section); no notice or no backstop still blocks. The *.pen auto-satisfy
+  # is deliberately NOT offered here: a pending status means CR did start, so there
+  # was reviewable content - silence is "couldn't finish", never "nothing to review".
+  CR_RATE_LIMITED=$(mc_cr_rate_limited_latest "$(cr_issue_comments)")
 fi
 
 # 3) local /review stamp (best-effort; keyed to the local checkout's git dir)
@@ -436,7 +451,19 @@ CR_RL_BACKSTOPPED=no
 BLOCKERS=()
 [ "$CI_STATE" = "success" ] || BLOCKERS+=("CI is ${CI_STATE} (${CI_DETAIL})")
 if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); fi
-[ "$CR_INPROGRESS" -eq 0 ] || BLOCKERS+=("CodeRabbit review in progress on this head")
+# CodeRabbit in-progress (pending commit status). A genuine pending is "review
+# running, wait". But a pending that is really CR stuck after posting its rate-limit
+# notice (CR_RATE_LIMITED, set above only when that notice is CR's latest comment) is
+# NOT a running review: relax it when a current local /eng:cr review backstops it,
+# else tell the operator exactly how to clear it rather than the misleading
+# "in progress".
+if [ "$CR_INPROGRESS" -eq 1 ]; then
+  if [ "$CR_RATE_LIMITED" = "yes" ]; then
+    [ "$CR_RL_BACKSTOPPED" = "yes" ] || BLOCKERS+=("CodeRabbit is rate-limited (status stuck pending) and no current local review backstops it (run /eng:cr on this head, then land)")
+  else
+    BLOCKERS+=("CodeRabbit review in progress on this head")
+  fi
+fi
 # A CodeRabbit commit status of "failure" (state_of folds error/timed_out/
 # cancelled/action_required into "failure") is CR actively signaling a problem,
 # not silence, so it blocks unconditionally - it is NOT relaxed by the
@@ -471,7 +498,7 @@ CLEAR=0; [ "${#BLOCKERS[@]}" -eq 0 ] && CLEAR=1
 mark() { case "$1" in ok) printf '✅';; warn) printf '⚠️ ';; bad) printf '❌';; esac; }
 
 ci_mark=bad;     [ "$CI_STATE" = success ] && ci_mark=ok
-cr_mark=bad;     [ "$CR_RC" -eq 0 ] && [ "$CR_INPROGRESS" -eq 0 ] && cr_mark=ok
+cr_mark=bad;     [ "$CR_RC" -eq 0 ] && { [ "$CR_INPROGRESS" -eq 0 ] || [ "$CR_RL_BACKSTOPPED" = "yes" ]; } && cr_mark=ok
 rev_mark=bad;    case "$REVIEW_STATE" in current) rev_mark=ok;; n/a) rev_mark=warn;; esac
                  [ "$SKIP_REVIEW" -eq 1 ] && rev_mark=warn
 qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; esac
