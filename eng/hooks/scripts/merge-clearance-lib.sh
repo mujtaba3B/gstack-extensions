@@ -272,10 +272,12 @@ mc_cr_reviewed_head() {
 #   by coderabbit.ai -->"). The in-progress notice ("Currently processing new
 #   changes ... please wait") does NOT carry that marker, so this cleanly
 #   separates "rate-limited" (CR never started) from "still reviewing" (CR is
-#   working). That separation is WHY the caller only consults this when CR's
-#   commit status is "missing" (CR never started), never "pending" (mid-review):
-#   a stale rate-limit comment from an earlier commit must not relax a HEAD that
-#   CR is actively reviewing now.
+#   working). The caller consults this on a "missing" CR commit status (CR never
+#   posted a status). For a "pending" status that is stuck (CR posted its pending
+#   status, then hit the limit mid-flight and never resolved), the caller uses the
+#   stricter mc_cr_rate_limited_latest instead, which also requires the notice to
+#   be CR's LATEST comment - so a stale rate-limit comment from an earlier commit
+#   cannot relax a HEAD that CR is genuinely reviewing now.
 #
 #   comments_json: the PR's issue comments, shape [ { "author": "login",
 #     "body": "..." }, ... ] (the caller maps gh's user.login -> author).
@@ -293,6 +295,38 @@ mc_cr_rate_limited() {
       | select( (.body // "") | contains("rate limited by coderabbit.ai") )
     ] | length' 2>/dev/null) || { echo "no"; return 1; }
   if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
+# mc_cr_rate_limited_latest <comments_json>
+#   Stricter sibling of mc_cr_rate_limited, for the STUCK-PENDING case: CodeRabbit
+#   posts a "pending" commit status the moment it STARTS a review, then can hit the
+#   rate limit mid-flight and post its notice, leaving the status stuck "pending"
+#   forever. A plain mc_cr_rate_limited would misfire here whenever a rate-limit
+#   comment exists ANYWHERE on the PR - including a stale one from an earlier commit
+#   while CR is genuinely reviewing the new HEAD now. So this variant requires the
+#   rate-limit marker to be on CR's *latest* comment: when CR resumes and starts
+#   actually processing, it posts a newer "Currently processing ..." comment, which
+#   becomes the latest and flips this back to "no" (keep waiting). The notice being
+#   the last word from CR is the signal that CR is still wedged on the limit.
+#
+#   comments_json: the PR's issue comments, SAME shape as mc_cr_rate_limited
+#     ([ { "author": "login", "body": "..." }, ... ]) and SAME chronological order
+#     (GitHub's issue-comments listing is oldest-first, so the last CodeRabbit-
+#     authored entry is its most recent comment). Echoes "yes" iff the most recent
+#     CodeRabbit-authored comment carries the "rate limited by coderabbit.ai"
+#     marker; else "no". A non-array / unparseable input, or no CR comment at all,
+#     is "no" (fail closed: never relax a pending review on input we cannot read).
+mc_cr_rate_limited_latest() {
+  local comments="$1"
+  printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "no"; return 1; }
+  local hit
+  hit=$(printf '%s' "$comments" | jq -r '
+    [ .[] | select( (.author // "") | ascii_downcase | contains("coderabbitai") ) ]
+    | (last // {}) | (.body // "")
+    | if contains("rate limited by coderabbit.ai") then "yes" else "no" end
+  ' 2>/dev/null) || { echo "no"; return 1; }
+  if [ "$hit" = "yes" ]; then echo "yes"; return 0; fi
   echo "no"; return 1
 }
 
