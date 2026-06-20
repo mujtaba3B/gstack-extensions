@@ -333,6 +333,29 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   rm -rf "$OUT"
 }
 
+@test "armed mint: an EXPIRED arm marker does not mint (stale /ship window closed)" {
+  # The ARM_TTL freshness branch in session_armed_fresh: a /ship from long ago must
+  # not keep authorizing the Bash mint path. Plant an arm marker older than ARM_TTL
+  # (1800s) and confirm an armed-looking cd+create mints nothing.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
+  printf '%s\n' "$((NOW-3000))" > "$ARM"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+  rm -f "$ARM"
+}
+
+@test "armed mint: empty session_id disables the Bash path (no shared arm file collision)" {
+  # arm_file must refuse an empty/sanitized-to-blank session id, so a session with
+  # no id cannot mint off another session's arm (or a shared 'gstack-ship-armed-_').
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(armed_skill_payload "ship" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
 @test "armed mint: armed Bash with NO cd mints for the session cwd when it is the target repo" {
   # /ship armed; a bare `gh pr create` (no cd) falls back to the payload cwd, which
   # here IS the target repo -> mint there.

@@ -62,7 +62,15 @@ SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 # Session-armed marker. Keyed by session id (sanitized for a filename); absent
 # session id -> arming is unavailable and the Bash target-mint path is skipped,
 # degrading to the legacy cwd-only behavior rather than misfiring.
-ARM_TTL=1800
+#
+# ARM_TTL bounds how long after a /ship invocation an armed Bash command may still
+# mint, i.e. it must span a whole /ship run (invocation -> review/build -> the
+# final `gh pr create`). Kept at 1200s to MATCH the legacy window: the old design
+# minted a 1200s freshness sentinel at /ship invocation, so the create already had
+# to land within 1200s of invocation. Do not widen this without reason; a longer
+# window only enlarges the post-/ship blast radius (any ~/dev repo cd'd into during
+# the window self-clears), which is the accident-guard's main cost.
+ARM_TTL=1200
 ARM_DIR="${TMPDIR:-/tmp}"
 arm_file() {
   local sid; sid=$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
