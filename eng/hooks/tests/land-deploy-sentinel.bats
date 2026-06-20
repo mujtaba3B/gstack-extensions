@@ -19,7 +19,10 @@ setup() {
   SENTINEL="$GITDIR/land-deploy-clearance"
 }
 
-teardown() { rm -rf "$REPO"; }
+teardown() {
+  rm -rf "$REPO"
+  rm -f "${TMPDIR:-/tmp}"/gstack-land-armed-ldtest-* 2>/dev/null || true
+}
 
 skill_payload()  { printf '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"},"cwd":"%s"}' "$1" "$REPO"; }
 prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","cwd":"%s"}' "$1" "$REPO"; }
@@ -92,4 +95,66 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   run bash -c "printf '%s' '$(skill_payload "land-and-deploy")' | bash '$WRITER'"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+# ---- ARMED Bash target-mint path (the cwd-vs-target fix) ---------------------
+
+armed_skill_payload()   { printf '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"},"cwd":"%s","session_id":"%s"}' "$1" "$2" "$3"; }
+sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s","session_id":"%s"}' "$1" "$2" "$3"; }
+
+@test "armed mint: /land-and-deploy from a cwd OUTSIDE the target repo, then cd into it, mints target-bound sentinel (the bug repro)" {
+  SID="ldtest-$BATS_TEST_NUMBER"
+  OUT=$(mktemp -d "${TMPDIR:-/tmp}/ldout.XXXXXX")   # session cwd, not a ~/dev repo
+  bash -c "printf '%s' '$(armed_skill_payload "land-and-deploy" "$OUT" "$SID")' | bash '$WRITER'"
+  [ ! -f "$SENTINEL" ]   # cwd was not the target repo -> nothing minted yet
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45 --squash" "$OUT" "$SID")' | bash '$WRITER'"
+  [ -f "$SENTINEL" ]
+  [ "$(jq -r .head_sha "$SENTINEL")" = "$HEAD" ]      # bound to the TARGET checkout's HEAD
+  [ "$(jq -r .repo "$SENTINEL")" = "owner/name" ]     # repo read from the TARGET origin
+  [ "$(jq -r .pr_number "$SENTINEL")" = "45" ]        # PR parsed from the merge command
+  [ "$(jq -r .source "$SENTINEL")" = "land-bash" ]
+  rm -rf "$OUT"
+}
+
+@test "armed mint: UNARMED bash cd+merge mints nothing (accident-guard intact)" {
+  SID="ldtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ ! -f "$SENTINEL" ]
+}
+
+@test "armed mint: a non-land skill does NOT arm the merge path" {
+  SID="ldtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(armed_skill_payload "ship" "$HOME" "$SID")' | bash '$WRITER'"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ ! -f "$SENTINEL" ]
+}
+
+@test "armed mint: armed cd into a NON-dev repo mints nothing (scope held)" {
+  SID="ldtest-$BATS_TEST_NUMBER"
+  OUT=$(mktemp -d "${TMPDIR:-/tmp}/ldout.XXXXXX")
+  git -C "$OUT" init -q
+  git -C "$OUT" config user.name "Test User"
+  git -C "$OUT" config user.email "t@example.com"
+  git -C "$OUT" commit -q --allow-empty -m init
+  outgit=$(git -C "$OUT" rev-parse --absolute-git-dir)
+  bash -c "printf '%s' '$(armed_skill_payload "land-and-deploy" "$HOME" "$SID")' | bash '$WRITER'"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $OUT && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ ! -f "$outgit/land-deploy-clearance" ]
+  rm -rf "$OUT"
+}
+
+@test "armed mint: an EXPIRED arm marker does not mint (stale /land-and-deploy window closed)" {
+  # Prove this tests EXPIRY, not an absent marker: a FRESH marker at the same path
+  # DOES mint, then aging it past ARM_TTL (1800s) stops the mint.
+  SID="ldtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-land-armed-$SID"
+  NOWS=$(date +%s)
+  printf '%s\n' "$NOWS" > "$ARM"                        # fresh -> mints
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ -f "$SENTINEL" ]
+  rm -f "$SENTINEL"
+  printf '%s\n' "$((NOWS-4000))" > "$ARM"               # same path, now expired -> no mint
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ ! -f "$SENTINEL" ]
+  rm -f "$ARM"
 }

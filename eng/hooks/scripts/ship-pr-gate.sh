@@ -56,22 +56,27 @@ CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 # an accident-guard, so deeply obfuscated forms (bash -c "...") are out of scope.
 printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
 
-# Resolve the repo the command targets. Hooks run from the session cwd, not the
-# cwd a leading `cd <dir>` switched into, so a worktree or cross-repo create would
-# otherwise be evaluated against the wrong repo. Honor a leading `cd <dir>`;
-# fall back to $PWD when there is none.
-WORKDIR=$(printf '%s\n' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p' | head -1)
-case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
-{ [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
-
 command -v git >/dev/null 2>&1 || exit 0
 
-# Scope: only ~/dev repos (where the policy lives).
-TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-case "$TOP" in
-  "$HOME/dev"|"$HOME/dev/"*) ;;
-  *) exit 0 ;;
-esac
+# Shared repo resolver (single source of truth with ship-gate-sentinel.sh), so the
+# gate and the mint can never disagree about which repo a command targets. Resolve
+# it relative to THIS script so the executing copy binds its own dependency; if it
+# is missing, fail OPEN (allow) like every other unmet dependency here.
+RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-gate-repo-lib.sh"
+[ -f "$RLIB" ] || { sg_log "FAIL-OPEN repo resolver missing ($RLIB); gated create allowed"; exit 0; }
+# shellcheck source=/dev/null
+. "$RLIB"
+
+# Resolve the repo the command targets. Hooks run from the session cwd, not the
+# cwd a leading `cd <dir>` switched into, so a worktree or cross-repo create would
+# otherwise be evaluated against the wrong repo. sg_workdir_from_cmd honors a
+# leading `cd <dir>` (else $PWD); sg_dev_repo_gitdir yields the toplevel + the
+# per-worktree git dir, and returns non-zero when the target is not a ~/dev repo
+# (out of scope -> allow, untouched). The same two functions feed the mint.
+WORKDIR=$(sg_workdir_from_cmd "$CMD" "$PWD")
+RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0
+TOP=${RESOLVED%%$'\t'*}
+GITDIR=${RESOLVED#*$'\t'}
 
 # Opt-in marker. No marker -> this repo has not opted in -> allow (untouched).
 MARKER="$TOP/.ship-gate.json"
@@ -126,12 +131,9 @@ if [ -n "$CMDBASE" ]; then
   fi
 fi
 
-# Per-worktree git dir (never the common dir) so we read the same sentinel the
-# writer keyed to this worktree.
-GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || {
-  sg_log "FAIL-OPEN could not resolve git dir for $WORKDIR (gated create allowed)"
-  exit 0
-}
+# GITDIR (the per-worktree git dir, never the common dir) was resolved above by
+# sg_dev_repo_gitdir, so we read the same sentinel the writer keyed to this
+# worktree.
 
 # Load the pure validator (lives alongside this hook after install).
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-pr-gate-lib.sh"
