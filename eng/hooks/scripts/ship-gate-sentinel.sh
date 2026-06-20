@@ -46,22 +46,26 @@ PAYLOAD=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 
-# Shared repo resolver (single source of truth with ship-pr-gate.sh). Resolve it
-# relative to THIS script so the executing copy binds its own dependency. Without
-# it we cannot mint for the right repo, so exit quietly (the gate fails open too).
-RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-gate-repo-lib.sh"
-[ -f "$RLIB" ] || exit 0
+# Shared libs (single source of truth with ship-pr-gate.sh / land-deploy-sentinel.sh):
+# the repo resolver and the session-arming primitive. Resolve them relative to THIS
+# script so the executing copy binds its own deps. Without them we cannot mint for
+# the right repo, so exit quietly (the gate fails open too).
+LIBDIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RLIB="$LIBDIR/ship-gate-repo-lib.sh"
+ALIB="$LIBDIR/ship-gate-arm-lib.sh"
+{ [ -f "$RLIB" ] && [ -f "$ALIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$RLIB"
+# shellcheck source=/dev/null
+. "$ALIB"
 
 EVENT=$(printf '%s' "$PAYLOAD" | jq -r '.hook_event_name // empty')
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
 SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 
-# Session-armed marker. Keyed by session id (sanitized for a filename); absent
-# session id -> arming is unavailable and the Bash target-mint path is skipped,
-# degrading to the legacy cwd-only behavior rather than misfiring.
+# Session arming (shared ship-gate-arm-lib.sh, kind "ship"). The marker lets the
+# later PreToolUse:Bash event know a real /ship is in flight.
 #
 # ARM_TTL bounds how long after a /ship invocation an armed Bash command may still
 # mint, i.e. it must span a whole /ship run (invocation -> review/build -> the
@@ -72,23 +76,8 @@ SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 # the window self-clears), which is the accident-guard's main cost.
 ARM_TTL=1200
 ARM_DIR="${TMPDIR:-/tmp}"
-arm_file() {
-  local sid; sid=$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
-  [ -n "$sid" ] && [ "$sid" != "_" ] || return 1
-  printf '%s/gstack-ship-armed-%s' "${ARM_DIR%/}" "$sid"
-}
-arm_session() {
-  local f; f=$(arm_file) || return 0
-  printf '%s\n' "$(date +%s)" > "$f" 2>/dev/null || true
-}
-session_armed_fresh() {
-  local f now armed; f=$(arm_file) || return 1
-  [ -f "$f" ] || return 1
-  armed=$(head -1 "$f" 2>/dev/null)
-  case "$armed" in ''|*[!0-9]*) return 1 ;; esac
-  now=$(date +%s)
-  [ $(( now - armed )) -ge 0 ] && [ $(( now - armed )) -le "$ARM_TTL" ]
-}
+arm_session()        { ga_arm       "ship" "$SESSION" "$ARM_DIR" "$(date +%s)"; }
+session_armed_fresh() { ga_armed_fresh "ship" "$SESSION" "$ARM_DIR" "$(date +%s)" "$ARM_TTL"; }
 
 # mint <gitdir> <top> <trigger> : write the freshness sentinel for one repo.
 mint() {

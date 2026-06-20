@@ -43,26 +43,29 @@ CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 # deeply obfuscated forms like `bash -c "..."` are out of scope by design.
 printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' || exit 0
 
+# Shared repo resolver (single source of truth with land-deploy-sentinel.sh), so the
+# gate and the sentinel can never disagree about which repo a command targets.
+# Resolve it relative to THIS script; missing -> fail open (allow), like every other
+# unmet dependency here.
+RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-gate-repo-lib.sh"
+[ -f "$RLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$RLIB"
+
 # Resolve the repo the command actually targets. Hooks run from the session cwd,
 # not the cwd a leading `cd <dir> && ...` switched into, so a worktree or
-# cross-repo merge would otherwise be evaluated against the wrong repo. Honor a
-# leading `cd <dir>` prefix; fall back to $PWD when there is none.
-WORKDIR=$(printf '%s\n' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p' | head -1)
-case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
-{ [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
-
-# Scope: only consider ~/dev repos (where the policy lives).
-TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-case "$TOP" in
-  "$HOME/dev"|"$HOME/dev/"*) ;;
-  *) exit 0 ;;
-esac
+# cross-repo merge would otherwise be evaluated against the wrong repo.
+# sg_workdir_from_cmd honors a leading `cd` (else $PWD); sg_dev_repo_gitdir yields
+# the toplevel + per-worktree git dir and returns non-zero when the target is not a
+# ~/dev repo (out of scope -> allow). The same two functions feed the sentinel.
+WORKDIR=$(sg_workdir_from_cmd "$CMD" "$PWD")
+RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0
+TOP=${RESOLVED%%$'\t'*}
+GITDIR=${RESOLVED#*$'\t'}
 
 # Opt-in marker. No marker -> this repo has not opted in -> allow (untouched).
 MARKER="$TOP/.merge-clearance.json"
 [ -f "$MARKER" ] || exit 0
-
-GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 
 # Cross-repo guard. If the command explicitly targets a DIFFERENT repo (--repo,
 # -R, or a GH_REPO= env prefix), the marker + stamp here belong to WORKDIR's repo,
