@@ -141,9 +141,16 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
 }
 
 @test "armed mint: an EXPIRED arm marker does not mint (stale /land-and-deploy window closed)" {
+  # Prove this tests EXPIRY, not an absent marker: a FRESH marker at the same path
+  # DOES mint, then aging it past ARM_TTL (1800s) stops the mint.
   SID="ldtest-$BATS_TEST_NUMBER"
   ARM="${TMPDIR:-/tmp}/gstack-land-armed-$SID"
-  printf '%s\n' "$(( $(date +%s) - 4000 ))" > "$ARM"   # older than ARM_TTL (1800)
+  NOWS=$(date +%s)
+  printf '%s\n' "$NOWS" > "$ARM"                        # fresh -> mints
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
+  [ -f "$SENTINEL" ]
+  rm -f "$SENTINEL"
+  printf '%s\n' "$((NOWS-4000))" > "$ARM"               # same path, now expired -> no mint
   bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
   [ ! -f "$SENTINEL" ]
   rm -f "$ARM"

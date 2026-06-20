@@ -335,12 +335,18 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
 
 @test "armed mint: an EXPIRED arm marker does not mint (stale /ship window closed)" {
   # The ARM_TTL freshness branch in session_armed_fresh: a /ship from long ago must
-  # not keep authorizing the Bash mint path. Plant an arm marker older than ARM_TTL
-  # (1200s) and confirm an armed-looking cd+create mints nothing.
+  # not keep authorizing the Bash mint path. To prove this tests EXPIRY (not merely
+  # an absent marker), first show a FRESH marker at the same path DOES mint, then
+  # that aging it past ARM_TTL (1200s) stops the mint.
   opt_in
   SID="sgtest-$BATS_TEST_NUMBER"
   ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
-  printf '%s\n' "$((NOW-3000))" > "$ARM"
+  NOWS=$(date +%s)
+  printf '%s\n' "$NOWS" > "$ARM"                         # fresh -> mints
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ -f "$GITDIR/ship-pr-clearance" ]
+  rm -f "$GITDIR/ship-pr-clearance"
+  printf '%s\n' "$((NOWS-3000))" > "$ARM"                # same path, now expired -> no mint
   bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
   [ ! -f "$GITDIR/ship-pr-clearance" ]
   rm -f "$ARM"

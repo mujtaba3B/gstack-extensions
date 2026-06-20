@@ -111,6 +111,9 @@ mint() {
 # become a spurious pr_number that would later false-block a different merge.
 pr_from_args() { printf '%s' "$1" | grep -oE '#[0-9]+' | head -1 | tr -d '#'; }
 # PR number from a `gh pr merge <N>` command (mirrors pr-merge-gate.sh's parse).
+# A flag-before-number form (`gh pr merge --squash 45`) yields empty, so the
+# sentinel falls back to head-only binding; the gate parses with the identical
+# regex, so both sides stay consistent (and head_sha + the stamp still gate).
 pr_from_cmd()  { printf '%s' "$1" | grep -oE 'gh pr merge[[:space:]]+[0-9]+' | grep -oE '[0-9]+$'; }
 
 case "$EVENT" in
