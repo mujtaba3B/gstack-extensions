@@ -18,7 +18,10 @@ setup() {
   TTL=1200
 }
 
-teardown() { rm -rf "$REPO" "${REPO2:-/nonexistent}"; }
+teardown() {
+  rm -rf "$REPO" "${REPO2:-/nonexistent}"
+  rm -f "${TMPDIR:-/tmp}"/gstack-ship-armed-sgtest-* 2>/dev/null || true
+}
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -273,4 +276,70 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   bash -c "printf '%s' '$(skill_payload "ship" "$REPO")' | bash '$SENTINEL_HOOK'"
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+# ========================================================================
+# Sentinel writer: ARMED Bash target-mint path (the cwd-vs-target fix)
+# ========================================================================
+
+armed_skill_payload()   { printf '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"},"cwd":"%s","session_id":"%s"}' "$1" "$2" "$3"; }
+sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s","session_id":"%s"}' "$1" "$2" "$3"; }
+
+@test "armed mint: /ship from a cwd OUTSIDE the target repo, then cd into it, mints + gate allows (the bug repro)" {
+  # THE bug: session cwd is not the target repo (here: a non-~/dev tmp dir). The
+  # Skill event arms the session but cannot direct-mint (cwd is not a dev repo);
+  # the later armed `cd $REPO && gh pr create` mints into $REPO's git dir.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  OUT=$(mktemp -d "/tmp/.sgtestout.XXXXXX")
+  bash -c "printf '%s' '$(armed_skill_payload "ship" "$OUT" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]   # cwd was not the target repo -> not minted yet
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$OUT" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ -f "$GITDIR/ship-pr-clearance" ]      # armed Bash cd into target minted it
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+  rm -rf "$OUT"
+}
+
+@test "armed mint: UNARMED bash cd+create mints nothing (accident-guard intact)" {
+  # No prior /ship in this session -> the Bash path must not mint, so the gate
+  # blocks an improvised create.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "armed mint: a non-ship skill does NOT arm the session" {
+  # Only /ship arms. A different skill (review) must leave the Bash path inert.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(armed_skill_payload "review" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "armed mint: armed cd into a NON-dev repo mints nothing (scope held)" {
+  SID="sgtest-$BATS_TEST_NUMBER"
+  OUT=$(mktemp -d "/tmp/.sgtestout.XXXXXX")
+  git -C "$OUT" init -q; git -C "$OUT" commit -q --allow-empty -m init
+  OUTGIT=$(git -C "$OUT" rev-parse --absolute-git-dir)
+  bash -c "printf '%s' '$(armed_skill_payload "ship" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $OUT && gh pr create --base main" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$OUTGIT/ship-pr-clearance" ]
+  rm -rf "$OUT"
+}
+
+@test "armed mint: armed Bash with NO cd mints for the session cwd when it is the target repo" {
+  # /ship armed; a bare `gh pr create` (no cd) falls back to the payload cwd, which
+  # here IS the target repo -> mint there.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  bash -c "printf '%s' '$(armed_skill_payload "ship" "$REPO" "$SID")' | bash '$SENTINEL_HOOK'"
+  rm -f "$GITDIR/ship-pr-clearance"   # drop the Skill-event direct mint to isolate the Bash path
+  bash -c "printf '%s' '$(sentinel_bash_payload "gh pr create --base main" "$REPO" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ -f "$GITDIR/ship-pr-clearance" ]
 }
