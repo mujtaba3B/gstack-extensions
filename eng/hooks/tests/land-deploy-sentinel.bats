@@ -132,7 +132,10 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
 @test "armed mint: armed cd into a NON-dev repo mints nothing (scope held)" {
   SID="ldtest-$BATS_TEST_NUMBER"
   OUT=$(mktemp -d "${TMPDIR:-/tmp}/ldout.XXXXXX")
-  git -C "$OUT" init -q; git -C "$OUT" commit -q --allow-empty -m init
+  git -C "$OUT" init -q
+  git -C "$OUT" config user.name "Test User"
+  git -C "$OUT" config user.email "t@example.com"
+  git -C "$OUT" commit -q --allow-empty -m init
   outgit=$(git -C "$OUT" rev-parse --absolute-git-dir)
   bash -c "printf '%s' '$(armed_skill_payload "land-and-deploy" "$HOME" "$SID")' | bash '$WRITER'"
   bash -c "printf '%s' '$(sentinel_bash_payload "cd $OUT && gh pr merge 45" "$HOME" "$SID")' | bash '$WRITER'"
