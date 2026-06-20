@@ -336,7 +336,7 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
 @test "armed mint: an EXPIRED arm marker does not mint (stale /ship window closed)" {
   # The ARM_TTL freshness branch in session_armed_fresh: a /ship from long ago must
   # not keep authorizing the Bash mint path. Plant an arm marker older than ARM_TTL
-  # (1800s) and confirm an armed-looking cd+create mints nothing.
+  # (1200s) and confirm an armed-looking cd+create mints nothing.
   opt_in
   SID="sgtest-$BATS_TEST_NUMBER"
   ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
