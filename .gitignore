@@ -22,3 +22,6 @@
 .qa-plan-gate.json
 .ship-gate.json
 .merge-clearance.json
+
+# Agent-doc, local-only (untracked 2026-06-21)
+PLAYBOOK.md
