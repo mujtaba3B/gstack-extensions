@@ -1,5 +1,9 @@
 # pencil-mockup changelog
 
+## v1.3.0
+
+Designer Denise now owns the cross-tool wireframe conventions outright. The workspace-level `~/dev/WIREFRAMES.md` (the old tool-agnostic source of truth other tools read) was retired and its tool-agnostic principles moved into the design pack at `design/references/wireframes-cross-tool.md`. The bundled Pencil reference (`references/wireframes.md`) stays the Pencil-specific superset; its precedence dropped the workspace-override tier and is now just project `spec/WIREFRAMES.md` -> this file. `shared/core.md`, `SKILL.md`, `style-guide/SKILL.md`, and the plugin README were repointed off the workspace path. The `qa` plugin's citations were repointed to the new cross-tool reference too.
+
 ## v1.2.0
 
 Style guides become a first-class artifact of every mockup: the create path builds a `Style guide · <Project>` root frame beside the mockup (five-card anatomy in `references/wireframes.md`), and the update path syncs that frame whenever an edit changes styles. The from-scratch flow (questionnaire, research, font options) lives in the new sibling skill `/design:style-guide`. The frame's panel title carries a 1-2 word named direction so the aesthetic is quotable later. `style-guide` borrows from Anthropic's official skills via a soft pointer, never a hard plugin dependency: distilled taste guardrails with an optional read of `frontend-design` when installed (the anti-slop rule scoped to display fonts, so neutral body fonts like Inter stay legitimate), and a named-aesthetic-direction menu fallback when the interview finds no brand or palette anchors.

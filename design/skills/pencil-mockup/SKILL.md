@@ -42,7 +42,7 @@ Read `shared/core.md` from the plugin root before proceeding. The file lives at 
 
 1. `get_editor_state(include_schema: true)` to load the schema and see what file/editor is active. (Skip the reload only if the schema is already in this session's context.)
 2. `get_guidelines` for Pencil's design guidance.
-3. Read this skill's `references/wireframes.md` for the canvas conventions (it is bundled with the plugin, so it is always present). It defers, in order, to a project-level `spec/WIREFRAMES.md` and then a workspace-level `~/dev/WIREFRAMES.md` when either exists, so read those too if present. Do not proceed to layout without these.
+3. Read this skill's `references/wireframes.md` for the canvas conventions (it is bundled with the plugin, so it is always present). It defers to a project-level `spec/WIREFRAMES.md` when one exists, so read that too if present. Do not proceed to layout without these.
 
 ## Step 3: Resolve the target
 

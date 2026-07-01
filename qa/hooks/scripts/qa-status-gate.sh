@@ -46,7 +46,7 @@ fi
 
 # Shippable work in the SESSION cwd (from the payload, not the hook process cwd)?
 # Commits ahead of the base branch ONLY. A dirty tree deliberately does NOT
-# count: long-lived local edits (a modified WIREFRAMES.md, a sibling pane's
+# count: long-lived local edits (a modified LOG.md, a sibling pane's
 # work) armed the gate on every chatty turn, and the noise outweighed the
 # catch. Uncommitted work gets caught at commit/ship time, when the commits
 # exist. All best-effort; any failure leaves shippable=0 (allow).

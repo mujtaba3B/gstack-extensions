@@ -5,10 +5,9 @@ The canvas layout contract Designer Denise follows for every `.pen` create or up
 **Precedence (most specific wins).** If a more specific convention file exists, defer to it for anything it covers, and fall back to this doc for everything it does not:
 
 1. A project-level `spec/WIREFRAMES.md` in the repo you are working in (most specific).
-2. A workspace-level `~/dev/WIREFRAMES.md`, if one exists (the user's cross-tool conventions).
-3. This file (the always-present baseline).
+2. This file (the always-present baseline).
 
-The principles below are tool-agnostic; the operating detail (the `mcp__pencil__*` calls, the stroke JSON) is Pencil-specific and is what makes this the design plugin's home for the contract.
+The principles below are tool-agnostic; the operating detail (the `mcp__pencil__*` calls, the stroke JSON) is Pencil-specific and is what makes this the design plugin's home for the Pencil contract. The tool-agnostic principles alone (shared with any future non-Pencil tool) also live at the design pack's `../../../references/wireframes-cross-tool.md`; this file is the Pencil-specific superset of that one, so for Pencil work read this file and ignore the sibling.
 
 ---
 

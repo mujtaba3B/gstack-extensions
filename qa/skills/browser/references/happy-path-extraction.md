@@ -50,7 +50,7 @@ If found, attach the path to every step that has a matching frame.
 
 ## Input shape 2: Pencil `.pen` file
 
-The canvas convention from `~/dev/WIREFRAMES.md`:
+The canvas convention (from the `design` plugin's `references/wireframes-cross-tool.md`):
 
 - **Horizontal axis = view sequence**: the flow reads left to right.
 - **Vertical axis = variants**: stacked variants of the same view (e.g. empty state, loading, error). The top row is the happy path.

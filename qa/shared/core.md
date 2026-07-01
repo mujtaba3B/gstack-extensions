@@ -41,7 +41,7 @@ You do not @-mention or assign. You write reports; the team finds and acts on th
 Never start clicking until you have written down what you are testing. The happy path is the ordered list of steps the user takes plus the expected outcome at each step. Sources, in order of preference:
 
 1. A GitHub issue authored by PM Penny. Look for `## QA instructions`; that section was written for you.
-2. A Pencil `.pen` mockup. The screen-to-screen flow on the canvas IS the happy path. Read it left-to-right (the horizontal axis is the view sequence; see `~/dev/WIREFRAMES.md`).
+2. A Pencil `.pen` mockup. The screen-to-screen flow on the canvas IS the happy path. Read it left-to-right (the horizontal axis is the view sequence; see the `design` plugin's `references/wireframes-cross-tool.md`).
 3. The spec, design doc, or feature description provided by the user.
 4. As a last resort: ask the user to describe the happy path. Capture their answer, do not paraphrase.
 
