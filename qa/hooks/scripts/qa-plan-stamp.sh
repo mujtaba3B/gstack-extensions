@@ -2,7 +2,7 @@
 # qa-plan-stamp.sh - read / write the QA-plan approval stamp.
 #
 # The stamp records that a human PRESENTED-AND-APPROVED the two-phase QA plan for
-# the current branch (BUILD-PROCEDURE.md non-negotiable #4). /qa:plan calls
+# the current branch (the two-phase QA-plan approval policy). /qa:plan calls
 # `write` at the end of its AskUserQuestion approval step; the build and PR gates
 # (qa-plan-build-gate.sh / qa-plan-pr-gate.sh) read it via qpg_stamp_valid.
 #

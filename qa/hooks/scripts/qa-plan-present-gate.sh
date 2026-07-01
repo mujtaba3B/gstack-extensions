@@ -2,7 +2,7 @@
 # PreToolUse hook on AskUserQuestion. Enforces the QA-plan approval PRESENTATION:
 # any question with the reserved header "QA plan" must carry the plan summary
 # inside an option's `preview` pane, so the human reads the plan and the approval
-# in one unmissable modal (BUILD-PROCEDURE.md non-negotiable #4; the prose form
+# in one unmissable modal (the two-phase QA-plan approval policy; the prose form
 # "plan dumped in chat, bare Approve modal after it" is what this blocks).
 #
 # A conforming question:
