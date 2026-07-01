@@ -4,7 +4,7 @@
 # the two-phase QA plan has been approved (an approval stamp exists for the
 # branch). The plan is approved-and-stamped by /qa:plan's closing AskUserQuestion.
 #
-# "Approve the plan, THEN build" (BUILD-PROCEDURE.md non-negotiable #4). Reading
+# "Approve the plan, THEN build" (the two-phase QA-plan approval policy). Reading
 # code is never gated (this is Edit|Write only), so you can fully investigate
 # before writing the plan. Genuine spikes bypass via a `spike/` branch.
 #
@@ -78,6 +78,8 @@ LOG="$HOME/.claude/qa-plan-gate.log"
 printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "$VERDICT" >> "$LOG" 2>/dev/null || true
 
-REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE building. You are about to edit source (\`$REL\`) on \`$BRANCH\` with no approved-plan stamp [${VERDICT}]. Per ~/dev/BUILD-PROCEDURE.md (non-negotiable #4), the Development + Production QA plan is presented to and approved by the human before implementation. Run \`/qa:plan\` now: it pulls the success criteria, writes the two-phase plan, presents it for approval, and on your yes writes the stamp that unblocks editing. Reading code is NOT gated, so investigate freely first. For a genuine spike/exploration where the plan cannot be written yet, branch as \`spike/<name>\` to bypass this gate. Docs, tests, and config edits are also ungated."
+REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE building. You are about to edit source (\`$REL\`) on \`$BRANCH\` with no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan is presented to and approved by the human before implementation. Run \`/qa:plan\` now: it pulls the success criteria, writes the two-phase plan, presents it for approval, and on your yes writes the stamp that unblocks editing. Reading code is NOT gated, so investigate freely first. For a genuine spike/exploration where the plan cannot be written yet, branch as \`spike/<name>\` to bypass this gate. Docs, tests, and config edits are also ungated."
+_BP_REF=$(qpg_build_procedure_ref "$MARKER")
+[ -n "$_BP_REF" ] && REASON="$REASON (This repo also follows your workspace build procedure: $_BP_REF.)"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

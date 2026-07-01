@@ -2,7 +2,7 @@
 # PreToolUse hook on Bash. Gate 2 of the QA-plan approval policy: in an OPTED-IN
 # ~/dev repo, block `gh pr create` until the branch has an approved two-phase QA
 # plan (an approval stamp written by /qa:plan). "The plan is in place before the
-# PR goes up" (BUILD-PROCEDURE.md non-negotiable #4).
+# PR goes up" (the two-phase QA-plan approval policy).
 #
 # This is a separate hook from ship-pr-gate.sh (which forces /ship to be the PR
 # path); keeping it separate leaves that tested gate untouched. Both run on the
@@ -93,6 +93,8 @@ LOG="$HOME/.claude/qa-plan-gate.log"
 printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$VERDICT" >> "$LOG" 2>/dev/null || true
 
-REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. Per ~/dev/BUILD-PROCEDURE.md (non-negotiable #4), the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."
+REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."
+_BP_REF=$(qpg_build_procedure_ref "$MARKER")
+[ -n "$_BP_REF" ] && REASON="$REASON (This repo also follows your workspace build procedure: $_BP_REF.)"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

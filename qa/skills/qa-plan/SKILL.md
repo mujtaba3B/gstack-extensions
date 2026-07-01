@@ -12,8 +12,7 @@ description: |
   presenting the plan (and a recommended QA driver from the qa plugin's qa-roster.json,
   default mutwo, named in the PR body with their handle) for the human's approval
   and, on a yes, writing the approval stamp the QA-plan gates read (build / PR /
-  deploy). It is step 3 of
-  ~/dev/BUILD-PROCEDURE.md and feeds the two-phase QA posture (dev_verified /
+  deploy). It feeds the two-phase QA posture (dev_verified /
   prod_verified) the QA-status gate reads. Use when the user says "qa plan", "write
   the qa plan", "plan the QA", "qa section for the PR", "dev and prod QA plan",
   "/qa:plan", or when a change needs its QA plan authored before the PR goes up.
@@ -53,7 +52,7 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 # /qa:plan: Author the two-phase QA plan into the PR body
 
-You are running `/qa:plan`. Your job is to turn a change's success criteria into a **two-phase QA plan** and write it into the **PR body**, so QA is planned before the PR is reviewed and gated by construction. This is **step 3 of `~/dev/BUILD-PROCEDURE.md`**.
+You are running `/qa:plan`. Your job is to turn a change's success criteria into a **two-phase QA plan** and write it into the **PR body**, so QA is planned before the PR is reviewed and gated by construction. This authors the two-phase QA plan (Development + Production) before the PR is reviewed.
 
 You **plan** QA. You do not execute it: Development QA is run by `/qa`, `qa:browser`, or `qa:headless`; Production QA by `/canary`. You do not merge or open the PR, and you do not mint the merge-clearance stamp (that is `/eng:cr`). The one stamp you DO write is the QA-plan **approval** stamp in Step 6, and only after the human approves.
 
@@ -85,7 +84,7 @@ For each acceptance criterion, decide how it is verified in each phase:
 
 **Layer-walk (only when the diff touches a build / derivation / deploy layer:** a container image, bundled binary, lambda layer, CDN asset, vendored copy, or multi-stage build. Skip it otherwise.) Ask: between the code I changed and what the user/agent actually runs, what layers exist, which one does production execute, does my QA hit THAT one, and is the derived artifact rebuilt automatically when my change lands or does it go stale until a separate trigger? Make the answer the `Production artifact:` and write the QA item to verify through it. This exists because a shared base image was once "verified" by testing the base directly while the per-agent images derived from it silently went stale.
 
-**Mockup-first rule (from BUILD-PROCEDURE.md step 2):** if the change has a user-facing surface, at least one Development QA item must compare the live result against the Pencil mockup.
+**Mockup-first rule:** if the change has a user-facing surface, at least one Development QA item must compare the live result against the Pencil mockup.
 
 Right-size it: one QA item per real acceptance criterion. Do not pad the list with generic "page loads" checks that prove nothing.
 
@@ -132,11 +131,11 @@ Mechanics:
 Tell the user, in one tight readout:
 - The **Development QA** checkboxes gate the merge: while any is unchecked, the merge-clearance QA dimension blocks. Checking them all is what lets you state `QA_STATUS: dev_verified`.
 - The **Production QA** bullets are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
-- Point at `~/dev/BUILD-PROCEDURE.md` (the procedure) and the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
+- Point at the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
-The load-bearing step: it makes QA approval come **before** building. BUILD-PROCEDURE.md non-negotiable #4 requires the two-phase plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
+The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
 
 1. **Present and ask.** Fire one `AskUserQuestion` (header `"QA plan"`, single-select; previews do not render on multiSelect). The plan is presented INSIDE the modal: the **Approve** option's `preview` field carries a summary of the plan, so the human reads plan and approval as one unmissable unit. Do not dump the plan as prose and follow it with a bare Approve modal.
 

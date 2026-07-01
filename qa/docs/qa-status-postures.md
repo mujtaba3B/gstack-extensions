@@ -2,8 +2,8 @@
 
 The canonical home of the QA-posture contract enforced by `qa-status-gate.sh`
 (the Stop hook). The gate's block message is deliberately short and points
-here; this doc carries the details. Aligned to the two-phase QA model in
-`~/dev/BUILD-PROCEDURE.md`: the Development QA Plan must pass before the PR
+here; this doc carries the details. Aligned to the two-phase QA-plan policy:
+the Development QA Plan must pass before the PR
 merges, the Production QA Plan is verified live after deploy. The plan itself
 lives in the PR body and is authored by `/qa:plan`; the posture line states
 which phase you have verified.

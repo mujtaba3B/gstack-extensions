@@ -264,7 +264,7 @@ if [ -n "$MARKER" ]; then
   [ -n "$ug" ] && CR_UNREVIEWABLE_GLOBS="$ug"
 fi
 
-# Gate 3 of the QA-plan approval policy (BUILD-PROCEDURE.md non-negotiable #4):
+# Gate 3 of the QA-plan approval policy:
 # a repo carrying a `.qa-plan-gate.json` marker with the "deploy" gate enabled
 # requires QA to have PASSED before deploy. Folding it into REQUIRE_QA_PLAN reuses
 # the mc_qa_state classifier: with it on, a PR whose Dev QA boxes are unchecked

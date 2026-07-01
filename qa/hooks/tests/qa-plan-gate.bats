@@ -305,6 +305,16 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$status" -ne 0 ]
 }
 
+@test "build_procedure_ref: returns the value when the marker sets it" {
+  run qpg_build_procedure_ref '{"build_procedure_ref":"docs/BUILD.md"}'
+  [ "$output" = "docs/BUILD.md" ]
+}
+
+@test "build_procedure_ref: returns empty when the marker omits it" {
+  run qpg_build_procedure_ref '{"base_branches":["main"]}'
+  [ -z "$output" ]
+}
+
 @test "base_in_scope: main in default scope" {
   run qpg_base_in_scope '{}' "main"
   [ "$output" = "in" ]; [ "$status" -eq 0 ]

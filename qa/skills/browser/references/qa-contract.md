@@ -2,7 +2,7 @@
 
 QA is a first-class, recorded decision, not something review has to catch. A `qa:browser` run ends by STATING its posture in a fixed format. That one posture feeds two enforcement points with DIFFERENT match rules. Satisfy both.
 
-The postures are **two-phase**, matching `~/dev/BUILD-PROCEDURE.md`: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
+The postures are **two-phase**: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
 
 ## The postures
 

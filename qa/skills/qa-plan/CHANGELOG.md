@@ -1,5 +1,19 @@
 # qa:plan CHANGELOG
 
+## v1.7.0
+
+Decouple the qa plugin (and the eng merge-clearance comment) from the repo
+owner's private `~/dev/BUILD-PROCEDURE.md` path, which broke on any other
+machine. The two-phase QA-plan approval policy is the plugin's OWN rule, so
+every gate comment, gate REASON string, and skill/doc reference now states it
+self-containedly instead of citing an external file. For workspaces that DO
+keep their own build-procedure doc, a new OPTIONAL `build_procedure_ref` key in
+the per-repo `.qa-plan-gate.json` marker lets the build/PR gate REASON append
+"(This repo also follows your workspace build procedure: <ref>.)" when set;
+unset by default, so the plugin never hardcodes an external pointer. New
+`qpg_build_procedure_ref` helper in `qa-plan-gate-lib.sh` (+ 2 bats). qa plugin
+3.1.0 -> 3.2.0, eng plugin 2.5.0 -> 2.5.1 (comment only).
+
 ## v1.6.0
 
 Bookkeeping fast lane through the ship gates. A new pure classifier
