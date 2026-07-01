@@ -418,6 +418,14 @@ mc_head_cr_unreviewable() {
 #   that documents the gate (```- [ ] ...```) is not parsed as real QA boxes.
 #   require_qa_plan is opt-in per repo via .merge-clearance.json; default 0
 #   preserves the prior behavior exactly (no checklist -> n/a, non-blocking).
+#
+#   Checkbox detection reads BOTH shapes: the legacy bullet checkbox (- [ ] / - [x]
+#   in the Definition-of-Done list and older PR bodies) AND the Template B DEV-row
+#   TABLE CELL checkbox (| [ ] | / | [x] |), which has no leading "- ". It matches
+#   any checkbox bracket [ ]/[x]/[X] within the fence-stripped section, so a single
+#   unchecked box in either place classifies "incomplete". Template B PROD rows use
+#   "-" (a plain hyphen, no bracket) in their Status cell, so they correctly do not
+#   count toward the merge gate.
 mc_qa_state() {
   local body="$1" require="${2:-0}"
   local section
@@ -436,8 +444,8 @@ mc_qa_state() {
     }
     inqa{print}
   ')
-  if printf '%s' "$section" | grep -q '\- \['; then
-    if printf '%s' "$section" | grep -q '\- \[ \]'; then echo "incomplete"; return 1; fi
+  if printf '%s' "$section" | grep -qE '\[[ xX]\]'; then
+    if printf '%s' "$section" | grep -qE '\[ \]'; then echo "incomplete"; return 1; fi
     echo "complete"; return 0
   fi
   if [ "$require" = "1" ]; then echo "missing"; return 1; fi

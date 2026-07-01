@@ -227,6 +227,38 @@ stamp() {
   [ "$output" = "complete" ]
 }
 
+# ---- mc_qa_state: Template B table format (DEV boxes live in table cells) ----
+
+@test "qa state (Template B): an unchecked DEV table row -> incomplete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [ ] | claude | run bats | green |'
+  run mc_qa_state "$body" 0
+  [ "$output" = "incomplete" ]
+}
+
+@test "qa state (Template B): all DEV rows checked + DoD boxes checked -> complete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n| DEV | [x] | claude | lint | clean |\n\n**Definition of Done:**\n- [x] Tests written and green\n- [x] Review clear'
+  run mc_qa_state "$body" 0
+  [ "$output" = "complete" ]
+}
+
+@test "qa state (Template B): a PROD row with a hyphen status does not count as a box" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n| PROD | - | mutwo | live smoke | 200 |'
+  run mc_qa_state "$body" 1
+  [ "$output" = "complete" ]
+}
+
+@test "qa state (Template B): a PROD hyphen row alone (no DEV box) never blocks by itself" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| PROD | - | mutwo | live smoke | 200 |\nQA_STATUS: dev_verified'
+  run mc_qa_state "$body" 0
+  [ "$output" = "n/a" ]
+}
+
+@test "qa state (Template B): an unchecked DoD box with all DEV rows checked -> incomplete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n\n**Definition of Done:**\n- [ ] Tests written and green'
+  run mc_qa_state "$body" 0
+  [ "$output" = "incomplete" ]
+}
+
 # ---- mc_head_cr_unreviewable (the CR-unreviewable-only HEAD auto-satisfy) ----
 # This is the fix for the .pen-only HEAD permanently blocking the merge-clearance
 # gate (email-hero#31). "yes" means the reviewed-head gate may be auto-satisfied.
