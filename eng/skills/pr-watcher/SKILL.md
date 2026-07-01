@@ -396,7 +396,7 @@ After the sensor returns, branch on `outcome`:
 
 - `"pr_closed"` → print `PR is closed/merged. Watcher exiting.` and end the skill.
 - `"already_settled"` → CodeRabbit's review on the current HEAD is terminal `success` and there are no unprocessed CR items. (Sensor returns this only for `success`, never for `failure`/`error`.) Print `🐇 CodeRabbit is caught up on HEAD <sha> (status: success). Nothing to address. Watcher exiting.` and end the skill. Do NOT loop again; spawning another sensor would just reproduce this outcome.
-- `"cr_failure"` → CodeRabbit's review on the current HEAD ended in `failure` or `error` and there are no actionable comments to drain. CR has emitted its final word and no new transition will arrive without a new push. Print `⚠️ CodeRabbit review on HEAD <sha> ended in <state> (updated_at: <ts>). No comments were posted; this typically indicates a CR-side problem (rate limit, internal error, repo config). Watcher exiting — please inspect the PR and re-invoke /eng:pr-watcher after the next push.` and end the skill. Do NOT loop; another sensor would reproduce this outcome.
+- `"cr_failure"` → CodeRabbit's review on the current HEAD ended in `failure` or `error` and there are no actionable comments to drain. CR has emitted its final word and no new transition will arrive without a new push. Print `⚠️ CodeRabbit review on HEAD <sha> ended in <state> (updated_at: <ts>). No comments were posted; this typically indicates a CR-side problem (rate limit, internal error, repo config). Watcher exiting; please inspect the PR and re-invoke /eng:pr-watcher after the next push.` and end the skill. Do NOT loop; another sensor would reproduce this outcome. If the failure is a rate-limit (CR's `rate limited by coderabbit.ai` notice) rather than a genuine CR error, take the Step 4h rate-limited short-circuit instead of just inspecting: if a current `/eng:cr` review backstops this HEAD (`review-skill-head` == HEAD) the PR is clear to land via `/land-and-deploy`, otherwise run `/eng:cr` first. Watching will not help, because CR will not review this HEAD without a new push.
 - `"idle_timeout"` → ask the user (via AskUserQuestion) whether to keep watching or stop. Default recommendation: **stop** (long silence after watcher start almost always means CR is done; the user can re-invoke /eng:pr-watcher when there is new activity). If they choose to keep watching, spawn another sensor.
 - `"new_cr_feedback"` → proceed to Step 4.
 
@@ -425,6 +425,8 @@ For every item across `new_issue_comments`, `new_reviews`, `new_review_comments`
 - `false_positive` — CR is wrong; you can explain why.
 - `out_of_scope` — valid suggestion but outside fix scope, or architectural / cross-cutting.
 - `needs_user_input` — ambiguous, requires human judgment.
+
+**Rate-limit detection (overrides the classifications above).** If any item's body contains the literal `rate limited by coderabbit.ai` (CodeRabbit's rate-limit notice, posted as an auto-generated `status_ping`-shaped comment), set a `cr_rate_limited` flag for this batch. CodeRabbit did NOT actually review this HEAD, so a green `CodeRabbit` commit status here is not a real review: do not let it read as a clean pass. Handle it in the Step 4h short-circuit rather than looping. This is the same rate-limit marker the merge gate keys on (`merge-clearance.sh` `mc_cr_rate_limited` for a missing CR status; it uses the stricter `mc_cr_rate_limited_latest` only for a stuck-`pending` status), so the watcher and the gate agree on when a rate-limited CR is safe to move past in the common missing/settled-status case.
 
 Apply the project's coding principles when filtering. Reject suggestions that introduce single-use abstractions, speculative error handling, or "cleanup" outside the task.
 
@@ -504,6 +506,13 @@ Exit the skill (do NOT spawn another sensor) when ALL the following hold for the
 - `pushed_commits_this_batch == 0` (no `valid_actionable` finding made it through tests + commit + push this batch). If you pushed even once, CR will re-review the new HEAD, so do not exit.
 - The sensor returned `cr_status_state == "success"` AND `settled_via == "status_transition"`. (CR's terminal pass on the current HEAD finished cleanly. `failure`/`error` is also "done" in CR's sense, but signals a CR-side problem worth keeping the watcher alive for a human to inspect, so do not auto-exit on those.)
 - All findings in the batch classified as `status_ping`, `nitpick_only`, `already_fixed`, or `false_positive` (no `valid_actionable`, `out_of_scope`, or `needs_user_input` left in flight). `out_of_scope` and `needs_user_input` items both escalate to `escalations.jsonl` rather than being replied to on the PR (see Step 4e), so leaving them unresolved means there is still pending human work; the watcher should keep the loop alive so the user can see them when they return.
+
+**Rate-limited short-circuit (check this FIRST, before the clean-exit line below).** If `cr_rate_limited` was set for this batch (Step 4b), CodeRabbit posted its `rate limited by coderabbit.ai` notice INSTEAD of reviewing, so its green status is not a real review and there is nothing to keep watching for: CR will not review this HEAD without a new push. Do the same thing the merge gate does (`merge-clearance.sh` `CR_RATE_LIMITED` / `CR_RL_BACKSTOPPED`): fall back to the current local `/eng:cr` review. Compare `<git-dir>/review-skill-head` against the PR HEAD:
+
+- Backstopped (`review-skill-head` == HEAD): a current `/eng:cr` review already covers this HEAD. Print `🐇 CodeRabbit is rate-limited (no real review on HEAD <sha>); a current /eng:cr review backstops it. Nothing to watch. Land via /land-and-deploy.` and end the skill.
+- Not backstopped: print `🐇 CodeRabbit is rate-limited (no real review on HEAD <sha>) and no current /eng:cr review backstops it. Run /eng:cr on this HEAD, then land via /land-and-deploy. Not watching further.` and end the skill.
+
+Do NOT spawn another sensor in either case. Only when `cr_rate_limited` is NOT set does the genuine clean-exit below apply.
 
 When the condition is met, print:
 
