@@ -253,6 +253,12 @@ stamp() {
   [ "$output" = "n/a" ]
 }
 
+@test "qa state (Template B): a PROD hyphen row alone with require=1 -> missing" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| PROD | - | mutwo | live smoke | 200 |\nQA_STATUS: dev_verified'
+  run mc_qa_state "$body" 1
+  [ "$output" = "missing" ]
+}
+
 @test "qa state (Template B): an unchecked DoD box with all DEV rows checked -> incomplete" {
   body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n\n**Definition of Done:**\n- [ ] Tests written and green'
   run mc_qa_state "$body" 0
