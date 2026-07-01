@@ -80,7 +80,17 @@ setup() {
   [ "$output" = "skipped" ]
 }
 
-@test "sc_dim_verdict: unknown state -> block (safe direction)" {
+@test "sc_dim_verdict: unknown (uncomputable) + no skip -> block" {
+  run sc_dim_verdict unknown no
+  [ "$output" = "block" ]
+}
+
+@test "sc_dim_verdict: unknown + recorded skip -> skipped" {
+  run sc_dim_verdict unknown yes
+  [ "$output" = "skipped" ]
+}
+
+@test "sc_dim_verdict: unrecognized state -> block (safe direction)" {
   run sc_dim_verdict weird no
   [ "$output" = "block" ]
 }
@@ -105,6 +115,17 @@ setup() {
 
 @test "sc_blockers: na satisfies a required dim (docs-only / no package.json)" {
   run sc_blockers require "version changelog" '{"version":"na","changelog":"na"}' '{}'
+  [ "$output" = "" ]
+}
+
+@test "sc_blockers: unknown (base unresolved) blocks a required dim, unlike na" {
+  run sc_blockers require "base_merged changelog version" \
+    '{"base_merged":"unknown","changelog":"unknown","version":"unknown"}' '{}'
+  [ "$output" = "$(printf 'base_merged\nchangelog\nversion')" ]
+}
+
+@test "sc_blockers: a recorded skip unblocks an unknown required dim too" {
+  run sc_blockers require "base_merged" '{"base_merged":"unknown"}' '{"base_merged":"reason=shallow-checkout"}'
   [ "$output" = "" ]
 }
 

@@ -52,18 +52,22 @@ sc_required() {
 }
 
 # sc_dim_verdict <state> <skip_present>
-#   Decide one dimension. <state> is ok|missing|na (computed by the gate from the
-#   repo). <skip_present> is "yes" when a recorded skip reason exists for the dim.
-#     ok      -> "ok"        (footprint present)
-#     na      -> "na"        (dim does not apply here, e.g. docs-only, no package.json)
-#     missing -> "skipped"   when a recorded skip makes the omission honest
-#     missing -> "block"     otherwise
+#   Decide one dimension. <state> is ok|missing|na|unknown (computed by the gate
+#   from the repo). <skip_present> is "yes" when a recorded skip reason exists.
+#     ok              -> "ok"        (footprint present)
+#     na              -> "na"        (dim does not apply, e.g. docs-only, no package.json)
+#     missing         -> footprint absent
+#     unknown         -> the gate tried to evaluate but could NOT (base ref
+#                        unresolved, version unreadable). Distinct from na so an
+#                        "I couldn't tell" never masquerades as a clean "n/a".
+#   A missing OR unknown dim: "skipped" when a recorded skip makes the omission
+#   honest, else "block". A truly unrecognized state also blocks (safe direction).
 sc_dim_verdict() {
   case "$1" in
     ok) echo "ok" ;;
     na) echo "na" ;;
-    missing) [ "$2" = "yes" ] && echo "skipped" || echo "block" ;;
-    *) echo "block" ;;  # unknown state -> safe (blocking) direction under require
+    missing|unknown) [ "$2" = "yes" ] && echo "skipped" || echo "block" ;;
+    *) echo "block" ;;
   esac
 }
 

@@ -106,8 +106,23 @@ bump):
 | `version` | version in `package.json` differs from base (repo-configurable; off where a repo does not bump per-PR) |
 | `base_merged` | `git merge-base --is-ancestor origin/<base> HEAD` |
 
+The `review` check requires the stamped commit to be on the **branch side** of the
+merge-base (ancestor of HEAD but NOT of base), so a leftover `review-skill-head`
+from a prior branch that has since landed in base cannot grant a false pass.
+
 A **docs-only diff auto-satisfies** `changelog`/`version` (bookkeeping fast-lane,
-reusing merge-clearance's idea) so trivial changes pay no ceremony.
+reusing merge-clearance's idea) so trivial changes pay no ceremony. Docs are
+matched by **extension** (`.md`/`.mdx`/`.markdown`/`.txt`/`.rst`), and
+behavior-contract instruction files (`SKILL.md`/`CLAUDE.md`/`AGENTS.md`) are
+excluded from the fast lane (same set as merge-clearance's `mc_is_bookkeeping`),
+so a skill/instruction change cannot dodge the required evidence by keeping its
+diff to markdown.
+
+**Uncomputable vs not-applicable.** A dimension the gate genuinely cannot evaluate
+(base ref unresolved, `package.json` version unreadable) is recorded as `unknown`,
+distinct from `na`. Under `require`, `unknown` fails toward **BLOCK** (with the
+recorded-skip escape) and is logged, so a shallow/detached checkout cannot silently
+waive three of the four dims by having them all read `na`.
 
 ### 3. Enforcement dial (per-repo marker key)
 
@@ -129,12 +144,19 @@ reusing merge-clearance's idea) so trivial changes pay no ceremony.
 
 ### 4. Recorded-skip primitive (the honest skip)
 
-To skip a required dim honestly, the operator writes a reason the gate consumes,
-logs, and spends for that run:
+To skip a required dim honestly, the operator writes a reason the gate reads and
+logs:
 
 ```bash
 echo "reason=docs-only policy=bookkeeping" > <gitdir>/ship-skip-changelog
 ```
+
+A skip is honored **only for the run that authored it**: its file mtime must be at
+or after the current `/ship` run's `run_started_epoch` (from the `ship-run.json`
+ledger). A skip left over from a prior PR is stale, ignored, and logged, so a
+one-time honest skip cannot silently waive a required dim on every future ship.
+(With no ledger, e.g. a deliberate human one-off with no `/ship` run, the skip is
+honored: it was written on purpose and there is no run to bound it to.)
 
 This is Direction 4: the legitimate skip becomes a first-class, auditable action,
 mirroring merge-clearance's principle that `--skip-review` is "the honest 'no review
@@ -153,12 +175,20 @@ happened' override, not a shortcut."
 The no-footprint quality steps stay unenforceable, but both modes make their absence
 **recorded** — which is the whole point.
 
-## Fail-open posture (unchanged)
+## Fail posture
 
-Every new path fails **open** on any missing dependency (jq/git), unreadable ledger,
-or unresolvable repo — matching the existing gate. A local gate that fails closed on
-its own bug trains the human to rip it out. New blocks (require mode) are logged so a
-rotted/mis-firing gate is visible.
+Dependency and marker problems fail **open** (and are logged): a missing jq/git, a
+missing completion lib, or an unparseable `.ship-gate.json` allow the create rather
+than wedge a real ship on the gate's own bug. A local gate that fails closed on its
+own bug trains the human to rip it out.
+
+But a **required dimension the gate cannot evaluate** (base ref unresolved, version
+unreadable) is the `unknown` case above: under `require` it fails toward **BLOCK**
+(the safe direction), with a distinct, actionable reason and the recorded-skip
+escape. This is not "the gate's own bug" — it is a genuine "cannot verify", and
+silently passing it as `na` is exactly the false-ALLOW this layer exists to prevent.
+Every block and every degraded (unknown) evaluation is logged, so a rotted or
+mis-firing gate is visible rather than silent.
 
 ## Where it lands
 
