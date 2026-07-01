@@ -1,5 +1,31 @@
 # qa:plan CHANGELOG
 
+## v1.8.0
+
+Template B: the `## QA` section is now a compact **table** (one row per acceptance
+criterion, a `Phase` column tagging each `DEV` or `PROD`) instead of the old
+Development-QA / Production-QA checkbox LISTS. DEV rows carry a `[ ]` checkbox in
+their Status cell (merge-gating, flipped to `[x]` when the check passes); PROD rows
+carry a `-` hyphen (verified post-deploy, never gates the merge). Routine automated
+checks (unit tests, lint/types, CI, `/eng:cr`) collapse into a one-line
+`Standard (all green)` header rather than being listed as rows. Definition of Done
+stays `- [ ]` bullets.
+
+Presentation changed too: Step 6 now RENDERS the full plan (table + footer)
+full-width as a turn-final chat message, THEN fires a slim `AskUserQuestion`
+(Approve / Rework it / Skip the gate) with no plan crammed into an option preview.
+The approval stamp is still written only on an explicit Approve.
+
+Gate updates: `qa-plan-present-gate.sh` is relaxed to an allow (it no longer
+requires a fit-in-box plan summary, the literal DEVELOPMENT QA / PRODUCTION QA
+headings, single-select, or a 20x60 size cap in the preview, since the plan lives
+in chat now). The eng plugin's `mc_qa_state` (merge-clearance) now reads BOTH the
+Definition-of-Done `- [ ]` bullets AND the DEV-row `| [ ] |` table-cell checkboxes
+(matches any `[ ]`/`[x]`/`[X]` bracket in the fence-stripped QA section); PROD-row
+`-` cells correctly do not count. Old `- [ ]`-list PR bodies still classify
+correctly (backward compatible). qa plugin 3.2.0 -> 3.3.0, eng plugin 2.6.1 ->
+2.6.2.
+
 ## v1.7.0
 
 Decouple the qa plugin (and the eng merge-clearance comment) from the repo
