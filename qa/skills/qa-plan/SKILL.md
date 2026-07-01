@@ -125,6 +125,7 @@ Format rules the gates depend on:
 - A **PROD row's Status cell is a `-` hyphen, NEVER a `[ ]`** (so it does not gate the merge; it is verified post-deploy).
 - **Definition of Done stays `- [ ]` bullets** (also merge-gating).
 - Never use an em-dash (U+2014). Use a hyphen `-` for the PROD Status and everywhere else.
+- **No literal `[ ]` (or `[x]`) anywhere except a Status cell or a Definition-of-Done bullet.** The merge-clearance QA gate reads ANY checkbox bracket in the `## QA` section, so a literal `[ ]` in a `Flow to run` / `Expect` cell, in the QA-driver line, or in prose describing behavior falsely reads as an unchecked box and blocks the merge. Describe such things in words ("an unchecked DEV status") instead of the glyph.
 
 **Pick the QA driver** for the `**QA driver:**` line: read `../../qa-roster.json` (the plugin root, relative to this skill's base directory) and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
 
