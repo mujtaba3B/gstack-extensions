@@ -148,11 +148,19 @@ NUDGED=$(cat "$NUDGED_FILE" 2>/dev/null || echo "")
 # the merge gate agree. Any gh/parse failure -> "no" -> the plain watch nudge. The
 # gh call only happens once we have decided this is a real ship PR (opted-in, fresh
 # sentinel, URL present), so a non-ship Bash command never pays for it.
+#
+# The gh call is bounded by `timeout` when available: this runs on the PostToolUse
+# hot path, so a stalled network or a hung `gh` must NOT wedge turn completion. On a
+# timeout (or a host with no `timeout` binary that then stalls) the pipeline yields
+# empty output, COMMENTS falls back to '[]', and RATE_LIMITED stays "no" -> the plain
+# watch nudge. Guarded by command -v so a host without `timeout` degrades to a plain
+# call rather than erroring, consistent with the fail-open posture.
 RATE_LIMITED=no
 if command -v gh >/dev/null 2>&1 && command -v mc_cr_rate_limited >/dev/null 2>&1; then
   OWNER_REPO=$(printf '%s' "$PR_URL" | sed -nE 's#https://github\.com/([^/]+)/([^/]+)/pull/[0-9]+.*#\1/\2#p')
   if [ -n "$OWNER_REPO" ] && [ -n "$PR_NUM" ]; then
-    COMMENTS=$(gh api --paginate "repos/$OWNER_REPO/issues/$PR_NUM/comments" \
+    GH_TIMEOUT=""; command -v timeout >/dev/null 2>&1 && GH_TIMEOUT="timeout 8"
+    COMMENTS=$($GH_TIMEOUT gh api --paginate "repos/$OWNER_REPO/issues/$PR_NUM/comments" \
                  -q '[.[] | {author: (.user.login // ""), body: (.body // "")}]' 2>/dev/null \
                | jq -sc 'add // []' 2>/dev/null)
     { [ -n "$COMMENTS" ] && [ "$COMMENTS" != "null" ]; } || COMMENTS='[]'
