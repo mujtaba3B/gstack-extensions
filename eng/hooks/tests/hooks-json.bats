@@ -59,7 +59,7 @@ tuples() {
 
 @test "every event-shaped gate script in hooks/scripts is wired (no orphans)" {
   # Utilities and sourced libs are exempt: they are not event hooks.
-  exempt="merge-clearance.sh merge-clearance-lib.sh apply-merge-clearance-protection.sh ship-pr-gate-lib.sh ship-gate-repo-lib.sh ship-gate-arm-lib.sh"
+  exempt="merge-clearance.sh merge-clearance-lib.sh apply-merge-clearance-protection.sh ship-pr-gate-lib.sh ship-gate-repo-lib.sh ship-gate-arm-lib.sh ship-completion-lib.sh"
   wired=$(jq -r '.hooks[][].hooks[].command | split("/") | last' "$HOOKS_JSON")
   for f in "$HOOKS_DIR"/scripts/*.sh; do
     base=$(basename "$f")

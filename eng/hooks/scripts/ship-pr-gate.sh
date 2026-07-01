@@ -151,7 +151,141 @@ case "$mttl" in ''|*[!0-9]*) : ;; *) [ "$mttl" -gt 0 ] && DEFAULT_TTL="$mttl" ;;
 SENTINEL=$(cat "$GITDIR/ship-pr-clearance" 2>/dev/null || echo "")
 NOW=$(date +%s)
 VERDICT=$(sg_sentinel_valid "$SENTINEL" "$NOW" "$DEFAULT_TTL")
-[ "$VERDICT" = "valid" ] && exit 0
+
+# A fresh sentinel proves /ship was INVOKED. Second layer: does the create carry
+# the FOOTPRINTS of a genuine run, or is it a partial/hand-driven ship missing
+# them (mutwo PR #189)? Only runs on the valid-sentinel path, so it can only catch
+# a partial ship that freshness would otherwise wave through - never make an
+# already-blocked create worse. Entirely opt-in (a marker with no `completion`
+# block pays nothing) and fails OPEN on any git/jq hiccup: a bug here can never
+# wedge a real ship.
+if [ "$VERDICT" = "valid" ]; then
+  MARKERJSON=$(cat "$MARKER" 2>/dev/null || echo "{}")
+  # Non-opted-in repos (no completion block) keep the exact prior behavior at zero
+  # extra cost.
+  if [ "$(printf '%s' "$MARKERJSON" | jq -r 'if .completion then "yes" else "no" end' 2>/dev/null)" != "yes" ]; then
+    exit 0
+  fi
+
+  CLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-completion-lib.sh"
+  if [ ! -f "$CLIB" ]; then
+    sg_log "FAIL-OPEN completion lib missing ($CLIB); gated create allowed in $TOP"
+    exit 0
+  fi
+  # shellcheck source=/dev/null
+  . "$CLIB"
+
+  CMODE=$(sc_mode "$MARKERJSON")
+  CREQ=$(sc_required "$MARKERJSON")
+
+  # Resolve a base ref that exists locally (prefer the command's --base, else the
+  # repo default) for the diff / ancestry checks. If none resolves, the
+  # base-dependent dims fall to "na" (fail open).
+  BREF=""
+  if [ -n "$CMDBASE" ]; then
+    for _cand in "origin/$CMDBASE" "$CMDBASE"; do
+      git -C "$TOP" rev-parse -q --verify "${_cand}^{commit}" >/dev/null 2>&1 && { BREF="$_cand"; break; }
+    done
+  fi
+  if [ -z "$BREF" ]; then
+    _def=$(git -C "$TOP" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+    for _cand in "origin/${_def:-main}" "${_def:-main}" "origin/main" "main"; do
+      git -C "$TOP" rev-parse -q --verify "${_cand}^{commit}" >/dev/null 2>&1 && { BREF="$_cand"; break; }
+    done
+  fi
+
+  HEADSHA=$(git -C "$TOP" rev-parse HEAD 2>/dev/null || echo "")
+
+  # review: the /eng:cr (or /review) stamp names a commit that is an ANCESTOR of
+  # the branch tip - a review of a commit on THIS branch happened. Ancestor, not
+  # equality, so a post-review version-bump commit that moves HEAD does not
+  # false-block. This is exactly why /eng:cr counts as a valid review here (it is
+  # the mandated mutwo reviewer and writes review-skill-head).
+  _review=missing
+  _rstamp=$(cat "$GITDIR/review-skill-head" 2>/dev/null || echo "")
+  if [ -n "$_rstamp" ] && [ -n "$HEADSHA" ] \
+     && git -C "$TOP" merge-base --is-ancestor "$_rstamp" "$HEADSHA" 2>/dev/null; then
+    _review=ok
+  fi
+
+  # What this branch changed vs the base (three-dot: merge-base..HEAD).
+  _changed=""
+  [ -n "$BREF" ] && [ -n "$HEADSHA" ] && _changed=$(git -C "$TOP" diff --name-only "$BREF...$HEADSHA" 2>/dev/null || echo "")
+
+  # docs-only fast lane: when every changed path is docs (*.md / docs/ / spec/),
+  # the changelog + version dims do not apply (na), mirroring merge-clearance's
+  # bookkeeping fast lane so a trivial docs PR pays no ceremony.
+  _docs_only=no
+  if [ -n "$_changed" ] && ! printf '%s\n' "$_changed" | grep -qvE '(\.md$|^docs/|^spec/)'; then
+    _docs_only=yes
+  fi
+
+  # changelog: the branch touched a CHANGELOG.md (top-level or nested).
+  _changelog=missing
+  if [ -z "$BREF" ]; then
+    _changelog=na
+  elif printf '%s\n' "$_changed" | grep -qE '(^|/)CHANGELOG\.md$'; then
+    _changelog=ok
+  elif [ "$_docs_only" = yes ]; then
+    _changelog=na
+  fi
+
+  # version: package.json .version differs from base. No package.json, or a
+  # docs-only change, -> na.
+  _version=na
+  if [ -n "$BREF" ] && [ "$_docs_only" != yes ] && git -C "$TOP" cat-file -e "$HEADSHA:package.json" 2>/dev/null; then
+    _hv=$(git -C "$TOP" show "$HEADSHA:package.json" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)
+    _bv=$(git -C "$TOP" show "$BREF:package.json" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)
+    if [ -z "$_hv" ]; then _version=na
+    elif [ "$_hv" != "$_bv" ]; then _version=ok
+    else _version=missing
+    fi
+  fi
+
+  # base_merged: the base tip is reachable from HEAD (base reconciled into branch).
+  _base=missing
+  if [ -z "$BREF" ]; then _base=na
+  elif [ -n "$HEADSHA" ] && git -C "$TOP" merge-base --is-ancestor "$BREF" "$HEADSHA" 2>/dev/null; then _base=ok
+  fi
+
+  STATES=$(jq -nc --arg r "$_review" --arg c "$_changelog" --arg v "$_version" --arg b "$_base" \
+    '{review:$r, changelog:$c, version:$v, base_merged:$b}' 2>/dev/null || echo '{}')
+
+  # Recorded skips: <gitdir>/ship-skip-<dim> carrying a human reason makes an
+  # omission honest and auditable (the "no X happened" override, not a shortcut).
+  SKIPS='{}'
+  for _d in review changelog version base_merged; do
+    _sf="$GITDIR/ship-skip-$_d"
+    if [ -s "$_sf" ]; then
+      _reason=$(tr -d '\n' < "$_sf" 2>/dev/null | cut -c1-200)
+      SKIPS=$(printf '%s' "$SKIPS" | jq -c --arg d "$_d" --arg r "$_reason" '.[$d]=$r' 2>/dev/null || printf '%s' "$SKIPS")
+    fi
+  done
+
+  # Record the evidence snapshot: always to the audit log, and into ship-run.json
+  # when the ledger exists. This is what makes a partial ship non-SILENT even in
+  # record mode.
+  sg_log "SHIP-EVIDENCE $TOP mode=$CMODE required=[$CREQ] states=$STATES skips=$SKIPS docs_only=$_docs_only base=${BREF:-none}"
+  if [ -f "$GITDIR/ship-run.json" ]; then
+    _tmp=$(mktemp "$GITDIR/.ship-run.XXXXXX" 2>/dev/null) && \
+      jq -c --argjson st "$STATES" --argjson sk "$SKIPS" --arg mode "$CMODE" \
+         --arg head "$HEADSHA" --argjson epoch "$NOW" \
+         '.create_evidence={recorded_at_epoch:$epoch, head:$head, mode:$mode, states:$st, skips:$sk}' \
+         "$GITDIR/ship-run.json" > "$_tmp" 2>/dev/null && mv -f "$_tmp" "$GITDIR/ship-run.json" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+  fi
+
+  # Decide. In record mode (default / non-require) sc_blockers is empty -> allow.
+  BLOCK=$(sc_blockers "$CMODE" "$CREQ" "$STATES" "$SKIPS")
+  if [ -z "$BLOCK" ]; then
+    exit 0
+  fi
+
+  _blocklist=$(printf '%s' "$BLOCK" | tr '\n' ' ' | sed 's/ *$//')
+  REASON="Ship gate (completion): this create is missing footprint evidence that /ship's checklist ran for: ${_blocklist}. A fresh /ship sentinel is present (so /ship was invoked), but these steps left no trace - the signature of a partial or hand-driven ship (mutwo PR #189). Fix each, or record an honest skip: for a dim you legitimately skipped, write a reason with \`echo 'reason=<why> policy=<ref>' > $GITDIR/ship-skip-<dim>\` and retry. Per dim: review -> run /eng:cr on this branch (it stamps review-skill-head); changelog -> add a CHANGELOG.md entry; version -> bump package.json .version; base_merged -> merge ${BREF:-the base} into this branch. Intentional and repo-opted-in via .ship-gate.json completion.require."
+  sg_log "BLOCK ship-completion in $TOP missing=[$_blocklist]"
+  jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+  exit 0
+fi
 
 REASON="Ship gate: open PRs in this repo via /ship, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. /ship reconciles the base branch, runs tests/review, bumps VERSION, and opens the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, temporarily remove this repo's .ship-gate.json marker, create the PR, then restore it."
 sg_log "BLOCK gh pr create in $TOP [sentinel: $VERDICT]"
