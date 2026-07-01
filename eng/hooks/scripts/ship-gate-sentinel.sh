@@ -106,6 +106,29 @@ mint_for_dir() {
   mint "$gitdir" "$top" "$2"
 }
 
+# write_ledger <workdir> <trigger> : record that a genuine /ship run began, for
+# audit. Written only on the true START events (Skill invocation / typed /ship),
+# NOT on the per-Bash re-mint - so run_started_epoch and head_at_start reflect the
+# start of the run rather than being reset by every armed Bash command (which
+# would zero out the "when did /ship begin" signal right before `gh pr create`).
+# Best-effort and atomic (temp-in-same-dir then mv). The completion gate does NOT
+# depend on this file (it recomputes evidence from the repo), so a failure here
+# never affects enforcement - the ledger is an audit convenience only.
+write_ledger() {
+  local resolved top gitdir branch head now tmp
+  resolved=$(sg_dev_repo_gitdir "$1") || return 0
+  top=${resolved%%$'\t'*}
+  gitdir=${resolved#*$'\t'}
+  now=$(date +%s)
+  branch=$(git -C "$top" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  head=$(git -C "$top" rev-parse HEAD 2>/dev/null || echo "")
+  tmp=$(mktemp "$gitdir/.ship-run.XXXXXX" 2>/dev/null) || return 0
+  jq -nc --argjson epoch "$now" --arg branch "$branch" --arg head "$head" \
+     --arg session "$SESSION" --arg trigger "$2" \
+     '{run_started_epoch:$epoch, branch:$branch, head_at_start:$head, session:$session, trigger:$trigger}' \
+     > "$tmp" 2>/dev/null && mv -f "$tmp" "$gitdir/ship-run.json" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+}
+
 case "$EVENT" in
   PreToolUse)
     TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
@@ -125,6 +148,7 @@ case "$EVENT" in
         # target), AND direct-mint for the cwd in case the cwd IS the target repo.
         arm_session
         mint_for_dir "$CWD" "skill"
+        write_ledger "$CWD" "skill"
         ;;
       Bash)
         # TARGET-MINT: only while a real /ship has armed this session. Resolve the
@@ -145,6 +169,7 @@ case "$EVENT" in
     printf '%s' "$PROMPT" | grep -Eiq '^[[:space:]]*/ship([[:space:]]|$)' || exit 0
     arm_session
     mint_for_dir "$CWD" "prompt"
+    write_ledger "$CWD" "prompt"
     ;;
   *)
     exit 0 ;;
