@@ -12,7 +12,8 @@ the per-repo `.qa-plan-gate.json` marker lets the build/PR gate REASON append
 "(This repo also follows your workspace build procedure: <ref>.)" when set;
 unset by default, so the plugin never hardcodes an external pointer. New
 `qpg_build_procedure_ref` helper in `qa-plan-gate-lib.sh` (+ 2 bats). qa plugin
-3.1.0 -> 3.2.0, eng plugin 2.5.0 -> 2.5.1 (comment only).
+3.1.0 -> 3.2.0, eng plugin 2.6.0 -> 2.6.1 (comment only; 2.6.0 landed the
+ship-watch-nudge on main first).
 
 ## v1.6.0
 
