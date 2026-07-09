@@ -372,3 +372,78 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   bash -c "printf '%s' '$(sentinel_bash_payload "gh pr create --base main" "$REPO" "$SID")' | bash '$SENTINEL_HOOK'"
   [ -f "$GITDIR/ship-pr-clearance" ]
 }
+
+# ========================================================================
+# Out-of-~/dev binding: a `gh pr create --repo <gated-repo>` run from a cwd
+# OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder) must still be
+# gated for the repo it names. Helpers live in ship-gate-repo-lib.sh.
+# ========================================================================
+
+@test "repo-lib: sg_norm_repo normalizes URL / scp / host-prefixed / case / trailing-slash to owner/name" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_norm_repo "https://github.com/Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "git@github.com:Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "ssh://git@github.com/Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "Owner/Name")" = "owner/name" ]
+  # regressions the review found: trailing slash after .git, uppercase scheme, host-prefixed form
+  [ "$(sg_norm_repo "https://github.com/o/n.git/")" = "o/n" ]
+  [ "$(sg_norm_repo "HTTPS://github.com/O/N.git")" = "o/n" ]
+  [ "$(sg_norm_repo "github.com/owner/name")" = "owner/name" ]
+  # a repo name containing a dot must survive (only a trailing .git is stripped)
+  [ "$(sg_norm_repo "owner/repo.js")" = "owner/repo.js" ]
+}
+
+@test "repo-lib: sg_repo_from_flags reads --repo / --repo= / -R / -RX / GH_REPO=, last wins, else 1" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_repo_from_flags "gh pr create --repo owner/name --base main")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create --repo=owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create -R owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create -Rowner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "GH_REPO=owner/name gh pr create --base main")" = "owner/name" ]
+  # last --repo wins, mirroring gh (an earlier decoy must not shadow the real target)
+  [ "$(sg_repo_from_flags "gh pr create --repo owner/decoy --repo owner/real")" = "owner/real" ]
+  run sg_repo_from_flags "gh pr create --base main"
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+}
+
+@test "gate block: --repo names a gated ~/dev repo, create run from OUTSIDE ~/dev, no sentinel -> block" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate block: compact -Rowner/repo (no space) from OUTSIDE ~/dev binds and blocks" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create -Rsgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate block: host-prefixed --repo github.com/owner/repo from OUTSIDE ~/dev binds and blocks" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo github.com/sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate allow: --repo names a gated ~/dev repo from OUTSIDE ~/dev WITH a fresh sentinel" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  write_sentinel "$NOW"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: --repo names a repo with NO gated ~/dev checkout -> out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo nobody/nowhere-sgtest --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: bare create (no --repo) from OUTSIDE ~/dev stays out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}

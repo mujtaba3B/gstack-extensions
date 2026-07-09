@@ -74,7 +74,25 @@ RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-gate-repo-lib.sh"
 # per-worktree git dir, and returns non-zero when the target is not a ~/dev repo
 # (out of scope -> allow, untouched). The same two functions feed the mint.
 WORKDIR=$(sg_workdir_from_cmd "$CMD" "$PWD")
-RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0
+BOUND_VIA_FLAGS=""
+if RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR"); then
+  : # in-scope via the command's cd / the session cwd (the common path)
+else
+  # The cwd is OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder), so it
+  # says nothing about the target repo. If the command names an explicit target via
+  # --repo/-R/GH_REPO, bind to THAT repo's local ~/dev checkout so the create is still
+  # gated by that checkout's sentinel; a bare `gh pr create --repo <gated-repo>` from
+  # an out-of-tree session was the silent-bypass hole. When nothing binds, this stays
+  # out of scope and is ALLOWED as before, but the allow is now LOGGED (it used to be a
+  # silent exit) so a session leaking PRs from outside ~/dev is diagnosable, not invisible.
+  TARGET=$(sg_repo_from_flags "$CMD" || true)
+  if [ -n "$TARGET" ] && RESOLVED=$(sg_dev_checkout_for_repo "$TARGET"); then
+    BOUND_VIA_FLAGS=1
+  else
+    sg_log "OUT-OF-SCOPE gh pr create allowed: workdir='$WORKDIR' target='${TARGET:-none}' (no gated ~/dev checkout bound)"
+    exit 0
+  fi
+fi
 TOP=${RESOLVED%%$'\t'*}
 GITDIR=${RESOLVED#*$'\t'}
 
@@ -89,11 +107,18 @@ MARKER="$TOP/.ship-gate.json"
 # inside opted-in repo A, whose fresh /ship sentinel would wrongly clear it). We
 # cannot validate a clearance for a repo we are not in, so block and point at /ship.
 # Only runs when such a flag is present, so the common case pays no extra cost.
-TARGETREPO=$(printf '%s' "$CMD" | grep -oE '(--repo[ =]|[[:space:]]-R[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
-[ -z "$TARGETREPO" ] && TARGETREPO=$(printf '%s' "$CMD" | grep -oE 'GH_REPO=[^[:space:]]+' | head -1 | sed 's/GH_REPO=//')
-if [ -n "$TARGETREPO" ] && command -v gh >/dev/null 2>&1; then
-  WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
-  TNORM=$(printf '%s' "$TARGETREPO" | sed -E 's#^https?://[^/]+/##; s#\.git$##')
+# Skipped when BOUND_VIA_FLAGS: there we already resolved TOP/GITDIR to the target
+# repo's own checkout from --repo/GH_REPO, so WORKDIR is deliberately not the target
+# and the sentinel we will read already belongs to the right repo. Running the guard
+# would read WDREPO from the out-of-scope WORKDIR (empty) and wrongly block.
+# Uses the same sg_repo_from_flags / sg_norm_repo helpers as the out-of-scope binding
+# path above, so both parse --repo/-R/GH_REPO identically (last-wins, compact -RX, host
+# forms) and both normalize the same way. TNORM is thus already the normalized
+# owner/name; WDREPO is normalized too so the comparison is case- and form-insensitive.
+TARGETREPO=$(sg_repo_from_flags "$CMD" || true)
+if [ -z "$BOUND_VIA_FLAGS" ] && [ -n "$TARGETREPO" ] && command -v gh >/dev/null 2>&1; then
+  WDREPO=$(sg_norm_repo "$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)")
+  TNORM="$TARGETREPO"
   if [ -z "$WDREPO" ]; then
     # This checkout's repo identity could not be resolved (no remote, gh auth or
     # network failure). An explicit cross-repo target with an unverifiable local

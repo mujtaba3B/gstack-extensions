@@ -56,3 +56,72 @@ sg_dev_repo_gitdir() {
   gitdir=$(git -C "$wd" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   printf '%s\t%s' "$top" "$gitdir"
 }
+
+# sg_norm_repo <string>
+#   Normalize a repo reference (a git remote URL, an scp-form remote, a bare
+#   owner/name, or gh's [HOST/]OWNER/REPO form) to lowercase "owner/name". Lowercase
+#   FIRST so an uppercase scheme (HTTPS://) and a `--repo Owner/Name` both fold; then
+#   drop an scp `git@host:` prefix, a `scheme://` prefix, a trailing `.git` (with any
+#   trailing slashes), and finally keep the LAST two path segments, which drops any
+#   host or userinfo (`github.com/o/n`, `user@host/o/n`, `host:port/o/n` all -> o/n)
+#   while leaving a bare `owner/name` (or a repo name containing dots) untouched.
+sg_norm_repo() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E '
+        s#^git@([^:/]+):#\1/#;
+        s#^[a-z][a-z0-9+.-]*://##;
+        s#^git@##;
+        s#\.git/*$##;
+        s#/+$##;
+        s#.*/([^/]+/[^/]+)$#\1#;
+      '
+}
+
+# sg_repo_from_flags <cmd>
+#   Extract the explicit target repo a `gh pr create` command names: `--repo X`,
+#   `--repo=X`, `-R X`, `-R=X`, the compact `-RX`, or a `GH_REPO=X` assignment. Echoes
+#   the normalized owner/name and returns 0, or returns 1 when no explicit target is
+#   named. Takes the LAST match, mirroring gh (a later `--repo`/`-R` wins over an
+#   earlier one); this and the compact `-RX` form are why it exists rather than the old
+#   inline grep, which took the first match and missed `-RX`. It still greps text, so a
+#   flag string smuggled inside a quoted `--body`/`--title` value can fool it; that is
+#   deliberate-evasion territory, outside this accident-guard's threat model.
+sg_repo_from_flags() {
+  local cmd="$1" t
+  t=$(printf '%s' "$cmd" \
+    | grep -oE '(--repo[= ]|(^|[[:space:]])-R[= ]?)[^[:space:]]+' \
+    | sed -E 's#^[[:space:]]*(--repo[= ]|-R[= ]?)##' \
+    | tail -1)
+  [ -z "$t" ] && t=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:]])GH_REPO=[^[:space:]]+' | tail -1 | sed -E 's#.*GH_REPO=##')
+  [ -z "$t" ] && return 1
+  sg_norm_repo "$t"
+}
+
+# sg_dev_checkout_for_repo <owner/name>
+#   Find a gated ~/dev checkout whose origin remote is <owner/name> and echo
+#   "<toplevel><TAB><absolute-git-dir>" (return 0), else return 1. Only repos carrying
+#   a .ship-gate.json marker are considered, so the scan is bounded to the handful of
+#   opted-in repos (unmarked repos would be allowed anyway). This binds an explicit
+#   `--repo`/`GH_REPO` target to its LOCAL checkout so a `gh pr create` run from a cwd
+#   OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder) is still gated for
+#   the repo it names, instead of falling through as "out of scope".
+sg_dev_checkout_for_repo() {
+  local target top url gitdir marker
+  command -v git >/dev/null 2>&1 || return 1
+  target=$(sg_norm_repo "$1")
+  [ -n "$target" ] || return 1
+  while IFS= read -r marker; do
+    [ -n "$marker" ] || continue
+    top=$(git -C "$(dirname -- "$marker")" rev-parse --show-toplevel 2>/dev/null) || continue
+    case "$top" in "$HOME/dev"|"$HOME/dev/"*) ;; *) continue ;; esac
+    url=$(git -C "$top" remote get-url origin 2>/dev/null) || continue
+    [ "$(sg_norm_repo "$url")" = "$target" ] || continue
+    gitdir=$(git -C "$top" rev-parse --absolute-git-dir 2>/dev/null) || continue
+    printf '%s\t%s' "$top" "$gitdir"
+    return 0
+  done <<EOF
+$(find "$HOME/dev" -maxdepth 5 -name .ship-gate.json -not -path '*/node_modules/*' 2>/dev/null)
+EOF
+  return 1
+}
