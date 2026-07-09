@@ -149,11 +149,20 @@ setup() {
   [[ "$output" == *"PR #9"* ]]
 }
 
+@test "swn_build_context: watch forbids presenting a land-choice menu" {
+  # The standing default is "wait for CodeRabbit, then land" - the nudge must tell
+  # the agent to just do it, not improvise a land-now / watch / pause question.
+  run swn_build_context watch 'https://github.com/o/r/pull/9' 9
+  [[ "$output" == *"Do NOT ask the user how to land"* ]]
+  [[ "$output" == *"standing default"* ]]
+}
+
 @test "swn_build_context: land names /land-and-deploy and forbids watching" {
   run swn_build_context land 'https://github.com/o/r/pull/9' 9
   [[ "$output" == *"/land-and-deploy"* ]]
   [[ "$output" == *"do NOT start /eng:pr-watcher"* ]]
   [[ "$output" == *"rate limited by coderabbit.ai"* ]]
+  [[ "$output" == *"Do NOT ask the user how to land"* ]]
 }
 
 @test "swn_build_context: review_then_land names /eng:cr then /land-and-deploy" {
@@ -161,6 +170,7 @@ setup() {
   [[ "$output" == *"/eng:cr"* ]]
   [[ "$output" == *"/land-and-deploy"* ]]
   [[ "$output" == *"Do NOT open-endedly watch"* ]]
+  [[ "$output" == *"Do NOT ask the user how to land"* ]]
 }
 
 @test "swn_build_context: unknown mode falls back to the watch nudge" {
