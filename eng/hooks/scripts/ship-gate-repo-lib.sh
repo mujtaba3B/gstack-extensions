@@ -58,25 +58,42 @@ sg_dev_repo_gitdir() {
 }
 
 # sg_norm_repo <string>
-#   Normalize a repo reference (a git remote URL or a bare owner/name) to lowercase
-#   "owner/name": strip a scheme+host (https://host/, ssh://git@host/, git@host:), a
-#   trailing ".git", and trailing slashes. Lowercased so a `--repo Owner/Name` and a
-#   canonical remote URL compare equal (GitHub treats owner/name case-insensitively).
+#   Normalize a repo reference (a git remote URL, an scp-form remote, a bare
+#   owner/name, or gh's [HOST/]OWNER/REPO form) to lowercase "owner/name". Lowercase
+#   FIRST so an uppercase scheme (HTTPS://) and a `--repo Owner/Name` both fold; then
+#   drop an scp `git@host:` prefix, a `scheme://` prefix, a trailing `.git` (with any
+#   trailing slashes), and finally keep the LAST two path segments, which drops any
+#   host or userinfo (`github.com/o/n`, `user@host/o/n`, `host:port/o/n` all -> o/n)
+#   while leaving a bare `owner/name` (or a repo name containing dots) untouched.
 sg_norm_repo() {
   printf '%s' "$1" \
-    | sed -E 's#^https?://[^/]+/##; s#^ssh://git@[^/]+/##; s#^git@[^:]+:##; s#\.git$##; s#/+$##' \
-    | tr '[:upper:]' '[:lower:]'
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E '
+        s#^git@([^:/]+):#\1/#;
+        s#^[a-z][a-z0-9+.-]*://##;
+        s#^git@##;
+        s#\.git/*$##;
+        s#/+$##;
+        s#.*/([^/]+/[^/]+)$#\1#;
+      '
 }
 
 # sg_repo_from_flags <cmd>
-#   Extract an explicit target repo named on a `gh pr create` command line: `--repo X`,
-#   `--repo=X`, `-R X`, `-R=X`, or a leading `GH_REPO=X` env assignment. Echoes the
-#   normalized owner/name and returns 0, or returns 1 when no explicit target is named.
-#   Same flag set the cross-repo guard already recognizes, factored out for reuse.
+#   Extract the explicit target repo a `gh pr create` command names: `--repo X`,
+#   `--repo=X`, `-R X`, `-R=X`, the compact `-RX`, or a `GH_REPO=X` assignment. Echoes
+#   the normalized owner/name and returns 0, or returns 1 when no explicit target is
+#   named. Takes the LAST match, mirroring gh (a later `--repo`/`-R` wins over an
+#   earlier one); this and the compact `-RX` form are why it exists rather than the old
+#   inline grep, which took the first match and missed `-RX`. It still greps text, so a
+#   flag string smuggled inside a quoted `--body`/`--title` value can fool it; that is
+#   deliberate-evasion territory, outside this accident-guard's threat model.
 sg_repo_from_flags() {
   local cmd="$1" t
-  t=$(printf '%s' "$cmd" | grep -oE '(--repo[ =]|(^|[[:space:]])-R[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
-  [ -z "$t" ] && t=$(printf '%s' "$cmd" | grep -oE 'GH_REPO=[^[:space:]]+' | head -1 | sed 's/GH_REPO=//')
+  t=$(printf '%s' "$cmd" \
+    | grep -oE '(--repo[= ]|(^|[[:space:]])-R[= ]?)[^[:space:]]+' \
+    | sed -E 's#^[[:space:]]*(--repo[= ]|-R[= ]?)##' \
+    | tail -1)
+  [ -z "$t" ] && t=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:]])GH_REPO=[^[:space:]]+' | tail -1 | sed -E 's#.*GH_REPO=##')
   [ -z "$t" ] && return 1
   sg_norm_repo "$t"
 }
@@ -100,7 +117,7 @@ sg_dev_checkout_for_repo() {
     case "$top" in "$HOME/dev"|"$HOME/dev/"*) ;; *) continue ;; esac
     url=$(git -C "$top" remote get-url origin 2>/dev/null) || continue
     [ "$(sg_norm_repo "$url")" = "$target" ] || continue
-    gitdir=$(git -C "$top" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    gitdir=$(git -C "$top" rev-parse --absolute-git-dir 2>/dev/null) || continue
     printf '%s\t%s' "$top" "$gitdir"
     return 0
   done <<EOF

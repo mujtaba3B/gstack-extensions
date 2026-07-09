@@ -111,11 +111,14 @@ MARKER="$TOP/.ship-gate.json"
 # repo's own checkout from --repo/GH_REPO, so WORKDIR is deliberately not the target
 # and the sentinel we will read already belongs to the right repo. Running the guard
 # would read WDREPO from the out-of-scope WORKDIR (empty) and wrongly block.
-TARGETREPO=$(printf '%s' "$CMD" | grep -oE '(--repo[ =]|[[:space:]]-R[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
-[ -z "$TARGETREPO" ] && TARGETREPO=$(printf '%s' "$CMD" | grep -oE 'GH_REPO=[^[:space:]]+' | head -1 | sed 's/GH_REPO=//')
+# Uses the same sg_repo_from_flags / sg_norm_repo helpers as the out-of-scope binding
+# path above, so both parse --repo/-R/GH_REPO identically (last-wins, compact -RX, host
+# forms) and both normalize the same way. TNORM is thus already the normalized
+# owner/name; WDREPO is normalized too so the comparison is case- and form-insensitive.
+TARGETREPO=$(sg_repo_from_flags "$CMD" || true)
 if [ -z "$BOUND_VIA_FLAGS" ] && [ -n "$TARGETREPO" ] && command -v gh >/dev/null 2>&1; then
-  WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
-  TNORM=$(printf '%s' "$TARGETREPO" | sed -E 's#^https?://[^/]+/##; s#\.git$##')
+  WDREPO=$(sg_norm_repo "$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)")
+  TNORM="$TARGETREPO"
   if [ -z "$WDREPO" ]; then
     # This checkout's repo identity could not be resolved (no remote, gh auth or
     # network failure). An explicit cross-repo target with an unverifiable local
