@@ -372,3 +372,52 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   bash -c "printf '%s' '$(sentinel_bash_payload "gh pr create --base main" "$REPO" "$SID")' | bash '$SENTINEL_HOOK'"
   [ -f "$GITDIR/ship-pr-clearance" ]
 }
+
+# ========================================================================
+# Out-of-~/dev binding: a `gh pr create --repo <gated-repo>` run from a cwd
+# OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder) must still be
+# gated for the repo it names. Helpers live in ship-gate-repo-lib.sh.
+# ========================================================================
+
+@test "repo-lib: sg_norm_repo normalizes URL forms and case to owner/name" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_norm_repo "https://github.com/Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "git@github.com:Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "Owner/Name")" = "owner/name" ]
+}
+
+@test "repo-lib: sg_repo_from_flags reads --repo / --repo= / -R / GH_REPO=, else returns 1" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_repo_from_flags "gh pr create --repo owner/name --base main")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create --repo=owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create -R owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "GH_REPO=owner/name gh pr create --base main")" = "owner/name" ]
+  run sg_repo_from_flags "gh pr create --base main"
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+}
+
+@test "gate block: --repo names a gated ~/dev repo, create run from OUTSIDE ~/dev, no sentinel -> block" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate allow: --repo names a gated ~/dev repo from OUTSIDE ~/dev WITH a fresh sentinel" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  write_sentinel "$NOW"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: --repo names a repo with NO gated ~/dev checkout -> out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo nobody/nowhere-sgtest --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: bare create (no --repo) from OUTSIDE ~/dev stays out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
