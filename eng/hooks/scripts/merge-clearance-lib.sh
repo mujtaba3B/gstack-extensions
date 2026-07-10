@@ -189,10 +189,11 @@ EOF
   echo "no"; return 1
 }
 
-# mc_cr_verdict <threads_json> <reviews_json>
+# mc_cr_verdict <threads_json> <reviews_json> [cr_status_state]
 #   Turn GitHub GraphQL output for one PR into a CodeRabbit-resolution verdict.
-#   Echoes one of: clear | unresolved | changes_requested. Returns 0 only for
-#   "clear". This is the structural signal (Codex flagged that parsing the review
+#   Echoes one of: clear | unresolved | unresolved-waived | changes_requested.
+#   Returns 0 for "clear" and "unresolved-waived" (both non-blocking), non-zero
+#   otherwise. This is the structural signal (Codex flagged that parsing the review
 #   body string "Actionable comments posted: 0" is brittle; that string is fallback
 #   evidence only, never the gate).
 #
@@ -200,14 +201,29 @@ EOF
 #     [ { "isResolved": bool, "comments": { "nodes": [ { "author": {"login": "..."} } ] } }, ... ]
 #   reviews_json:  the PR's reviews nodes (chronological), shape
 #     [ { "author": {"login": "..."}, "state": "...", "submittedAt": "...", "commit": {"oid": "..."} }, ... ]
+#   cr_status_state (optional): CodeRabbit's resolved per-commit commit-status on
+#     HEAD (state_of "CodeRabbit"): success | failure | pending | missing. Optional
+#     so existing two-arg callers/tests keep their meaning ("" is never "success").
 #
 #   Precedence: an unresolved CodeRabbit thread is the most common actionable
 #   blocker, so it wins; then a CHANGES_REQUESTED CodeRabbit review; else clear.
 #   "coderabbitai" is matched as a case-insensitive substring of the author login
 #   because the bot appears as both "coderabbitai" (GraphQL Bot) and
 #   "coderabbitai[bot]" (REST) depending on the surface.
+#
+#   Green-HEAD waiver (the mutwo-skills#118 wedge): CodeRabbit posts a per-commit
+#   commit status, flipping it to "success" when it is happy with HEAD, and leaves
+#   minor / outdated nitpick threads unresolved. Counting those stale threads as a
+#   HARD block is STRICTER than CodeRabbit is with itself: a PR CR marks green then
+#   cannot clear, forcing a manual gate bypass. So when cr_status is "success" (CR
+#   re-evaluated HEAD and passed it green), leftover unresolved CR threads are
+#   waived -> "unresolved-waived" (rc 0). A genuine objection is NOT waived: an
+#   explicit CHANGES_REQUESTED review still blocks even under a green status, and a
+#   non-green status (pending / failure / missing) keeps the hard block. The waiver
+#   applies ONLY to CodeRabbit-authored threads; a human's unresolved thread was
+#   never counted here (the jq filter is coderabbitai-only) and is unaffected.
 mc_cr_verdict() {
-  local threads="$1" reviews="$2"
+  local threads="$1" reviews="$2" cr_status="${3:-}"
 
   # Fail CLOSED on degraded GitHub data. A GraphQL timeout / partial response (gh
   # exits 0 with .data present but null nodes) would otherwise reach here as
@@ -228,7 +244,6 @@ mc_cr_verdict() {
       | select( any(.comments.nodes[]?; (.author.login // "") | ascii_downcase | contains("coderabbitai")) )
     ] | length
   ' 2>/dev/null) || { echo "unknown"; return 1; }
-  if [ "${unresolved:-0}" -gt 0 ] 2>/dev/null; then echo "unresolved"; return 1; fi
 
   # Latest CodeRabbit review state (last by array order, which the query returns
   # chronologically). COMMENTED / APPROVED do not block; CHANGES_REQUESTED does.
@@ -237,6 +252,17 @@ mc_cr_verdict() {
     [ .[] | select( (.author.login // "") | ascii_downcase | contains("coderabbitai") ) ]
     | (last // {}) | (.state // "")
   ' 2>/dev/null) || { echo "unknown"; return 1; }
+
+  if [ "${unresolved:-0}" -gt 0 ] 2>/dev/null; then
+    if [ "$cr_status" = "success" ]; then
+      # CR's green HEAD status supersedes leftover unresolved nitpick threads,
+      # UNLESS its latest review explicitly requests changes (that still blocks).
+      if [ "$latest_state" = "CHANGES_REQUESTED" ]; then echo "changes_requested"; return 1; fi
+      echo "unresolved-waived"; return 0
+    fi
+    echo "unresolved"; return 1
+  fi
+
   if [ "$latest_state" = "CHANGES_REQUESTED" ]; then echo "changes_requested"; return 1; fi
 
   echo "clear"; return 0

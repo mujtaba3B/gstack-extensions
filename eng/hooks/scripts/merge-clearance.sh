@@ -377,13 +377,15 @@ while IFS= read -r chk; do
 done < <(printf '%s' "$REQUIRED_CHECKS" | jq -r '.[]')
 
 # 2) CodeRabbit resolution + in-progress
-CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS"); CR_RC=$?
 CR_STATUS_STATE=$(state_of "CodeRabbit")          # CR's own commit status context
-# Pass the CR commit-status state so mc_cr_reviewed_head can treat a "success"
-# status ON HEAD as proof CR evaluated HEAD, not only a formal review object. CR
-# stays silent (no new review object) on a clean incremental commit but still
-# flips its per-commit status green; without this, a fully-clean PR wedged with
-# reviewed-head=no. The status API is per-commit, so success here means HEAD.
+# Pass the CR commit-status state into both CR helpers. For the verdict, a
+# "success" status on HEAD (CR re-evaluated HEAD and is green) waives leftover
+# unresolved nitpick threads that would otherwise hard-block a PR CR itself marks
+# green (the mutwo-skills#118 wedge); CHANGES_REQUESTED and non-green statuses
+# still block. For reviewed-head, a "success" status is proof CR evaluated HEAD
+# even when it posted no new review object (clean incremental commit). The status
+# API is per-commit, so success here means HEAD, not an inherited ancestor.
+CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS" "$CR_STATUS_STATE"); CR_RC=$?
 CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD" "$CR_STATUS_STATE")
 CR_INPROGRESS=0
 [ "$CR_STATUS_STATE" = "pending" ] && CR_INPROGRESS=1

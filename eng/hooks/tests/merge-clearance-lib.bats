@@ -163,6 +163,71 @@ stamp() {
   [ "$output" = "unresolved" ]
 }
 
+# --- CR's green HEAD status waives leftover unresolved nitpick threads ---------
+# The real wedge (mutwo-skills#118): CodeRabbit left a minor/outdated nitpick
+# thread unresolved on an earlier commit, then posted a `success` commit status on
+# HEAD. mc_cr_verdict counted the stale thread as a HARD block, so a PR CR itself
+# considers green could not clear (it had to be merged by bypassing the gate).
+# When CR's per-commit status on HEAD is `success` (and its latest review is not
+# CHANGES_REQUESTED), CR's own green verdict supersedes leftover unresolved
+# threads. A real objection is still a non-green status or CHANGES_REQUESTED, both
+# of which keep blocking. The 3rd arg is the resolved CR commit-status state.
+
+@test "cr verdict: success status on HEAD waives an unresolved CR nitpick thread (the #118 case)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved-waived" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success status does NOT waive a CHANGES_REQUESTED review (still blocks)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  reviews='[{"author":{"login":"coderabbitai"},"state":"CHANGES_REQUESTED","commit":{"oid":"x"}}]'
+  run mc_cr_verdict "$threads" "$reviews" "success"
+  [ "$output" = "changes_requested" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: pending status does NOT waive unresolved threads (review in flight blocks)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "pending"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: failure status does NOT waive unresolved threads (blocks)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "failure"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: missing status does NOT waive unresolved threads (blocks)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "missing"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: two-arg call (no status) still hard-blocks unresolved (backward compat)" {
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success status with NO unresolved threads is plain clear (unchanged)" {
+  run mc_cr_verdict "[]" "[]" "success"
+  [ "$output" = "clear" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success status still fails CLOSED on degraded thread data" {
+  run mc_cr_verdict "null" "[]" "success"
+  [ "$output" = "unknown" ]
+  [ "$status" -eq 1 ]
+}
+
 # ---- mc_cr_reviewed_head ----------------------------------------------------
 
 @test "cr reviewed head: yes when a coderabbit review is on HEAD" {
