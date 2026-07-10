@@ -309,14 +309,18 @@ stamp() {
   [ "$output" = "yes" ]
 }
 
-@test "cr reviewed head: guard - a success status does not override an unresolved-thread block" {
-  # reviewed-head is satisfied by the success status, but the SEPARATE verdict
-  # (mc_cr_verdict) still blocks on an unresolved CodeRabbit thread. This pins that
-  # the green-but-quiet relaxation only touches reviewed-head, never the verdict.
+@test "cr reviewed head: guard - success status satisfies reviewed-head yet a CURRENT thread still blocks the verdict" {
+  # Mirror the REAL caller: merge-clearance.sh feeds the same CR_STATUS_STATE into
+  # BOTH mc_cr_reviewed_head and mc_cr_verdict. A success status makes reviewed-head
+  # "yes", but the verdict is independent and a CURRENT (non-outdated) unresolved CR
+  # thread is CR asking for changes on the code as it stands: it still blocks even
+  # under the same green status. Only an OUTDATED thread would be waived (see the
+  # verdict tests above). This pins that the green-status relaxation never clears a
+  # live CR objection.
   run mc_cr_reviewed_head "[]" "$HEAD" "success"
   [ "$output" = "yes" ]
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
-  run mc_cr_verdict "$threads" "[]"
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
   [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
 }
