@@ -163,6 +163,96 @@ stamp() {
   [ "$output" = "unresolved" ]
 }
 
+# --- green HEAD waives only STALE (outdated) CR threads, never current ones ----
+# The real wedge (mutwo-skills#118): CodeRabbit left a Minor, isOutdated=true
+# nitpick thread unresolved on an earlier commit, then posted a `success` commit
+# status on every commit incl. HEAD. mc_cr_verdict counted the stale thread as a
+# HARD block, so a PR CR itself marks green could not clear (it had to be merged
+# by bypassing the gate). CRITICAL SAFETY FACT: CR's `success` status means CR
+# FINISHED reviewing HEAD, not that it approved it - CR posts success alongside
+# actionable COMMENTED feedback. So the waiver applies ONLY to OUTDATED threads
+# (the anchored code changed and CR re-reviewed HEAD green without re-flagging).
+# A CURRENT (isOutdated!=true) unresolved CR thread is CR asking for changes on the
+# code as it stands and ALWAYS blocks. 3rd arg = resolved CR commit-status state.
+
+@test "cr verdict: success + an OUTDATED unresolved CR nitpick is waived (the #118 case)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved-waived" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success + a CURRENT (non-outdated) unresolved CR thread STILL BLOCKS" {
+  # CR asking for changes on the code as it stands - the green status must NOT waive it
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success + mixed outdated+current unresolved threads BLOCKS (a current one exists)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}},{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: an unresolved thread with NO isOutdated field defaults to current -> blocks under success" {
+  # fail-closed: unknown freshness must not be waived
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success + outdated thread + CHANGES_REQUESTED review still BLOCKS (not waived)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  reviews='[{"author":{"login":"coderabbitai"},"state":"CHANGES_REQUESTED","commit":{"oid":"x"}}]'
+  run mc_cr_verdict "$threads" "$reviews" "success"
+  [ "$status" -eq 1 ]
+  [ "$output" != "unresolved-waived" ]
+}
+
+@test "cr verdict: pending status does NOT waive even an outdated thread (review in flight blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "pending"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: failure status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "failure"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: missing status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "missing"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: two-arg call (no status) still hard-blocks an outdated unresolved thread (backward compat)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success status with NO unresolved threads is plain clear (unchanged)" {
+  run mc_cr_verdict "[]" "[]" "success"
+  [ "$output" = "clear" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success status still fails CLOSED on degraded thread data" {
+  run mc_cr_verdict "null" "[]" "success"
+  [ "$output" = "unknown" ]
+  [ "$status" -eq 1 ]
+}
+
 # ---- mc_cr_reviewed_head ----------------------------------------------------
 
 @test "cr reviewed head: yes when a coderabbit review is on HEAD" {
@@ -181,6 +271,58 @@ stamp() {
   reviews='[{"author":{"login":"mujtaba3B"},"state":"APPROVED","commit":{"oid":"abc123def456"}}]'
   run mc_cr_reviewed_head "$reviews" "$HEAD"
   [ "$output" = "no" ]
+}
+
+# --- green-but-quiet CodeRabbit: success commit status on HEAD proves review ---
+# The bug: on a clean incremental commit CodeRabbit flips its per-commit STATUS to
+# success and posts NO new review object. The review-object-only check reported
+# reviewed-head=no and wedged a fully clean PR. A success CR commit status on the
+# exact HEAD sha (per-commit statuses API) is proof CR evaluated HEAD.
+
+@test "cr reviewed head: yes when CR commit status is success on HEAD (no review object)" {
+  # review object is on an ANCESTOR only, but CR's status on HEAD is success
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr reviewed head: yes on success status even with an empty reviews array" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: pending CR status does NOT satisfy reviewed-head (review in flight)" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "pending"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: failure CR status does NOT satisfy reviewed-head" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "failure"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: missing CR status falls through to the review-object proof" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"abc123def456"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "missing"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: guard - success status satisfies reviewed-head yet a CURRENT thread still blocks the verdict" {
+  # Mirror the REAL caller: merge-clearance.sh feeds the same CR_STATUS_STATE into
+  # BOTH mc_cr_reviewed_head and mc_cr_verdict. A success status makes reviewed-head
+  # "yes", but the verdict is independent and a CURRENT (non-outdated) unresolved CR
+  # thread is CR asking for changes on the code as it stands: it still blocks even
+  # under the same green status. Only an OUTDATED thread would be waived (see the
+  # verdict tests above). This pins that the green-status relaxation never clears a
+  # live CR objection.
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
 }
 
 # ---- mc_qa_state (the b5 require-a-QA-plan dimension) -----------------------

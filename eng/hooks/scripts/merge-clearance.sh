@@ -180,7 +180,7 @@ GQL=$(gh api graphql -F owner="$OWNER" -F repo="$NAME" -F pr="$PR_ARG" -f query=
       pullRequest(number:$pr){
         number title headRefOid baseRefName state isDraft body
         files(first:100){ nodes { path } pageInfo { hasNextPage } }
-        reviewThreads(first:100){ nodes { isResolved comments(first:1){ nodes { author{ login } } } } }
+        reviewThreads(first:100){ nodes { isResolved isOutdated comments(first:1){ nodes { author{ login } } } } }
         reviews(first:100){ nodes { author{ login } state submittedAt commit{ oid } } }
       }
     }
@@ -377,9 +377,16 @@ while IFS= read -r chk; do
 done < <(printf '%s' "$REQUIRED_CHECKS" | jq -r '.[]')
 
 # 2) CodeRabbit resolution + in-progress
-CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS"); CR_RC=$?
 CR_STATUS_STATE=$(state_of "CodeRabbit")          # CR's own commit status context
-CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD")
+# Pass the CR commit-status state into both CR helpers. For the verdict, a
+# "success" status on HEAD (CR re-evaluated HEAD and is green) waives leftover
+# unresolved nitpick threads that would otherwise hard-block a PR CR itself marks
+# green (the mutwo-skills#118 wedge); CHANGES_REQUESTED and non-green statuses
+# still block. For reviewed-head, a "success" status is proof CR evaluated HEAD
+# even when it posted no new review object (clean incremental commit). The status
+# API is per-commit, so success here means HEAD, not an inherited ancestor.
+CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS" "$CR_STATUS_STATE"); CR_RC=$?
+CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD" "$CR_STATUS_STATE")
 CR_INPROGRESS=0
 [ "$CR_STATUS_STATE" = "pending" ] && CR_INPROGRESS=1
 
@@ -513,7 +520,9 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   cr_head_note="reviewed-head=${CR_REVIEWED_HEAD}"
   [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: HEAD diff is CR-unreviewable, e.g. *.pen)"
   [ "$CR_RL_BACKSTOPPED" = "yes" ] && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: CR rate-limited, current local /eng:cr review backstops)"
-  echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) verdict=${CR_VERDICT}, status=${CR_STATUS_STATE}, ${cr_head_note}"
+  cr_verdict_note="verdict=${CR_VERDICT}"
+  [ "$CR_VERDICT" = "unresolved-waived" ] && cr_verdict_note="verdict=${CR_VERDICT} (only OUTDATED CR threads left unresolved; CR status green on HEAD; current threads would still block)"
+  echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) ${cr_verdict_note}, status=${CR_STATUS_STATE}, ${cr_head_note}"
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
   [ "$IS_BOOKKEEPING" = "yes" ] && echo "- ⚡ **Bookkeeping fast-lane** - diff is docs/inventory only; /review + QA auto-waived (CI + CodeRabbit still enforced)"
@@ -591,6 +600,7 @@ STAMP_JSON=$(jq -nc \
 STATUS_DESC="Cleared by merge-clearance ($ISO)"
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR-head auto-satisfied: unreviewable-only HEAD"
 [ "$CR_RL_BACKSTOPPED" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR rate-limited, local /eng:cr review backstops"
+[ "$CR_VERDICT" = "unresolved-waived" ] && STATUS_DESC="Cleared ($ISO); CR green on HEAD, only OUTDATED CR threads waived"
 [ "$IS_BOOKKEEPING" = "yes" ] && STATUS_DESC="Cleared ($ISO) via bookkeeping fast-lane: docs/inventory only, review+QA waived"
 if gh api -X POST "repos/$REPO/statuses/$HEAD" \
      -f state=success \
