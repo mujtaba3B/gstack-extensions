@@ -183,6 +183,54 @@ stamp() {
   [ "$output" = "no" ]
 }
 
+# --- green-but-quiet CodeRabbit: success commit status on HEAD proves review ---
+# The bug: on a clean incremental commit CodeRabbit flips its per-commit STATUS to
+# success and posts NO new review object. The review-object-only check reported
+# reviewed-head=no and wedged a fully clean PR. A success CR commit status on the
+# exact HEAD sha (per-commit statuses API) is proof CR evaluated HEAD.
+
+@test "cr reviewed head: yes when CR commit status is success on HEAD (no review object)" {
+  # review object is on an ANCESTOR only, but CR's status on HEAD is success
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr reviewed head: yes on success status even with an empty reviews array" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: pending CR status does NOT satisfy reviewed-head (review in flight)" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "pending"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: failure CR status does NOT satisfy reviewed-head" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "failure"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: missing CR status falls through to the review-object proof" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"abc123def456"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "missing"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: guard - a success status does not override an unresolved-thread block" {
+  # reviewed-head is satisfied by the success status, but the SEPARATE verdict
+  # (mc_cr_verdict) still blocks on an unresolved CodeRabbit thread. This pins that
+  # the green-but-quiet relaxation only touches reviewed-head, never the verdict.
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
 # ---- mc_qa_state (the b5 require-a-QA-plan dimension) -----------------------
 
 @test "qa state: complete when all boxes checked" {

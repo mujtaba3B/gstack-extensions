@@ -242,14 +242,35 @@ mc_cr_verdict() {
   echo "clear"; return 0
 }
 
-# mc_cr_reviewed_head <reviews_json> <head_sha>
-#   Has CodeRabbit submitted at least one review whose commit oid is the current
-#   HEAD? Echoes "yes" / "no". Used to avoid clearing a PR while CodeRabbit is
-#   still mid-review of the latest push (Codex: confirm CR FINISHED the current
-#   HEAD before clearing). A "no" is advisory - the live "CodeRabbit" commit-status
-#   context is the stronger in-progress signal the CLI also checks.
+# mc_cr_reviewed_head <reviews_json> <head_sha> [cr_status_state]
+#   Has CodeRabbit EVALUATED the current HEAD? Echoes "yes" / "no". Two
+#   independent proofs, either of which suffices:
+#     1. A CodeRabbit REVIEW object whose commit oid == HEAD. This is the strong
+#        proof, but CR only re-posts a formal review object when it has FINDINGS.
+#        On a clean incremental commit (a trivial follow-up fix) CR flips its
+#        per-commit status to green and stays quiet, posting no new review object,
+#        so this proof alone misses the "green but quiet" case.
+#     2. CodeRabbit's own per-commit COMMIT STATUS is "success" on HEAD. The
+#        GitHub commit-status API is per-commit, so a success status attached to
+#        the exact HEAD sha proves CR ran on HEAD and passed it green with nothing
+#        to say. The caller passes the already-resolved CR commit-status state
+#        (state_of "CodeRabbit", keyed to repos/../commits/HEAD/statuses) as the
+#        optional third arg; it is optional so existing two-arg callers/tests keep
+#        their meaning ("" is never "success", so they fall through to proof 1).
+#   Only "success" counts for proof 2: "pending" (review in flight) and "failure"
+#   are NOT evidence HEAD was cleared, and the caller handles those separately.
+#   This relaxes ONLY the reviewed-head dimension; the separate "CR clear" verdict
+#   (mc_cr_verdict: unresolved threads / changes-requested) still blocks regardless,
+#   so a real CodeRabbit objection on a green-status HEAD is unaffected.
+#   A "no" is advisory - the live "CodeRabbit" commit-status context is the
+#   stronger in-progress signal the CLI also checks.
 mc_cr_reviewed_head() {
-  local reviews="$1" head="$2"
+  local reviews="$1" head="$2" cr_status="${3:-}"
+  # Proof 2: green-but-quiet. A success commit status on the exact HEAD sha means
+  # CR evaluated HEAD even when it posted no review object (clean incremental
+  # commit). state_of already keyed this to the per-commit statuses API for HEAD,
+  # so it cannot be inherited or stale from an ancestor commit.
+  if [ "$cr_status" = "success" ]; then echo "yes"; return 0; fi
   local hit
   hit=$(printf '%s' "$reviews" | jq -r --arg h "$head" '
     [ .[]
