@@ -211,17 +211,22 @@ EOF
 #   because the bot appears as both "coderabbitai" (GraphQL Bot) and
 #   "coderabbitai[bot]" (REST) depending on the surface.
 #
-#   Green-HEAD waiver (the mutwo-skills#118 wedge): CodeRabbit posts a per-commit
-#   commit status, flipping it to "success" when it is happy with HEAD, and leaves
-#   minor / outdated nitpick threads unresolved. Counting those stale threads as a
-#   HARD block is STRICTER than CodeRabbit is with itself: a PR CR marks green then
-#   cannot clear, forcing a manual gate bypass. So when cr_status is "success" (CR
-#   re-evaluated HEAD and passed it green), leftover unresolved CR threads are
-#   waived -> "unresolved-waived" (rc 0). A genuine objection is NOT waived: an
-#   explicit CHANGES_REQUESTED review still blocks even under a green status, and a
-#   non-green status (pending / failure / missing) keeps the hard block. The waiver
-#   applies ONLY to CodeRabbit-authored threads; a human's unresolved thread was
-#   never counted here (the jq filter is coderabbitai-only) and is unaffected.
+#   Stale-thread waiver (the mutwo-skills#118 wedge): CodeRabbit's "success" commit
+#   status means it FINISHED reviewing HEAD, NOT that it approved it (state_of folds
+#   any completed status into "success"; CR routinely posts success alongside
+#   actionable COMMENTED feedback). So "success" alone must NOT waive open CR
+#   objections. The ONLY unresolved threads waived here are ones GitHub marks
+#   isOutdated=true: the code the thread was anchored to has since changed, and CR
+#   re-reviewed HEAD (its status IS on HEAD, per-commit) without re-flagging it, so
+#   the stale thread is addressed-or-moot. A CURRENT (isOutdated != true) unresolved
+#   CR thread is CodeRabbit asking for changes on the code AS IT STANDS: it ALWAYS
+#   blocks, regardless of status. The waiver fires only when (a) CR is green on
+#   HEAD (cr_status == "success"), AND (b) every unresolved CR thread is outdated,
+#   AND (c) CR's latest review is not CHANGES_REQUESTED -> "unresolved-waived"
+#   (rc 0). Non-green status (pending / failure / missing) never waives. The waiver
+#   is CodeRabbit-only; a human's unresolved thread was never counted here.
+#   Threads missing the isOutdated field default to CURRENT (fail-closed: an
+#   unknown-freshness thread blocks rather than being waived).
 mc_cr_verdict() {
   local threads="$1" reviews="$2" cr_status="${3:-}"
 
@@ -237,10 +242,19 @@ mc_cr_verdict() {
   printf '%s' "$threads" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "unknown"; return 1; }
   printf '%s' "$reviews" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "unknown"; return 1; }
 
-  local unresolved
+  # Total unresolved CodeRabbit threads, and the subset that are CURRENT (not
+  # outdated). A thread with no isOutdated field counts as current (fail closed).
+  local unresolved unresolved_current
   unresolved=$(printf '%s' "$threads" | jq '
     [ .[]
       | select(.isResolved != true)
+      | select( any(.comments.nodes[]?; (.author.login // "") | ascii_downcase | contains("coderabbitai")) )
+    ] | length
+  ' 2>/dev/null) || { echo "unknown"; return 1; }
+  unresolved_current=$(printf '%s' "$threads" | jq '
+    [ .[]
+      | select(.isResolved != true)
+      | select(.isOutdated != true)
       | select( any(.comments.nodes[]?; (.author.login // "") | ascii_downcase | contains("coderabbitai")) )
     ] | length
   ' 2>/dev/null) || { echo "unknown"; return 1; }
@@ -254,10 +268,12 @@ mc_cr_verdict() {
   ' 2>/dev/null) || { echo "unknown"; return 1; }
 
   if [ "${unresolved:-0}" -gt 0 ] 2>/dev/null; then
-    if [ "$cr_status" = "success" ]; then
-      # CR's green HEAD status supersedes leftover unresolved nitpick threads,
-      # UNLESS its latest review explicitly requests changes (that still blocks).
-      if [ "$latest_state" = "CHANGES_REQUESTED" ]; then echo "changes_requested"; return 1; fi
+    # Waive ONLY when CR is green on HEAD, EVERY unresolved CR thread is outdated
+    # (no current one), and CR is not explicitly requesting changes. Anything else
+    # with an unresolved thread blocks - including a current thread under a green
+    # status (CR asking for changes on the code as it stands).
+    if [ "$cr_status" = "success" ] && [ "${unresolved_current:-0}" -eq 0 ] 2>/dev/null \
+       && [ "$latest_state" != "CHANGES_REQUESTED" ]; then
       echo "unresolved-waived"; return 0
     fi
     echo "unresolved"; return 1

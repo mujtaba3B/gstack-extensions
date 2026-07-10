@@ -163,54 +163,79 @@ stamp() {
   [ "$output" = "unresolved" ]
 }
 
-# --- CR's green HEAD status waives leftover unresolved nitpick threads ---------
-# The real wedge (mutwo-skills#118): CodeRabbit left a minor/outdated nitpick
-# thread unresolved on an earlier commit, then posted a `success` commit status on
-# HEAD. mc_cr_verdict counted the stale thread as a HARD block, so a PR CR itself
-# considers green could not clear (it had to be merged by bypassing the gate).
-# When CR's per-commit status on HEAD is `success` (and its latest review is not
-# CHANGES_REQUESTED), CR's own green verdict supersedes leftover unresolved
-# threads. A real objection is still a non-green status or CHANGES_REQUESTED, both
-# of which keep blocking. The 3rd arg is the resolved CR commit-status state.
+# --- green HEAD waives only STALE (outdated) CR threads, never current ones ----
+# The real wedge (mutwo-skills#118): CodeRabbit left a Minor, isOutdated=true
+# nitpick thread unresolved on an earlier commit, then posted a `success` commit
+# status on every commit incl. HEAD. mc_cr_verdict counted the stale thread as a
+# HARD block, so a PR CR itself marks green could not clear (it had to be merged
+# by bypassing the gate). CRITICAL SAFETY FACT: CR's `success` status means CR
+# FINISHED reviewing HEAD, not that it approved it - CR posts success alongside
+# actionable COMMENTED feedback. So the waiver applies ONLY to OUTDATED threads
+# (the anchored code changed and CR re-reviewed HEAD green without re-flagging).
+# A CURRENT (isOutdated!=true) unresolved CR thread is CR asking for changes on the
+# code as it stands and ALWAYS blocks. 3rd arg = resolved CR commit-status state.
 
-@test "cr verdict: success status on HEAD waives an unresolved CR nitpick thread (the #118 case)" {
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+@test "cr verdict: success + an OUTDATED unresolved CR nitpick is waived (the #118 case)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
   run mc_cr_verdict "$threads" "[]" "success"
   [ "$output" = "unresolved-waived" ]
   [ "$status" -eq 0 ]
 }
 
-@test "cr verdict: success status does NOT waive a CHANGES_REQUESTED review (still blocks)" {
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
-  reviews='[{"author":{"login":"coderabbitai"},"state":"CHANGES_REQUESTED","commit":{"oid":"x"}}]'
-  run mc_cr_verdict "$threads" "$reviews" "success"
-  [ "$output" = "changes_requested" ]
+@test "cr verdict: success + a CURRENT (non-outdated) unresolved CR thread STILL BLOCKS" {
+  # CR asking for changes on the code as it stands - the green status must NOT waive it
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
 }
 
-@test "cr verdict: pending status does NOT waive unresolved threads (review in flight blocks)" {
+@test "cr verdict: success + mixed outdated+current unresolved threads BLOCKS (a current one exists)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}},{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: an unresolved thread with NO isOutdated field defaults to current -> blocks under success" {
+  # fail-closed: unknown freshness must not be waived
   threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success + outdated thread + CHANGES_REQUESTED review still BLOCKS (not waived)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  reviews='[{"author":{"login":"coderabbitai"},"state":"CHANGES_REQUESTED","commit":{"oid":"x"}}]'
+  run mc_cr_verdict "$threads" "$reviews" "success"
+  [ "$status" -eq 1 ]
+  [ "$output" != "unresolved-waived" ]
+}
+
+@test "cr verdict: pending status does NOT waive even an outdated thread (review in flight blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
   run mc_cr_verdict "$threads" "[]" "pending"
   [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
 }
 
-@test "cr verdict: failure status does NOT waive unresolved threads (blocks)" {
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+@test "cr verdict: failure status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
   run mc_cr_verdict "$threads" "[]" "failure"
   [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
 }
 
-@test "cr verdict: missing status does NOT waive unresolved threads (blocks)" {
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+@test "cr verdict: missing status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
   run mc_cr_verdict "$threads" "[]" "missing"
   [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
 }
 
-@test "cr verdict: two-arg call (no status) still hard-blocks unresolved (backward compat)" {
-  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+@test "cr verdict: two-arg call (no status) still hard-blocks an outdated unresolved thread (backward compat)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
   run mc_cr_verdict "$threads" "[]"
   [ "$output" = "unresolved" ]
   [ "$status" -eq 1 ]
