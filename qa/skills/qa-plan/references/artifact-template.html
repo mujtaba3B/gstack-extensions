@@ -6,11 +6,13 @@
   Self-contained (inline CSS + data-URI images) so it satisfies the artifact CSP.
   Theme-aware (light + dark). The default content is a worked example so it renders standalone.
 
-  DRIVER AVATARS: the Tester column shows a logo-only avatar (name on hover via title=).
-    <span class="av" title="<id>"><span class="pic <id>"></span></span>
+  DRIVER AVATARS: the Tester column shows a logo-only avatar. It carries the driver's
+  identity for assistive tech via role="img" + aria-label (title= is the hover tooltip);
+  the decorative inner .pic is aria-hidden so screen readers do not announce it twice.
+    <span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic <id>" aria-hidden="true"></span></span>
   where <id> is a roster id with a built-in avatar: claude | mutwo | muthree | mufour | mujtaba.
   For any driver WITHOUT a built-in avatar, use the initials fallback (put 2-3 chars inside):
-    <span class="av" title="<id>"><span class="pic generic">M5</span></span>
+    <span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic generic" aria-hidden="true">M5</span></span>
   To add a new driver avatar: fetch github.com/<handle>.png, inline it as a data URI in a
   new `.pic.<id>` rule (mirror .pic.mutwo). claude has no GitHub account; its mark is a
   hand-drawn inline-SVG burst on Anthropic clay.
@@ -91,14 +93,14 @@
           <!-- FILL: DEV ROWS. Use ☐ (open) / ☑ (passed) in the check cell, never square-bracket checkboxes. Tester = avatar span. -->
           <tr>
             <td class="check">☐</td>
-            <td class="tester"><span class="av" title="claude"><span class="pic claude"></span></span></td>
+            <td class="tester"><span class="av" title="claude" role="img" aria-label="claude"><span class="pic claude" aria-hidden="true"></span></span></td>
             <td>Unit tests for <code>llm_health</code></td>
             <td class="expect">Assertions pass; sink fires once per failure; fail-safes never raise</td>
             <td class="notes">in-window counting, torn-line skip, cap trim</td>
           </tr>
           <tr>
             <td class="check">☐</td>
-            <td class="tester"><span class="av" title="mutwo"><span class="pic mutwo"></span></span></td>
+            <td class="tester"><span class="av" title="mutwo" role="img" aria-label="mutwo"><span class="pic mutwo" aria-hidden="true"></span></span></td>
             <td>E2E on mini: force an LLM failure, run <code>health --llm-max-failures 1</code></td>
             <td class="expect">Row in <code>llm-failures.jsonl</code>; exits <code>1</code> at threshold 1, <code>0</code> at high</td>
             <td class="notes">branch worktree</td>
@@ -118,7 +120,7 @@
         <tbody>
           <!-- FILL: PROD ROWS. No checkbox column. -->
           <tr>
-            <td class="tester"><span class="av" title="mujtaba"><span class="pic mujtaba"></span></span></td>
+            <td class="tester"><span class="av" title="mujtaba" role="img" aria-label="mujtaba"><span class="pic mujtaba" aria-hidden="true"></span></span></td>
             <td>After deploy: <code>email-hero health</code> (mini check #8)</td>
             <td class="expect">Exits <code>0</code> with freshness + LLM line; forced failure logs; check #8 green</td>
             <td class="notes">daemon installs sink at startup</td>
