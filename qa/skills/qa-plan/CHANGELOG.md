@@ -5,19 +5,30 @@
 Readability overhaul + a pointable companion artifact.
 
 - **Split-by-phase layout (replaces the single Template B table).** The `## QA`
-  section is now two small tables under `### 🔬 Dev QA -- blocks merge` and
-  `### 🚀 Prod QA -- after deploy`, so what gates the merge and what is checked
-  after deploy read apart at a glance. Dev QA columns: `✓ | Tester | Check | Expect
-  | Notes` (the `✓` cell is the merge-gating `[ ]` checkbox). Prod QA columns:
-  `Tester | Check | Expect | Notes` (no `✓` column, no bracket, never gates the
-  merge). Gate-safe: the merge-clearance section runs to the next `##`, so the two
-  `###` sub-tables stay inside and the checkbox counting is unchanged.
+  section is now two small tables under `### 🖥️ Development` and `### 🚀 Production`,
+  so what gates the merge and what is checked after deploy read apart at a glance.
+  Development columns: `✓ | Tester | Check | Expect | Notes` (the `✓` cell is the
+  merge-gating `[ ]` checkbox). Production columns: `Tester | Check | Expect | Notes`
+  (no `✓` column, no bracket, never gates the merge). Gate-safe: the merge-clearance
+  section runs to the next `##`, so the two `###` sub-tables stay inside and the
+  checkbox counting is unchanged.
+- **ELI5 per phase.** A plain-language `_italic_` line under each phase heading
+  explains, jargon-free, how that phase tests the change (Development = proven in a
+  safe / preview copy before merge; Production = confirmed live after deploy).
 - **Companion Claude artifact (new Step 4b).** /qa:plan now publishes a rendered,
   self-contained, theme-aware view of the plan as a Claude artifact and links it
   from a `📄 Plan view:` line at the top of the PR-body section. Idempotent: re-runs
   update the same artifact in place (via the stored URL). The PR body stays the
   single source of truth the gates read; the artifact is a snapshot companion.
   Template: `references/artifact-template.html`. Added `Artifact` to allowed-tools.
+- **Driver avatars in the artifact.** The companion's `Tester` column shows a
+  logo-only avatar (name on hover), not a text label: a hand-drawn inline-SVG Claude
+  burst on Anthropic clay for `claude`, and inlined GitHub photos for `mutwo` /
+  `muthree` / `mufour` / `mujtaba`, with an initials fallback for any other driver.
+  The artifact is the leaner view: it drops the QA-driver line, the `Standard (all
+  green)` line, and the QA-posture line (all kept in the PR body). Images are inlined
+  as data URIs (the artifact CSP blocks external image loads); the PR-body markdown
+  keeps plain-text tester names.
 
 ## v1.9.0
 

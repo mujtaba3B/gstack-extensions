@@ -80,8 +80,9 @@ If you cannot find or confirm criteria, stop and ask. A QA plan with invented cr
 
 The plan is **two small tables under two headings**, so what **blocks the merge** and what is **checked after deploy** read apart at a glance:
 
-- `### 🔬 Dev QA -- blocks merge` -- columns `✓ | Tester | Check | Expect | Notes`. One row per real acceptance criterion exercised in a dev / preview environment **before the PR merges**. The `✓` cell is a **`[ ]` checkbox** the driver flips to `[x]` when the check passes; these gate the merge. Name the flow in `Check`: `/qa` (bug sweep), `qa:browser` (a UI flow), `qa:headless` (a backend side effect), or an explicit command.
-- `### 🚀 Prod QA -- after deploy` -- columns `Tester | Check | Expect | Notes`. One row per criterion **verified live after deploy** (build-procedure step 11). It has **no `✓` column and NO `[ ]`** so PROD never trips the pre-merge gate; verified post-deploy via the `prod_verified` posture. Name the check in `Check`: `/canary`, a smoke URL, a log line, or a metric.
+- `### 🖥️ Development` -- the merge-gating phase (exercised in a dev / preview environment **before the PR merges**). Columns `✓ | Tester | Check | Expect | Notes`. One row per real acceptance criterion. The `✓` cell is a **`[ ]` checkbox** the driver flips to `[x]` when the check passes; these gate the merge. Name the flow in `Check`: `/qa` (bug sweep), `qa:browser` (a UI flow), `qa:headless` (a backend side effect), or an explicit command.
+- `### 🚀 Production` -- the post-deploy phase, **verified live after deploy** (build-procedure step 11). Columns `Tester | Check | Expect | Notes`. It has **no `✓` column and NO `[ ]`** so it never trips the pre-merge gate; verified post-deploy via the `prod_verified` posture. Name the check in `Check`: `/canary`, a smoke URL, a log line, or a metric.
+- Under each heading, add a one-line **ELI5**: a plain-language `_italic_` sentence explaining how that phase tests THIS change, no jargon. Development = how we prove it in a safe / preview copy before merge; Production = how we confirm the real live thing after deploy.
 
 Column discipline (this is what keeps it readable): `Check` and `Expect` are **one line each**; the long mechanics, setup, gotchas, and exact URLs go in `Notes` (may be blank) or, if they run long, in the companion artifact (Step 4b). Use **simple tester names** in the `Tester` column: `claude`, `mutwo`, `mujtaba` (also `muthree` / `mufour` when they own the repo/host). These are the roster `id`s (`qa-roster.json`), not labels or handles: write `claude`, not "the building agent (this session)"; write `mutwo`, not "MuTwo (`@mutwo-ai`)". The handle still appears once, in the `**QA driver:**` line, where the gate/@-mention needs it.
 
@@ -109,14 +110,18 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 **QA driver:** <Label> (`<@handle>`) -- <one-line why>
 **Standard (all green):** unit tests · lint/types · CI · `/eng:cr`
 
-### 🔬 Dev QA -- blocks merge
+### 🖥️ Development
+
+_<one plain-language line: how this phase tests the change, before merge>_
 
 | ✓ | Tester | Check | Expect | Notes |
 |---|---|---|---|---|
 | [ ] | <tester> | <one line: what to do> | <one line: what proves it passed> | <extra detail, or blank> |
 | [ ] | <tester> | ... | ... | ... |
 
-### 🚀 Prod QA -- after deploy
+### 🚀 Production
+
+_<one plain-language line: how this phase confirms the change live, after deploy>_
 
 | Tester | Check | Expect | Notes |
 |---|---|---|---|
@@ -155,7 +160,9 @@ Mechanics:
 
 Publish a rendered, always-linked view of the same plan as a Claude **artifact**, so there is one pretty page to point at. The artifact is a **companion**, not the source of truth: the gates only ever read the PR-body `## QA` section (Step 4). The artifact can carry the full mechanics that would bloat the table.
 
-1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and fill in the plan content: the title (`<repo> -- QA plan: <branch>`), the QA driver + `Standard (all green)` line, the Dev QA rows, the Prod QA rows, the production artifact(s), the Definition of Done, and the QA posture line. The template is self-contained (inline CSS, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NOT `[ ]` (the artifact is never gate-parsed, so glyphs are free here). Put the long mechanics that did not fit the `Notes` cells into the template's "Mechanics" block.
+1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and swap the content between the `FILL:` markers: the **title**, the **Development** ELI5 + rows, the **Production** ELI5 + rows, the **Production artifact**, and the **Definition of Done**. The artifact is the leaner companion view: it deliberately drops the QA-driver line, the `Standard (all green)` line, and the QA-posture line (those live in the PR body, the source of truth). The template is self-contained (inline CSS + data-URI images, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NEVER square-bracket checkboxes (the artifact is never gate-parsed, so glyphs are free here).
+
+   **Driver avatars.** The `Tester` cell shows a logo-only avatar (the driver's name on hover): `<span class="av" title="<id>"><span class="pic <id>"></span></span>`, where `<id>` is a roster id with a built-in avatar (`claude` `mutwo` `muthree` `mufour` `mujtaba`). For any driver without one, use the initials fallback: `<span class="av" title="<id>"><span class="pic generic">M5</span></span>`. The template's header comment documents how to add a new avatar (inline its `github.com/<handle>.png` as a data URI in a new `.pic.<id>` rule; `claude` is a hand-drawn inline-SVG burst on Anthropic clay).
 
 2. **Publish, idempotently.**
    - **Re-run (URL already in the PR body):** read the existing `📄 Plan view:` URL from the body and call `Artifact` with that same `file_path` AND `url: <existing-url>` so it updates in place and the link never changes.
