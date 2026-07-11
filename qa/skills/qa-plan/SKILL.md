@@ -1,11 +1,13 @@
 ---
 name: qa-plan
-version: 1.8.0
+version: 2.0.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
   Development QA section (must pass in a dev / preview environment before merge),
   a Production QA section (verified live after deploy), and a Definition of Done.
+  It also publishes a companion Claude artifact: a rendered, pointable, always-linked
+  view of the same plan (the PR body stays the machine source of truth the gates read).
   Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
   the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
   run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
@@ -27,6 +29,7 @@ allowed-tools:
   - Glob
   - Grep
   - AskUserQuestion
+  - Artifact
 triggers:
   - qa plan
   - write the qa plan
@@ -73,14 +76,16 @@ Read `../../shared/core.md` (the plugin root's shared file; resolves wherever th
 
 If you cannot find or confirm criteria, stop and ask. A QA plan with invented criteria is worse than none.
 
-## Step 3: Build the two-phase plan (Template B table)
+## Step 3: Build the two-phase plan (split by phase)
 
-The plan is a compact **table**: one row per real acceptance criterion, a `Phase` column tagging each row `DEV` or `PROD`. For each criterion, decide how it is verified in each phase:
+The plan is **two small tables under two headings**, so what **blocks the merge** and what is **checked after deploy** read apart at a glance:
 
-- **DEV rows** (exercised in a dev / preview environment, **before the PR merges**). These are the manual / non-standard flows that prove THIS change. Name the flow or command in the `Flow to run` cell: `/qa` (bug sweep), `qa:browser` (a UI flow), `qa:headless` (a backend side effect), or an explicit command. A DEV row carries a **`[ ]` checkbox in its Status cell** (the driver flips it to `[x]` when the check passes). These checkboxes gate the merge, exactly like the old Development QA checkboxes.
-- **PROD rows** (verified **live after deploy**, build-procedure step 11). Name the check in `Flow to run`: `/canary`, a smoke URL, a log line, or a metric. A PROD row carries a **`-` (a hyphen) in its Status cell, NEVER a `[ ]` checkbox**, so it does not trip the pre-merge merge-clearance QA gate (which blocks on unchecked boxes). PROD is verified post-deploy via the `prod_verified` posture.
+- `### 🔬 Dev QA -- blocks merge` -- columns `✓ | Tester | Check | Expect | Notes`. One row per real acceptance criterion exercised in a dev / preview environment **before the PR merges**. The `✓` cell is a **`[ ]` checkbox** the driver flips to `[x]` when the check passes; these gate the merge. Name the flow in `Check`: `/qa` (bug sweep), `qa:browser` (a UI flow), `qa:headless` (a backend side effect), or an explicit command.
+- `### 🚀 Prod QA -- after deploy` -- columns `Tester | Check | Expect | Notes`. One row per criterion **verified live after deploy** (build-procedure step 11). It has **no `✓` column and NO `[ ]`** so PROD never trips the pre-merge gate; verified post-deploy via the `prod_verified` posture. Name the check in `Check`: `/canary`, a smoke URL, a log line, or a metric.
 
-The routine automated checks (unit tests, lint/types, CI, `/eng:cr`) are NOT rows: they collapse into the one-line **`Standard (all green)`** header above the table. DEV rows are only the manual / bespoke flows that standard automation does not already cover.
+Column discipline (this is what keeps it readable): `Check` and `Expect` are **one line each**; the long mechanics, setup, gotchas, and exact URLs go in `Notes` (may be blank) or, if they run long, in the companion artifact (Step 4b). Use **simple tester names** in the `Tester` column: `claude`, `mutwo`, `mujtaba` (also `muthree` / `mufour` when they own the repo/host). These are the roster `id`s (`qa-roster.json`), not labels or handles: write `claude`, not "the building agent (this session)"; write `mutwo`, not "MuTwo (`@mutwo-ai`)". The handle still appears once, in the `**QA driver:**` line, where the gate/@-mention needs it.
+
+The routine automated checks (unit tests, lint/types, CI, `/eng:cr`) are NOT rows: they collapse into the one-line **`Standard (all green)`** header above the tables. Dev QA rows are only the manual / bespoke flows that standard automation does not already cover.
 
 **Name the production artifact (required for every PROD row).** In the `**Production artifacts:**` block below the table, name for each PROD row the EXACT thing production runs (an image digest/tag, a bundle id, a deploy/run id) plus the host and how it is exercised. The QA-status gate reads this: when you later state `QA_STATUS: prod_verified`, it rejects EVIDENCE that names only an upstream / base / proxy artifact instead of this one. Write it so a machine can match it (a literal image:tag or `sha256:` digest), not a vague description.
 
@@ -92,23 +97,32 @@ Right-size it: one row per real acceptance criterion. Do not pad the table with 
 
 ## Step 4: Write it into the PR body (idempotent)
 
-Insert or replace a `## QA` section in the PR body, matched by the HTML-comment marker so re-runs update in place rather than duplicating. The section shape (Template B):
+Insert or replace a `## QA` section in the PR body, matched by the HTML-comment marker so re-runs update in place rather than duplicating. The section shape:
 
 ```markdown
 ## QA
 
 <!-- qa-plan: managed by /qa:plan -->
 
+📄 **Plan view:** <artifact-url>  (rendered, always-linked; this section stays the source of truth)
+
 **QA driver:** <Label> (`<@handle>`) -- <one-line why>
 **Standard (all green):** unit tests · lint/types · CI · `/eng:cr`
 
-| Phase | Status | Tester | Flow to run | Expect |
-|---|---|---|---|---|
-| DEV | [ ] | <who> | <manual flow / command to run> | <observable result> |
-| DEV | [ ] | <who> | ... | ... |
-| PROD | - | <who> | <live check after deploy> | <result> |
+### 🔬 Dev QA -- blocks merge
 
-**Production artifacts:** for each PROD row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host + how it is exercised.
+| ✓ | Tester | Check | Expect | Notes |
+|---|---|---|---|---|
+| [ ] | <tester> | <one line: what to do> | <one line: what proves it passed> | <extra detail, or blank> |
+| [ ] | <tester> | ... | ... | ... |
+
+### 🚀 Prod QA -- after deploy
+
+| Tester | Check | Expect | Notes |
+|---|---|---|---|
+| <tester> | <one line: live check after deploy> | <one line: result> | <extra detail, or blank> |
+
+**Production artifacts:** for each Prod QA row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host + how it is exercised.
 
 **Definition of Done:**
 - [ ] Tests written and green
@@ -116,16 +130,19 @@ Insert or replace a `## QA` section in the PR body, matched by the HTML-comment 
 - [ ] Docs updated where user-facing
 - [ ] `where-things-run.json` bumped if the deploy changed hosts
 
-**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` once every DEV row Status and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the PROD rows are verified live.
+**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live.
 ```
 
 Format rules the gates depend on:
-- The **QA driver** line names who is on the hook to run the DEV QA, recommended by /qa:plan and approved by the human (roster: the qa plugin's `qa-roster.json`). For the agent (`claude`) write "the building agent (this session)" with no handle.
-- A **DEV row's Status cell is a `[ ]` checkbox** (merge-gating); the driver flips it to `[x]` when the check passes.
-- A **PROD row's Status cell is a `-` hyphen, NEVER a `[ ]`** (so it does not gate the merge; it is verified post-deploy).
+- The **`📄 Plan view:` line** carries the companion artifact URL (Step 4b). It is a plain link; leave it out on the first pass if the artifact is not published yet, then add it once you have the URL. The PR-body section, not the artifact, is the source of truth.
+- The **QA driver** line names who is on the hook to run the Dev QA, recommended by /qa:plan and approved by the human (roster: the qa plugin's `qa-roster.json`). It carries the driver's handle for the @-mention; for the agent (`claude`) write "the building agent (this session)" with no handle.
+- The **`Tester` column uses simple names**: `claude`, `mutwo`, `mujtaba` (or `muthree` / `mufour`), the roster `id`s. No handles or verbose phrasing in the cell: the handle lives once in the QA-driver line above.
+- **`Check` and `Expect` are one line each**; the **`Notes` column** holds any longer detail (setup, gotchas, exact URLs, data). Notes may be blank.
+- A **Dev QA row's `✓` cell is a `[ ]` checkbox** (merge-gating); the driver flips it to `[x]` when the check passes.
+- A **Prod QA table has no `✓` column and NO `[ ]`** (so it does not gate the merge; it is verified post-deploy).
 - **Definition of Done stays `- [ ]` bullets** (also merge-gating).
-- Never use an em-dash (U+2014). Use a hyphen `-` for the PROD Status and everywhere else.
-- **No literal `[ ]` (or `[x]`) anywhere except a Status cell or a Definition-of-Done bullet.** The merge-clearance QA gate reads ANY checkbox bracket in the `## QA` section, so a literal `[ ]` in a `Flow to run` / `Expect` cell, in the QA-driver line, or in prose describing behavior falsely reads as an unchecked box and blocks the merge. Describe such things in words ("an unchecked DEV status") instead of the glyph.
+- Never use an em-dash (U+2014). Use a hyphen `-` everywhere.
+- **No literal `[ ]` (or `[x]`) anywhere except a Dev QA `✓` cell or a Definition-of-Done bullet.** The merge-clearance QA gate reads ANY checkbox bracket in the `## QA` section (its section runs to the next `##`, so the `###` sub-tables stay inside), so a literal `[ ]` in a `Check` / `Expect` / `Notes` cell, in the Prod QA table, in the QA-driver line, or in prose falsely reads as an unchecked box and blocks the merge. Describe such things in words ("an unchecked Dev QA box") instead of the glyph.
 
 **Pick the QA driver** for the `**QA driver:**` line: read `../../qa-roster.json` (the plugin root, relative to this skill's base directory) and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
 
@@ -134,11 +151,26 @@ Mechanics:
 - No PR yet: print the block and tell the user `/ship` will fold it into the PR body, or they can paste it.
 - Keep posture lines free of `<` and `|` on any line that could be mistaken for a bare keyword: the strict CI qa-gate rejects the menu form. The real posture keyword is emitted at done-time, not here.
 
+## Step 4b: Publish the companion artifact (pointable plan view)
+
+Publish a rendered, always-linked view of the same plan as a Claude **artifact**, so there is one pretty page to point at. The artifact is a **companion**, not the source of truth: the gates only ever read the PR-body `## QA` section (Step 4). The artifact can carry the full mechanics that would bloat the table.
+
+1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and fill in the plan content: the title (`<repo> -- QA plan: <branch>`), the QA driver + `Standard (all green)` line, the Dev QA rows, the Prod QA rows, the production artifact(s), the Definition of Done, and the QA posture line. The template is self-contained (inline CSS, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NOT `[ ]` (the artifact is never gate-parsed, so glyphs are free here). Put the long mechanics that did not fit the `Notes` cells into the template's "Mechanics" block.
+
+2. **Publish, idempotently.**
+   - **Re-run (URL already in the PR body):** read the existing `📄 Plan view:` URL from the body and call `Artifact` with that same `file_path` AND `url: <existing-url>` so it updates in place and the link never changes.
+   - **First run (no URL yet):** call `Artifact` with the `file_path` (no `url`). Use a **stable** `title` and `favicon` (🧪) so redeploys stay one artifact. Take the returned URL and write it into the `📄 Plan view:` line of the PR body (re-edit the body via `gh pr edit`). If there is no PR yet, hold the URL and include the `📄 Plan view:` line when `/ship` folds the section in (or hand the user the URL to paste).
+
+3. **Tell the user it is private.** Artifacts are private by default. If a reviewer or teammate needs to open the plan view, the user shares it from the artifact page's share menu; the PR body link works for anyone who can see the PR regardless. Note that the artifact is a **snapshot at plan-authoring time** (boxes unchecked); the live checkbox state is in the PR body. Re-running `/qa:plan` refreshes the artifact.
+
+If the `Artifact` tool is unavailable (non-interactive / headless run), skip this step, keep the PR-body section (the source of truth) intact, and note that the companion artifact was not published.
+
 ## Step 5: State what the plan enables
 
 Tell the user, in one tight readout:
-- The **DEV rows'** `[ ]` Status checkboxes gate the merge: while any is unchecked, the merge-clearance QA dimension blocks (it reads both the table-cell DEV checkboxes and the Definition-of-Done bullets). Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
-- The **PROD rows** (Status `-`) are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
+- The **Dev QA `✓` checkboxes** gate the merge: while any is unchecked, the merge-clearance QA dimension blocks (it reads both the Dev QA table checkboxes and the Definition-of-Done bullets). Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
+- The **Prod QA rows** are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
+- The **`📄 Plan view:` link** is the pointable companion artifact (Step 4b); point them at it.
 - Point at the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
 ## Step 6: Present the plan for approval, then write the approval stamp
@@ -147,10 +179,10 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
 
 1. **Render the plan in chat, THEN ask.** Present the plan in two parts, in this order:
 
-   1. **Render the full plan as a turn-final chat message.** Print the entire `## QA` section (the `Standard (all green)` line, the whole Phase/Status/Tester/Flow/Expect **table**, the Production-artifacts block, Definition of Done, and the QA posture line) as a normal message the human reads full-width. This is the plan; do not compress it into a modal preview. Make it the last thing in the turn so it is on screen when the modal opens.
+   1. **Render the full plan as a turn-final chat message.** Print the entire `## QA` section (the `📄 Plan view:` link, the `Standard (all green)` line, both the **Dev QA and Prod QA tables**, the Production-artifacts block, Definition of Done, and the QA posture line) as a normal message the human reads full-width. This is the plan; do not compress it into a modal preview. Make it the last thing in the turn so it is on screen when the modal opens.
    2. **Then fire one slim `AskUserQuestion`** (header `"QA plan"`, single-select). Do NOT cram the plan into an option preview; a one-line option description is all each option needs. Options:
       - **Approve** (recommended): the plan and driver above are right, build against it.
-      - **Rework it**: capture the changes (to the plan and/or the QA driver), edit the table / driver line (back to Step 3 / Step 4), re-render the plan in chat, re-ask. Do NOT stamp.
+      - **Rework it**: capture the changes (to the plan and/or the QA driver), edit the tables / driver line (back to Step 3 / Step 4), refresh the companion artifact in place (Step 4b), re-render the plan in chat, re-ask. Do NOT stamp.
       - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
 
    The canonical plan lives in the PR body (Step 4); the chat render is the approval-time copy the human reads. If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.

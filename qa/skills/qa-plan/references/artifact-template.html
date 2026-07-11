@@ -1,0 +1,248 @@
+<title>QA plan</title>
+<!--
+  /qa:plan companion-artifact template.
+  This is a COMPANION view, never gate-parsed. Use display glyphs (☐ / ☑), never square-bracket checkboxes.
+  Clone this file to the scratchpad and swap the content between the FILL markers:
+    FILL: TITLE / SUBTITLE / DRIVER / STANDARD / DEV ROWS / PROD ROWS / MECHANICS / DOD / POSTURE / ARTIFACT
+  Keep the <title> and structure; only swap content. Self-contained (inline CSS,
+  no external assets) so it satisfies the artifact CSP. Theme-aware (light + dark).
+  The default content below is a worked example (email-hero) so the file renders standalone.
+-->
+<style>
+  :root {
+    --bg: #eef1f6;
+    --panel: #ffffff;
+    --ink: #1c2430;
+    --muted: #5c6773;
+    --hair: #e0e5ec;
+    --hair-strong: #cfd6df;
+    --accent: #2f6feb;          /* Dev / primary */
+    --accent-soft: #e4ecff;
+    --live: #1a7f4b;            /* Prod / live */
+    --live-soft: #d9f2e4;
+    --pass: #1a7f37;
+    --code-bg: #eef1f5;
+    --code-ink: #384250;
+    --shadow: 0 1px 2px rgba(20,28,40,.06), 0 8px 24px rgba(20,28,40,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e14;
+      --panel: #131822;
+      --ink: #e6edf5;
+      --muted: #93a0b2;
+      --hair: #232b38;
+      --hair-strong: #303a49;
+      --accent: #6ea8ff;
+      --accent-soft: #182741;
+      --live: #46c483;
+      --live-soft: #10281d;
+      --pass: #3fb950;
+      --code-bg: #1b222d;
+      --code-ink: #c3cdda;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f6; --panel:#fff; --ink:#1c2430; --muted:#5c6773; --hair:#e0e5ec; --hair-strong:#cfd6df;
+    --accent:#2f6feb; --accent-soft:#e4ecff; --live:#1a7f4b; --live-soft:#d9f2e4; --pass:#1a7f37;
+    --code-bg:#eef1f5; --code-ink:#384250; --shadow:0 1px 2px rgba(20,28,40,.06),0 8px 24px rgba(20,28,40,.05);
+  }
+  :root[data-theme="dark"] {
+    --bg:#0b0e14; --panel:#131822; --ink:#e6edf5; --muted:#93a0b2; --hair:#232b38; --hair-strong:#303a49;
+    --accent:#6ea8ff; --accent-soft:#182741; --live:#46c483; --live-soft:#10281d; --pass:#3fb950;
+    --code-bg:#1b222d; --code-ink:#c3cdda; --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code {
+    font-size: .86em; background: var(--code-bg); color: var(--code-ink);
+    padding: .12em .42em; border-radius: 6px;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 44px 22px 88px; }
+
+  header.plan { margin-bottom: 26px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 10px;
+  }
+  h1.title {
+    font-size: clamp(24px, 3.4vw, 34px); line-height: 1.12; margin: 0 0 16px;
+    letter-spacing: -.02em; text-wrap: balance; font-weight: 750;
+  }
+  .meta {
+    display: grid; gap: 8px; padding: 14px 18px; background: var(--panel);
+    border: 1px solid var(--hair); border-radius: 12px; box-shadow: var(--shadow);
+    font-size: 14px;
+  }
+  .meta .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .meta .k { color: var(--muted); font-weight: 600; min-width: 128px; }
+  .meta .v { color: var(--ink); }
+  .meta .sep { color: var(--muted); }
+
+  section.phase { margin-top: 34px; }
+  .phase-head { display: flex; align-items: center; gap: 11px; margin: 0 0 12px; }
+  .phase-head h2 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+  .badge {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 999px;
+  }
+  .badge.gate { background: var(--accent-soft); color: var(--accent); }
+  .badge.live { background: var(--live-soft); color: var(--live); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 14px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  thead th {
+    text-align: left; font-weight: 650; font-size: 12px; letter-spacing: .03em;
+    text-transform: uppercase; color: var(--muted);
+    padding: 12px 16px; border-bottom: 1px solid var(--hair-strong); white-space: nowrap;
+  }
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.check { width: 34px; text-align: center; font-size: 18px; color: var(--accent); line-height: 1; }
+  td.tester { white-space: nowrap; }
+  .tester-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+    font-weight: 600; padding: 2px 9px; border-radius: 7px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  section.phase.prod .tester-chip { background: var(--live-soft); color: var(--live); }
+  td.expect { color: var(--muted); }
+  td.notes { color: var(--muted); font-size: 13px; }
+
+  .aux { margin-top: 34px; display: grid; gap: 20px; }
+  .block {
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 18px 20px;
+  }
+  .block h3 {
+    font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 12px; font-weight: 700;
+  }
+  .block.artifact { border-left: 3px solid var(--live); }
+  .block p { margin: 0 0 9px; }
+  .block p:last-child { margin-bottom: 0; }
+  .block .mono { font-size: 13px; word-break: break-word; }
+
+  ul.dod { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; }
+  ul.dod li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+  ul.dod .box { color: var(--accent); font-size: 17px; line-height: 1.35; }
+
+  .mechanics p { font-size: 13.5px; margin: 0 0 10px; color: var(--ink); }
+  .mechanics p strong { color: var(--ink); }
+
+  .posture {
+    margin-top: 30px; padding: 16px 18px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--ink); font-size: 13.5px; line-height: 1.6;
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .posture b { font-weight: 700; }
+
+  footer.note { margin-top: 26px; color: var(--muted); font-size: 12.5px; text-align: center; }
+</style>
+
+<div class="wrap">
+  <header class="plan">
+    <p class="eyebrow">QA plan</p>
+    <!-- FILL: TITLE -->
+    <h1 class="title">email-hero: LLM-failure health check</h1>
+    <div class="meta">
+      <!-- FILL: DRIVER -->
+      <div class="row"><span class="k">QA driver</span><span class="v"><code>claude</code> (this session) &middot; can run unit tests, a mini worktree E2E, and the post-deploy health read now.</span></div>
+      <!-- FILL: STANDARD -->
+      <div class="row"><span class="k">Standard (all green)</span><span class="v">unit tests <span class="sep">&middot;</span> lint/types <span class="sep">&middot;</span> CI <span class="sep">&middot;</span> <code>/eng:cr</code></span></div>
+    </div>
+  </header>
+
+  <section class="phase dev">
+    <div class="phase-head">
+      <h2>🔬 Dev QA</h2><span class="badge gate">blocks merge</span>
+    </div>
+    <div class="card"><div class="tablewrap">
+      <table>
+        <thead><tr><th>✓</th><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
+        <tbody>
+          <!-- FILL: DEV ROWS. Use ☐ for open, ☑ for passed. Never square-bracket checkboxes. -->
+          <tr>
+            <td class="check">☐</td>
+            <td class="tester"><span class="tester-chip">claude</span></td>
+            <td>Unit tests for <code>llm_health</code></td>
+            <td class="expect">Assertions pass; sink fires once per failure; fail-safes never raise</td>
+            <td class="notes">in-window counting, torn-line skip, cap trim</td>
+          </tr>
+          <tr>
+            <td class="check">☐</td>
+            <td class="tester"><span class="tester-chip">claude</span></td>
+            <td>E2E on mini: force an LLM failure, run <code>health --llm-max-failures 1</code></td>
+            <td class="expect">Row in <code>llm-failures.jsonl</code>; exits <code>1</code> "LLM DEGRADED" at 1, exits <code>0</code> at high threshold</td>
+            <td class="notes">branch worktree</td>
+          </tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <section class="phase prod">
+    <div class="phase-head">
+      <h2>🚀 Prod QA</h2><span class="badge live">after deploy</span>
+    </div>
+    <div class="card"><div class="tablewrap">
+      <table>
+        <thead><tr><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
+        <tbody>
+          <!-- FILL: PROD ROWS. No checkbox column. -->
+          <tr>
+            <td class="tester"><span class="tester-chip">claude</span></td>
+            <td>After deploy: <code>email-hero health</code> (mini check #8)</td>
+            <td class="expect">Exits <code>0</code> with freshness + LLM line; forced failure logs; check #8 green</td>
+            <td class="notes">daemon installs sink at startup</td>
+          </tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <div class="aux">
+    <div class="block mechanics">
+      <h3>Mechanics</h3>
+      <!-- FILL: MECHANICS. The long detail that would bloat the table cells. Optional. -->
+      <p><strong>Unit tests:</strong> <code>record_failure</code> appends a timestamped line; <code>check_llm_failures</code> counts only in-window entries; a missing ledger reads healthy; a torn line is skipped; an unreadable ledger reads indeterminate (never alarms); the cap trims the file.</p>
+    </div>
+
+    <div class="block artifact">
+      <h3>Production artifact</h3>
+      <!-- FILL: ARTIFACT. The exact thing production runs (image digest/tag, bundle id, deploy id) + host + how exercised. -->
+      <p><span class="mono">email-hero</span> at <code>/Users/mutwo/dev/email-hero</code> on <code>mutwos-mac-mini</code>, running the squash-merge commit on <code>main</code>, exercised by <code>email-hero health</code> (check #8, every 600s) and the <code>com.emailhero.watch</code> daemon installing the failure sink at startup.</p>
+    </div>
+
+    <div class="block">
+      <h3>Definition of Done</h3>
+      <ul class="dod">
+        <!-- FILL: DOD. Use ☐ / ☑ glyphs. -->
+        <li><span class="box">☐</span><span>Tests written and green</span></li>
+        <li><span class="box">☐</span><span>Independent local review clear (<code>/eng:cr</code>) + CodeRabbit addressed</span></li>
+        <li><span class="box">☐</span><span>Docs updated where user-facing</span></li>
+        <li><span class="box">☐</span><span><code>where-things-run.json</code> bumped if the deploy changed hosts</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="posture">
+    <!-- FILL: POSTURE -->
+    <b>QA posture.</b> Pre-merge &rarr; state <code>QA_STATUS: dev_verified</code> once every Dev QA box and every Definition-of-Done box is checked. Post-deploy &rarr; state <code>QA_STATUS: prod_verified</code> once the Prod QA rows are verified live.
+  </div>
+
+  <footer class="note">
+    Companion view rendered by <code>/qa:plan</code>. The PR body's <code>## QA</code> section is the source of truth the merge gates read; this page is a snapshot at plan-authoring time.
+  </footer>
+</div>
