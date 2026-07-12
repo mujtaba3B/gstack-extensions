@@ -53,6 +53,66 @@ setup() {
   [ -z "$output" ]
 }
 
+# ---- broadened label matching (the arming fix) ------------------------------
+# The /qa:plan template writes the field as `**Production artifacts:**` (bold,
+# plural). The extractor once required a singular, unbolded `Production artifact:`
+# with at most one bullet char, so it never matched the template and the whole
+# artifact-evidence gate sat DORMANT. These lock the broadened match: bold,
+# plural, indented, bulleted -- while keeping the mid-sentence-prose guard.
+
+@test "extract prod artifact: bold PLURAL label (the /qa:plan template form) is extracted" {
+  body=$'### Production\n\n**Production artifacts:** `'"$PERAGENT"'` on mac-mini, exercised by a live agent run.'
+  run qa_extract_prod_artifact "$body"
+  [[ "$output" == *"$PERAGENT"* ]]
+}
+
+@test "extract prod artifact: bold SINGULAR label is extracted" {
+  run qa_extract_prod_artifact "**Production artifact:** $PERAGENT on the host"
+  [[ "$output" == *"$PERAGENT"* ]]
+}
+
+@test "extract prod artifact: indented bold-plural bullet is extracted" {
+  body=$'  - **Production artifacts:** `'"$PERAGENT"'` on mac-mini'
+  run qa_extract_prod_artifact "$body"
+  [[ "$output" == *"$PERAGENT"* ]]
+}
+
+@test "extract prod artifact: bold-plural PROSE mention mid-sentence is NOT extracted" {
+  body='The gate reads the **Production artifacts:** field via gh and blocks a mismatch.'
+  run qa_extract_prod_artifact "$body"
+  [ -z "$output" ]
+}
+
+# ---- end-to-end through the real template label (the incident, armed) -------
+# Extract from a PR body written the way /qa:plan really writes it, then feed the
+# extracted field to the gate. Before the fix the field came back empty and the
+# gate ALWAYS allowed; these prove it now blocks the exact base/proxy substitution
+# and still allows an honest exact-ref claim.
+
+@test "arming: bold-plural field extracted, then BLOCK base-only prod_verified evidence" {
+  body=$'### Production\n\n**Production artifacts:** `'"$PERAGENT"'` on mac-mini, exercised by a live agent run on the host.'
+  field=$(qa_extract_prod_artifact "$body")
+  run qa_artifact_gate "Deployed. QA_STATUS: prod_verified EVIDENCE: ran docker run $BASE" "$field"
+  [ "$output" = "block" ]
+}
+
+@test "arming: bold-plural field extracted, then ALLOW exact-ref prod_verified evidence" {
+  body=$'### Production\n\n**Production artifacts:** `'"$PERAGENT"'` on mac-mini, exercised by a live agent run on the host.'
+  field=$(qa_extract_prod_artifact "$body")
+  run qa_artifact_gate "Deployed. QA_STATUS: prod_verified EVIDENCE: live agent run on $PERAGENT" "$field"
+  [ "$output" = "allow" ]
+}
+
+@test "arming: no artifacts field in the body -> extraction empty -> gate fails OPEN" {
+  body=$'### Production\n\n| Tester | Check | Expect | Notes |\n| claude | smoke | 200 | none |'
+  # grep exits 1 on no match (that IS the "no field" case); mask it like the hook,
+  # which pipes through `head`. The point is the empty field, not the exit code.
+  field=$(qa_extract_prod_artifact "$body" || true)
+  [ -z "$field" ]
+  run qa_artifact_gate "Deployed. QA_STATUS: prod_verified EVIDENCE: ran docker run $BASE" "$field"
+  [ "$output" = "allow" ]
+}
+
 # ---- qa_evidence_artifact_verdict -------------------------------------------
 
 @test "verdict mismatch: evidence names ONLY the base image (the incident)" {
