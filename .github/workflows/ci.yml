@@ -38,5 +38,12 @@ jobs:
           git config --global user.name "gstack-extensions CI"
           git config --global init.defaultBranch main
 
+      # Some gate scripts append audit lines to ~/.claude/*.log. On a real machine
+      # ~/.claude always exists (Claude Code lives there); a bare runner has no such
+      # dir, so the append errors and leaks to stdout, tripping "empty output" asserts.
+      # Create it to mirror the real runtime environment the scripts assume.
+      - name: Ensure ~/.claude exists (gate scripts write audit logs there)
+        run: mkdir -p "$HOME/.claude"
+
       - name: Run all bats hook suites
         run: bats --print-output-on-failure eng/hooks/tests qa/hooks/tests
