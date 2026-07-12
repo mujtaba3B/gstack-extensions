@@ -1,0 +1,42 @@
+name: CI
+
+# Cloud full-suite backstop for the plugin hook tests. The maintainer's machine
+# cannot run the whole bats suite locally (it hard-locks), so locally the suites
+# are run one file at a time; CI is where the FULL set runs on every change.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bats:
+    name: bats hook suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      # jq, perl, and python3 ship on ubuntu-latest; assert they are present so a
+      # missing interpreter fails loudly here rather than as a confusing test error.
+      - name: Verify test dependencies
+        run: |
+          for dep in jq perl python3 git bats; do
+            command -v "$dep" >/dev/null || { echo "missing dependency: $dep" >&2; exit 1; }
+          done
+          bats --version
+
+      # Several suites `git init` a throwaway repo and commit into it; a runner has
+      # no default identity, so set one globally.
+      - name: Configure git identity for temp-repo suites
+        run: |
+          git config --global user.email "ci@gstack-extensions.invalid"
+          git config --global user.name "gstack-extensions CI"
+          git config --global init.defaultBranch main
+
+      - name: Run all bats hook suites
+        run: bats --print-output-on-failure eng/hooks/tests qa/hooks/tests
