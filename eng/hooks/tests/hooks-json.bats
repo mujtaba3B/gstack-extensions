@@ -27,6 +27,7 @@ tuples() {
 @test "wiring matches the golden tuple set exactly" {
   expected=$(printf '%s\n' \
     'PostToolUse|Bash|review-skill-stamp.sh' \
+    'PostToolUse|Bash|ship-watch-nudge.sh' \
     'PreToolUse|Bash|land-deploy-sentinel.sh' \
     'PreToolUse|Bash|pr-merge-gate.sh' \
     'PreToolUse|Bash|ship-gate-sentinel.sh' \
@@ -59,7 +60,7 @@ tuples() {
 
 @test "every event-shaped gate script in hooks/scripts is wired (no orphans)" {
   # Utilities and sourced libs are exempt: they are not event hooks.
-  exempt="merge-clearance.sh merge-clearance-lib.sh apply-merge-clearance-protection.sh ship-pr-gate-lib.sh ship-gate-repo-lib.sh ship-gate-arm-lib.sh ship-completion-lib.sh"
+  exempt="merge-clearance.sh merge-clearance-lib.sh apply-merge-clearance-protection.sh ship-pr-gate-lib.sh ship-gate-repo-lib.sh ship-gate-arm-lib.sh ship-completion-lib.sh ship-watch-nudge-lib.sh"
   wired=$(jq -r '.hooks[][].hooks[].command | split("/") | last' "$HOOKS_JSON")
   for f in "$HOOKS_DIR"/scripts/*.sh; do
     base=$(basename "$f")
