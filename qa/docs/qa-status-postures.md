@@ -56,8 +56,8 @@ and passed.
 
 - Requires `EVIDENCE:` of the live check.
 - Artifact-evidence rule: if the approved QA plan in the PR body named a
-  `Production artifact:` (an exact image:tag, sha256 digest, bundle id, or
-  deploy id), the EVIDENCE must cite THAT artifact. The gate rejects evidence
+  `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
+  or deploy id), the EVIDENCE must cite THAT artifact. The gate rejects evidence
   that names only a base / upstream / proxy artifact from the same image
   family. This is incident hardening: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
