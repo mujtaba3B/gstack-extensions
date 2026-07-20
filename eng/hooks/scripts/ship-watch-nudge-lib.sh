@@ -20,9 +20,12 @@
 # mc_cr_rate_limited (from merge-clearance-lib.sh) the merge gate uses for a MISSING
 # CR status, which is exactly the state at a fresh /ship create, so the two agree in
 # the case the nudge targets. (The merge gate additionally uses the stricter
-# mc_cr_rate_limited_latest for a stuck-"pending" status; that state does not exist
-# at create time, so the nudge does not need it and the two are not claimed to agree
-# universally, only for the missing-status create moment.)
+# mc_cr_rate_limited_latest for a stuck-"pending" status, and
+# mc_cr_failure_rate_limited for a "failure" status carrying a rate-limit
+# description; NEITHER state can exist at create time - a pending status means CR
+# already started, and the failure shape means CR completed an incremental pass over
+# a commit that does not exist yet - so the nudge needs neither, and the two are not
+# claimed to agree universally, only for the missing-status create moment.)
 #
 # Requires grep (present everywhere). No jq dependency here; the hook does the
 # JSON parsing and passes plain strings in.

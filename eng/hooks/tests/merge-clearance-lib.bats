@@ -905,3 +905,203 @@ rlmarker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai 
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
 }
+
+# ---- mc_cr_failure_rate_limited (the FAILURE-status shape) -------------------
+# CodeRabbit resolving its per-commit status to failure with a "Review rate limited"
+# description, typically with NO marker comment anywhere on the PR. Observed on
+# gstack-extensions#58: CR had fully reviewed the PR and acked every finding, then
+# its incremental pass over a trailing test-only commit burned the limit.
+
+MARKER="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+
+cr_comment() {
+  # cr_comment <body> -> a one-element CR-authored comments array
+  jq -nc --arg b "$1" '[{author:"coderabbitai[bot]", body:$b}]'
+}
+
+@test "cr failure rate-limited: failure + 'Review rate limited' description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: description match is case-insensitive, spaced or hyphenated" {
+  local d
+  # A plain substring test on "rate limit" missed the hyphenated spelling, and that
+  # miss is SILENT: the operator gets told a rate-limited failure is genuine.
+  for d in "RATE LIMIT EXCEEDED - please wait 12 minutes" \
+           "CodeRabbit is Rate Limited for this repository" \
+           "Rate-limited" \
+           "review rate-limit hit"; do
+    run mc_cr_failure_rate_limited "failure" "$d" "[]"
+    [ "$output" = "yes" ] || fail "expected yes for description: $d"
+  done
+}
+
+@test "cr failure rate-limited: a NEGATED mention of rate limiting does not qualify" {
+  local d
+  for d in "not rate limited" \
+           "not a rate limit issue" \
+           "no rate-limit was hit; parser crashed"; do
+    run mc_cr_failure_rate_limited "failure" "$d" "[]"
+    [ "$output" = "no" ] || fail "expected no for description: $d"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure rate-limited: failure + marker as CR's latest comment -> yes" {
+  run mc_cr_failure_rate_limited "failure" "" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: failure + latest marker under an unrelated description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: a STALE marker cannot make a later GENUINE failure read as rate-limited" {
+  # The regression that mattered: CR is rate-limited on an early commit (marker
+  # posted, never deleted), then recovers, reviews, and its status on a later HEAD
+  # resolves to a GENUINE failure. Keying on "marker anywhere on the PR" would
+  # auto-clear that failure with no operator flag AND label the audit trail
+  # "rate-limited". Requiring the marker to be CR's LATEST comment closes it, the
+  # same discipline mc_cr_rate_limited_latest applies to the stuck-pending shape.
+  local history
+  history=$(jq -nc --arg m "$MARKER" '[
+    {author:"coderabbitai[bot]", body:$m},
+    {author:"coderabbitai[bot]", body:"Actionable comments posted: 4"},
+    {author:"coderabbitai[bot]", body:"**Walkthrough**\n\nThe changes ..."}
+  ]')
+  run mc_cr_failure_rate_limited "failure" "Review failed" "$history"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: GENUINE failure (neither signal) -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review completed with errors" \
+    "$(cr_comment 'Actionable comments posted: 3')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: genuine failure with an empty description -> no" {
+  run mc_cr_failure_rate_limited "failure" "" "[]"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: non-failure states never qualify" {
+  # Even carrying both signals: success / pending / missing are handled by the
+  # other two shapes (or are not a gap at all), so this function must stay quiet.
+  local state
+  for state in success pending missing ""; do
+    run mc_cr_failure_rate_limited "$state" "Review rate limited" "$(cr_comment "$MARKER")"
+    [ "$output" = "no" ] || fail "expected no for state: ${state:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure rate-limited: a rate-limit marker from a NON-CR author does not count" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" \
+    "$(jq -nc --arg b "$MARKER" '[{author:"mujtaba3B", body:$b}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: unreadable comments fail closed -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" '{"not":"an array"}'
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_cr_failure_rate_limited "failure" "Review failed" "garbage"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: comments argument is optional (defaults to [])" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "Review failed"
+  [ "$output" = "no" ]
+}
+
+# ---- mc_cr_failure_disposition (the whole CR-failure decision, as a table) ----
+# This is the gate's most security-relevant decision: what stands between
+# --override-cr-failure and a bare merge bypass. Every row below is a case that
+# used to be verifiable only by hand.
+
+disp() {
+  # disp <state> <rate_limited> <override> <review_state>
+  mc_cr_failure_disposition "$1" "$2" "$3" "$4"
+}
+
+@test "cr failure disposition: a genuine failure blocks, with or without a current review" {
+  run disp failure no 0 current
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+  run disp failure no 0 missing
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure disposition: the override clears ONLY with a current local review" {
+  run disp failure no 1 current
+  [ "$output" = "cleared-override" ]
+  [ "$status" -eq 0 ]
+  # The interlock. Anything other than a current review must refuse, including the
+  # n/a case (running outside a checkout, where there is no stamp to read at all).
+  local rs
+  for rs in stale missing n/a ""; do
+    run disp failure no 1 "$rs"
+    [ "$output" = "block-override-needs-review" ] || fail "override cleared with review_state=${rs:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure disposition: a rate-limited failure clears ONLY with a current local review" {
+  run disp failure yes 0 current
+  [ "$output" = "cleared-rate-limited" ]
+  [ "$status" -eq 0 ]
+  local rs
+  for rs in stale missing n/a ""; do
+    run disp failure yes 0 "$rs"
+    [ "$output" = "block-rate-limited-unbackstopped" ] || fail "rate-limit cleared with review_state=${rs:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure disposition: rate-limit wins over the flag, so the audit trail stays honest" {
+  # An operator who passes the flag defensively on a failure the machine can already
+  # classify must NOT have it recorded as a human override; otherwise a later grep
+  # for real overrides returns false positives.
+  run disp failure yes 1 current
+  [ "$output" = "cleared-rate-limited" ]
+  [ "$status" -eq 0 ]
+  run disp failure yes 1 stale
+  [ "$output" = "block-rate-limited-unbackstopped" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure disposition: the flag is inert on any non-failure status" {
+  local state
+  for state in success pending missing; do
+    run disp "$state" no 0 current
+    [ "$output" = "n/a" ] || fail "expected n/a for state: $state"
+    [ "$status" -eq 0 ]
+    # Flag passed where there is no failure to override: reported so the caller can
+    # tell the operator, but it never clears anything on its own.
+    run disp "$state" no 1 current
+    [ "$output" = "override-inert" ] || fail "expected override-inert for state: $state"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "cr failure disposition: defaults deny (missing/garbage arguments never clear)" {
+  run mc_cr_failure_disposition failure
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+  run disp failure "garbage" "garbage" current
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+}

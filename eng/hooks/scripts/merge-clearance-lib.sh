@@ -393,6 +393,135 @@ mc_cr_rate_limited_latest() {
   echo "no"; return 1
 }
 
+# mc_cr_failure_rate_limited <cr_status_state> <cr_status_description> [comments_json]
+#   Decide whether a CodeRabbit commit status of "failure" on HEAD is really a RATE
+#   LIMIT rather than a genuine CodeRabbit objection or CR-side error. This is the
+#   third rate-limit shape, and the one the two functions above miss:
+#     1. status MISSING  + marker comment  -> mc_cr_rate_limited
+#     2. status PENDING (stuck) + marker as CR's LATEST comment
+#                                          -> mc_cr_rate_limited_latest
+#     3. status FAILURE, description "Review rate limited"  -> THIS function
+#   Shape 3 is what CodeRabbit posts when it burns its limit on an INCREMENTAL pass:
+#   it has already reviewed the PR (often posting acks on every finding), then the
+#   final pass over a trailing commit trips the limit and CR resolves its per-commit
+#   status to failure with a rate-limit description. In that flavour CR posts NO
+#   marker comment at all, so keying only on "rate limited by coderabbit.ai" (as the
+#   two functions above do) leaves the PR wedged behind a hard failure blocker. The
+#   marker is therefore the SECONDARY proof here, for the residual case where CR
+#   posts both; the description is the primary one.
+#
+#   cr_status_state:       the already-folded CR commit-status state on HEAD
+#     (state_of "CodeRabbit"): success | failure | pending | missing. Only "failure"
+#     can be a shape-3 rate limit; every other state echoes "no" (the caller handles
+#     missing / pending through the two functions above).
+#   cr_status_description: the description string on that CodeRabbit status
+#     (e.g. "Review rate limited"). Matched case-insensitively against
+#     "rate[ -]?limit", so "Review rate limited", "Rate limit exceeded",
+#     "Rate-limited" and "ratelimit" all hit. A plain substring test missed the
+#     hyphenated spelling, and that miss would be SILENT: the operator would be
+#     told the failure is genuine when it is not.
+#     A NEGATED phrasing ("not rate limited", "no rate limit hit") is explicitly
+#     excluded, so a description that mentions rate limiting only to deny it
+#     cannot buy the escape hatch. This is a prefix-negation guard, NOT a semantic
+#     parser: a trailing negation ("rate limit was not the cause") would still
+#     classify as a rate limit. Accepted, and bounded: even then the failure only
+#     degrades from a hard block to "requires a current local /eng:cr review",
+#     which is the same deal the other two shapes get. Widen the guard if CR's
+#     wording ever makes that theoretical case real.
+#   comments_json (optional): the PR's issue comments, SAME shape as
+#     mc_cr_rate_limited. Checked as a SECOND, independent proof, via the STRICT
+#     mc_cr_rate_limited_latest: the marker must be CR's LATEST comment. The loose
+#     mc_cr_rate_limited would match a marker anywhere in the PR's history, so a
+#     stale rate-limit notice from an early commit would let a LATER, genuine CR
+#     failure auto-clear while the audit trail called it a rate limit. That is the
+#     same stale-evidence trap mc_cr_rate_limited_latest already exists to close
+#     for the stuck-pending shape; shape 3 gets the same discipline.
+#     Defaults to [] so a description-only caller works.
+#
+#   Echoes "yes" iff the state is "failure" AND (the description says rate limit,
+#   non-negated, OR the marker is CR's latest comment); else "no". Return code
+#   mirrors the verdict. Fails CLOSED in every degraded direction: a non-failure
+#   state, an unreadable description, and an unparseable comments array all yield
+#   "no", so a genuine CR failure is never mistaken for a rate limit. Like the other
+#   two shapes this only ever RELAXES the gate in combination with a current local
+#   /eng:cr review; mc_cr_failure_disposition owns that interlock.
+mc_cr_failure_rate_limited() {
+  local state="$1" desc="${2:-}" comments="${3:-[]}"
+  [ "$state" = "failure" ] || { echo "no"; return 1; }
+  # Positive match, minus negations. grep -i keeps the case-insensitivity without
+  # a tr round-trip, and -E gives the optional space/hyphen between the words.
+  if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
+     && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
+    echo "yes"; return 0
+  fi
+  # Second proof: the marker as CR's LATEST comment. mc_cr_rate_limited_latest
+  # returns rc 1 on "no", but it is read here as a string in $(...), so only its
+  # stdout token is authoritative.
+  if [ "$(mc_cr_rate_limited_latest "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
+# mc_cr_failure_disposition <cr_status_state> <failure_rate_limited> <override_flag> <review_state>
+#   The gate's whole decision about a CodeRabbit FAILURE status on HEAD, as one
+#   pure function. This lives here rather than as shell control flow in
+#   merge-clearance.sh because it is the single most security-relevant decision the
+#   gate makes: it is what stands between "--override-cr-failure" and a bare merge
+#   bypass. As inline `&&` chains in the I/O script it could only ever be verified
+#   by hand; here every row of its truth table is a bats case.
+#
+#   Arguments are all already-computed scalars (no network, no git):
+#     cr_status_state:       success | failure | pending | missing (state_of "CodeRabbit")
+#     failure_rate_limited:  yes | no  (mc_cr_failure_rate_limited)
+#     override_flag:         1 | 0     (the --override-cr-failure flag)
+#     review_state:          current | stale | missing | n/a  (the /eng:cr stamp vs HEAD)
+#
+#   Echoes exactly one disposition token; rc 0 for the non-blocking ones, 1 for the
+#   blocking ones so callers can branch on either:
+#     n/a                             - not a failure status; nothing to decide (rc 0)
+#     override-inert                  - flag passed on a non-failure status; it does
+#                                       nothing, and the caller should SAY so (rc 0)
+#     cleared-rate-limited            - rate limit + current local review (rc 0)
+#     cleared-override                - genuine failure + explicit flag + current
+#                                       local review (rc 0)
+#     block-rate-limited-unbackstopped- rate limit but no current local review (rc 1)
+#     block-override-needs-review     - flag passed but no current local review (rc 1)
+#     block-genuine                   - genuine CR failure, no flag (rc 1)
+#
+#   The invariants this function EXISTS to enforce, none of which may be relaxed:
+#     1. NOTHING clears a failure without review_state == "current". Not the rate
+#        limit, not the operator flag. "Never both reviewers down."
+#     2. review_state is read as given. The caller must NOT fold --skip-review or
+#        the bookkeeping fast lane into it: those waive the review DIMENSION, they
+#        do not conjure a review that can backstop a broken CodeRabbit.
+#     3. The rate-limit path is checked BEFORE the override path, so a failure the
+#        machine can classify never gets ATTRIBUTED to human judgment. Passing the
+#        flag defensively on a rate-limited failure yields cleared-rate-limited, so
+#        a later grep for real operator overrides stays free of false positives.
+#     4. The default is to block. Any state that is not explicitly cleared above
+#        falls through to block-genuine.
+mc_cr_failure_disposition() {
+  local state="$1" rate_limited="${2:-no}" override="${3:-0}" review="${4:-}"
+
+  if [ "$state" != "failure" ]; then
+    [ "$override" = "1" ] && { echo "override-inert"; return 0; }
+    echo "n/a"; return 0
+  fi
+
+  # Invariant 3: machine-detectable rate limit wins over the human flag.
+  if [ "$rate_limited" = "yes" ]; then
+    [ "$review" = "current" ] && { echo "cleared-rate-limited"; return 0; }
+    echo "block-rate-limited-unbackstopped"; return 1
+  fi
+
+  if [ "$override" = "1" ]; then
+    [ "$review" = "current" ] && { echo "cleared-override"; return 0; }
+    echo "block-override-needs-review"; return 1
+  fi
+
+  # Invariant 4: default deny.
+  echo "block-genuine"; return 1
+}
+
 # mc_head_cr_unreviewable <files_json> <globs_json>
 #   Decide whether the INCREMENTAL change at a PR HEAD is something CodeRabbit
 #   legitimately cannot (or will not) review. This is the ONLY condition under
