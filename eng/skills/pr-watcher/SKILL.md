@@ -209,7 +209,7 @@ Print a one-line start banner:
 
 Sensing is one deterministic script, run as a foreground Bash command. The script reads the baselines straight from `$STATE_DIR` (no input marshalling) and prints one JSON object per invocation.
 
-The sensor's primary signal is CodeRabbit's **commit status** (legacy GitHub Statuses API): CR posts a `CodeRabbit` context status on each new HEAD commit that transitions `pending` → `success`/`failure` when its review pass finishes. That single endpoint is cheap, so the script polls it every 15s and fetches the three comment streams only when the status transitions. For repos whose CR setup posts no commit status, it falls back to comment-stream polling every ~60s with the marker / quiet-period settle conditions. The init pass (before the loop) returns immediately when CR is already terminal on the current HEAD: `already_settled` (success, nothing unprocessed), `cr_failure` (failure/error, nothing unprocessed), or `new_cr_feedback` (unprocessed backlog with a settle condition already holding).
+The sensor's primary signal is CodeRabbit's **commit status** (legacy GitHub Statuses API): CR posts a `CodeRabbit` context status on each new HEAD commit that transitions `pending` → `success`/`failure` when its review pass finishes. That single endpoint is cheap, so the script polls it every 15s and fetches the three comment streams only when the status transitions. When there is no CR commit status to watch (a repo whose CR setup never posts one, or a status stuck in `pending` while comments still arrive), it falls back to comment-stream polling every ~60s with the marker / quiet-period settle conditions. The init pass (before the loop) returns immediately when CR is already terminal on the current HEAD: `already_settled` (success, nothing unprocessed), `cr_failure` (failure/error, nothing unprocessed), or `new_cr_feedback` (unprocessed backlog with a settle condition already holding).
 
 Resolve the script from the installed plugin (repo checkout as fallback) and start the cycle fresh:
 
@@ -413,8 +413,8 @@ On exit, print:
   escalations.jsonl                # append-only, one JSON per line
   sensor-state.json                # transient: sensor-poll.sh's place within ONE
                                    # sense cycle (survives "continue" slices; removed
-                                   # by the script on any terminal outcome and by the
-                                   # dispatcher at each cycle start)
+                                   # on terminal outcomes; the dispatcher's rm at each
+                                   # cycle start is the backstop)
 ```
 
 State is per-PR and persists across sessions. Re-invoking `/eng:pr-watcher` on the same PR after `/exit` resumes from the saved baselines, never re-processing items already handled.
@@ -423,8 +423,8 @@ State is per-PR and persists across sessions. Re-invoking `/eng:pr-watcher` on t
 
 | Failure | Response |
 |---|---|
-| `gh` rate-limited or failing transiently | The script tolerates failing ticks and keeps polling; after ~10 minutes of consecutive failures it returns `outcome: error` with an `error_message`. The dispatcher counts that as a sensor failure. |
-| `gh` returns 401 | Surfaces as `outcome: error`; print `ERROR: gh auth expired. Run gh auth login.` and stop. |
+| `gh` rate-limited or failing transiently | In the 15s loop the script tolerates failing ticks and keeps polling; after ~10 minutes of consecutive failures it returns `outcome: error` with the captured gh stderr in `error_message`. The init pass is tighter: 3 attempts ~15s apart, then `outcome: error` (a dead API at cycle start is likely auth/config, not weather). The dispatcher counts an `error` as a sensor failure. |
+| `gh` returns 401 | Surfaces as `outcome: error` whose `error_message` carries gh's stderr; when it names 401/auth, print `ERROR: gh auth expired. Run gh auth login.` and stop instead of retrying. |
 | Concurrent push by a human | `git pull --rebase` once and retry; on conflict, revert and escalate that finding. |
 | PR force-pushed (head SHA changed) | Inline review comment IDs may become stale. On the next cycle, clear `baseline_review_comments.json` and re-seed from the current CR comments. |
 | Sensor prints unparseable output or `outcome: error` | Count as a sensor failure. After 3 consecutive failures, exit. |

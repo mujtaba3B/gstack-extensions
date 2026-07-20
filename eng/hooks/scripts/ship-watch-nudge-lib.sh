@@ -9,8 +9,8 @@
 #   opens a PR in an opted-in ~/dev repo, it decides WHAT to nudge the main agent
 #   toward and builds the additionalContext string.
 #
-# The "why": a hook cannot launch a foreground skill (/eng:pr-watcher pairs the
-# main agent with a sensor subagent), but it CAN inject additionalContext that the
+# The "why": a hook cannot launch a foreground skill (/eng:pr-watcher's dispatcher
+# loop runs in the main agent's own turn), but it CAN inject additionalContext that the
 # model reads next turn. So the durable, reliable mechanism is an auto-NUDGE, not
 # an auto-run. The nudge is rate-limit-aware: it must not push the agent into an
 # open-ended watch loop when CodeRabbit will not actually review (rate-limited).

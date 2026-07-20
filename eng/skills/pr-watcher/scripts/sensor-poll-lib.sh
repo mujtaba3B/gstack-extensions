@@ -73,12 +73,16 @@ sp_fallback_settled() {
 #   Fallback settle condition (c): every item's effective timestamp
 #   (updated_at, else submitted_at; review objects only expose the latter) is
 #   at least <quiet_seconds> old. Empty arrays are NOT quiet (nothing to
-#   drain). Echoes yes/no.
+#   drain), and an item with no parseable timestamp blocks quietness rather
+#   than counting as vacuously old. Echoes yes/no.
 sp_all_quiet() {
   local items="$1" now="$2" quiet="$3" verdict
   verdict=$(jq -r --argjson now "$now" --argjson quiet "$quiet" '
     if length == 0 then false
-    else all(.[]; ((.updated_at // .submitted_at // empty) | fromdateiso8601) <= ($now - $quiet))
+    else all(.[];
+      ((.updated_at // .submitted_at // null)
+       | if type == "string" then (try fromdateiso8601 catch null) else null end
+      ) as $e | $e != null and $e <= ($now - $quiet))
     end
   ' <<<"$items")
   if [ "$verdict" = "true" ]; then echo "yes"; return 0; fi

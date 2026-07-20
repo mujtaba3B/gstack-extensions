@@ -113,6 +113,13 @@ setup() {
   [ "$output" = "no" ]
 }
 
+@test "all_quiet no when an item has no parseable timestamp (never vacuously quiet)" {
+  run sp_all_quiet '[{"updated_at":"2020-01-01T00:00:00Z"},{"foo":1}]' 1577837100 180
+  [ "$output" = "no" ]
+  run sp_all_quiet '[{"updated_at":"not-a-date"}]' 1577837100 180
+  [ "$output" = "no" ]
+}
+
 # --- sp_fingerprint
 
 @test "fingerprint is stable for identical input and changes with timestamps" {

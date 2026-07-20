@@ -24,7 +24,9 @@ Code's stripped PATH (the incident's first poll script died on a hardcoded
 `outcome: error` with `error_message` instead of hanging. The v3 protocol
 semantics (status-primary polling, comment-stream fallback, init-pass
 `already_settled` / `cr_failure` / backlog-drain branches, settle conditions)
-are ported unchanged.
+carry over, with one deliberate broadening: the `Actionable comments posted:`
+fallback settle marker now matches any new CR item body, not only review
+bodies.
 
 Also shipping with v4 (was pending as Unreleased):
 
