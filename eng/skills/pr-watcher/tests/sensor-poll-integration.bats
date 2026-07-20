@@ -13,17 +13,20 @@ setup() {
   FIX="$WORK/fixtures"
   mkdir -p "$WORK/bin" "$STATE" "$FIX"
 
-  # gh stub: serves fixture files per endpoint (matched on the full argv, so
-  # flags like --paginate are transparent); GH_STUB_FAIL=1 fails every call.
+  # gh stub: serves fixture files per endpoint, matched on the full argv.
+  # Stream endpoints REQUIRE --paginate in the argv: if sensor-poll.sh ever
+  # drops the flag, the fetch falls through to the unmatched branch and the
+  # suite fails (pagination is a correctness requirement, not a nicety).
+  # GH_STUB_FAIL=1 fails every call.
   cat > "$WORK/bin/gh" <<'STUB'
 #!/bin/bash
 [ "${GH_STUB_FAIL:-0}" = "1" ] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
 case "$*" in
   "pr view "*) cat "$GH_FIXTURE_DIR/pr.json" ;;
   *statuses*) cat "$GH_FIXTURE_DIR/statuses.json" ;;
-  *issues*comments*) cat "$GH_FIXTURE_DIR/issue_comments.json" ;;
-  *reviews*) cat "$GH_FIXTURE_DIR/reviews.json" ;;
-  *pulls*comments*) cat "$GH_FIXTURE_DIR/review_comments.json" ;;
+  *--paginate*issues*comments*) cat "$GH_FIXTURE_DIR/issue_comments.json" ;;
+  *--paginate*reviews*) cat "$GH_FIXTURE_DIR/reviews.json" ;;
+  *--paginate*pulls*comments*) cat "$GH_FIXTURE_DIR/review_comments.json" ;;
   *) echo "gh stub: unmatched: $*" >&2; exit 64 ;;
 esac
 STUB
@@ -117,13 +120,15 @@ run_sensor() {
 @test "bad usage still emits one error JSON and exits 0" {
   run "$SCRIPT" --bogus
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.outcome == "error" and (.error_message | contains("unknown arg"))'
+  echo "$output" | jq -se 'length == 1 and .[0].outcome == "error"
+    and (.[0].error_message | contains("unknown arg"))'
 }
 
 @test "flag with no value emits one error JSON, never a set -u crash" {
   run "$SCRIPT" --owner
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.outcome == "error" and (.error_message | contains("missing value for --owner"))'
+  echo "$output" | jq -se 'length == 1 and .[0].outcome == "error"
+    and (.[0].error_message | contains("missing value for --owner"))'
 }
 
 @test "multi-page stream responses (concatenated arrays) are flattened" {
