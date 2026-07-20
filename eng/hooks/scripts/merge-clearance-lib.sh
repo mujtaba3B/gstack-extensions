@@ -393,6 +393,53 @@ mc_cr_rate_limited_latest() {
   echo "no"; return 1
 }
 
+# mc_cr_failure_rate_limited <cr_status_state> <cr_status_description> [comments_json]
+#   Decide whether a CodeRabbit commit status of "failure" on HEAD is really a RATE
+#   LIMIT rather than a genuine CodeRabbit objection or CR-side error. This is the
+#   third rate-limit shape, and the one the two functions above miss:
+#     1. status MISSING  + marker comment  -> mc_cr_rate_limited
+#     2. status PENDING (stuck) + marker as CR's LATEST comment
+#                                          -> mc_cr_rate_limited_latest
+#     3. status FAILURE, description "Review rate limited"  -> THIS function
+#   Shape 3 is what CodeRabbit posts when it burns its limit on an INCREMENTAL pass:
+#   it has already reviewed the PR (often posting acks on every finding), then the
+#   final pass over a trailing commit trips the limit and CR resolves its per-commit
+#   status to failure with a rate-limit description. In that flavour CR posts NO
+#   marker comment at all, so keying only on "rate limited by coderabbit.ai" (as the
+#   two functions above do) leaves the PR wedged behind a hard failure blocker.
+#
+#   cr_status_state:       the already-folded CR commit-status state on HEAD
+#     (state_of "CodeRabbit"): success | failure | pending | missing. Only "failure"
+#     can be a shape-3 rate limit; every other state echoes "no" (the caller handles
+#     missing / pending through the two functions above).
+#   cr_status_description: the description string on that CodeRabbit status
+#     (e.g. "Review rate limited"). Matched for the case-insensitive substring
+#     "rate limit", which covers "Review rate limited", "Rate limit exceeded", and
+#     "rate limited" alike. Empty when the caller could not read it.
+#   comments_json (optional): the PR's issue comments, SAME shape as
+#     mc_cr_rate_limited. Checked as a SECOND, independent proof: CR sometimes posts
+#     its marker comment alongside a failure status, and either signal alone is
+#     enough. Defaults to [] so a description-only caller works.
+#
+#   Echoes "yes" iff the state is "failure" AND (the description says rate limit OR
+#   a CR comment carries the marker); else "no". Return code mirrors the verdict.
+#   Fails CLOSED in every degraded direction: a non-failure state, an unreadable
+#   description, and an unparseable comments array all yield "no", so a genuine CR
+#   failure is never mistaken for a rate limit. Like the other two shapes this only
+#   ever RELAXES the gate in combination with a current local /eng:cr review; the
+#   caller owns that interlock.
+mc_cr_failure_rate_limited() {
+  local state="$1" desc="${2:-}" comments="${3:-[]}"
+  [ "$state" = "failure" ] || { echo "no"; return 1; }
+  case "$(printf '%s' "$desc" | tr '[:upper:]' '[:lower:]')" in
+    *"rate limit"*) echo "yes"; return 0 ;;
+  esac
+  # Second proof: the marker comment. mc_cr_rate_limited returns rc 1 on "no", but
+  # it is read here as a string in $(...), so only its stdout token is authoritative.
+  if [ "$(mc_cr_rate_limited "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
 # mc_head_cr_unreviewable <files_json> <globs_json>
 #   Decide whether the INCREMENTAL change at a PR HEAD is something CodeRabbit
 #   legitimately cannot (or will not) review. This is the ONLY condition under

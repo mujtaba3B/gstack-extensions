@@ -905,3 +905,88 @@ rlmarker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai 
   [ "$output" = "no" ]
   [ "$status" -eq 1 ]
 }
+
+# ---- mc_cr_failure_rate_limited (the FAILURE-status shape) -------------------
+# CodeRabbit resolving its per-commit status to failure with a "Review rate limited"
+# description, typically with NO marker comment anywhere on the PR. Observed on
+# gstack-extensions#58: CR had fully reviewed the PR and acked every finding, then
+# its incremental pass over a trailing test-only commit burned the limit.
+
+MARKER="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+
+cr_comment() {
+  # cr_comment <body> -> a one-element CR-authored comments array
+  jq -nc --arg b "$1" '[{author:"coderabbitai[bot]", body:$b}]'
+}
+
+@test "cr failure rate-limited: failure + 'Review rate limited' description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: description match is case-insensitive and substring" {
+  run mc_cr_failure_rate_limited "failure" "RATE LIMIT EXCEEDED - please wait 12 minutes" "[]"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "CodeRabbit is Rate Limited for this repository" "[]"
+  [ "$output" = "yes" ]
+}
+
+@test "cr failure rate-limited: failure + marker comment, no description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: failure + marker comment under an unrelated description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: GENUINE failure (neither signal) -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review completed with errors" \
+    "$(cr_comment 'Actionable comments posted: 3')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: genuine failure with an empty description -> no" {
+  run mc_cr_failure_rate_limited "failure" "" "[]"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: non-failure states never qualify" {
+  # Even carrying both signals: success / pending / missing are handled by the
+  # other two shapes (or are not a gap at all), so this function must stay quiet.
+  local state
+  for state in success pending missing ""; do
+    run mc_cr_failure_rate_limited "$state" "Review rate limited" "$(cr_comment "$MARKER")"
+    [ "$output" = "no" ]
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure rate-limited: a rate-limit marker from a NON-CR author does not count" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" \
+    "$(jq -nc --arg b "$MARKER" '[{author:"mujtaba3B", body:$b}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: unreadable comments fail closed -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" '{"not":"an array"}'
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_cr_failure_rate_limited "failure" "Review failed" "garbage"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: comments argument is optional (defaults to [])" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "Review failed"
+  [ "$output" = "no" ]
+}
