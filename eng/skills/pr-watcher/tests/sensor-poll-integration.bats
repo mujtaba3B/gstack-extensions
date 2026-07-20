@@ -13,16 +13,17 @@ setup() {
   FIX="$WORK/fixtures"
   mkdir -p "$WORK/bin" "$STATE" "$FIX"
 
-  # gh stub: serves fixture files per endpoint; GH_STUB_FAIL=1 fails every call.
+  # gh stub: serves fixture files per endpoint (matched on the full argv, so
+  # flags like --paginate are transparent); GH_STUB_FAIL=1 fails every call.
   cat > "$WORK/bin/gh" <<'STUB'
 #!/bin/bash
 [ "${GH_STUB_FAIL:-0}" = "1" ] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-case "$1 $2" in
-  "pr view") cat "$GH_FIXTURE_DIR/pr.json" ;;
-  "api "*statuses*) cat "$GH_FIXTURE_DIR/statuses.json" ;;
-  "api "*issues*comments*) cat "$GH_FIXTURE_DIR/issue_comments.json" ;;
-  "api "*reviews*) cat "$GH_FIXTURE_DIR/reviews.json" ;;
-  "api "*pulls*comments*) cat "$GH_FIXTURE_DIR/review_comments.json" ;;
+case "$*" in
+  "pr view "*) cat "$GH_FIXTURE_DIR/pr.json" ;;
+  *statuses*) cat "$GH_FIXTURE_DIR/statuses.json" ;;
+  *issues*comments*) cat "$GH_FIXTURE_DIR/issue_comments.json" ;;
+  *reviews*) cat "$GH_FIXTURE_DIR/reviews.json" ;;
+  *pulls*comments*) cat "$GH_FIXTURE_DIR/review_comments.json" ;;
   *) echo "gh stub: unmatched: $*" >&2; exit 64 ;;
 esac
 STUB
@@ -117,4 +118,20 @@ run_sensor() {
   run "$SCRIPT" --bogus
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.outcome == "error" and (.error_message | contains("unknown arg"))'
+}
+
+@test "flag with no value emits one error JSON, never a set -u crash" {
+  run "$SCRIPT" --owner
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.outcome == "error" and (.error_message | contains("missing value for --owner"))'
+}
+
+@test "multi-page stream responses (concatenated arrays) are flattened" {
+  echo '[{"context":"CodeRabbit","state":"success","updated_at":"2020-01-01T00:05:00Z","creator":{"login":"coderabbitai[bot]"}}]' > "$FIX/statuses.json"
+  printf '%s\n%s\n' \
+    '[{"id":21,"user":{"login":"coderabbitai[bot]"},"updated_at":"2020-01-01T00:01:00Z","body":"page1"}]' \
+    '[{"id":22,"user":{"login":"coderabbitai[bot]"},"updated_at":"2020-01-01T00:02:00Z","body":"page2"}]' \
+    > "$FIX/issue_comments.json"
+  run_sensor
+  echo "$output" | jq -e '.outcome == "new_cr_feedback" and (.new_issue_comments | map(.id)) == ["21","22"]'
 }

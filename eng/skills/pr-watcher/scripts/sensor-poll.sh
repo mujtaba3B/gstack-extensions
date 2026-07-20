@@ -47,6 +47,12 @@ MAX_CONSEC_FAILURES=40 # ~10 min of consecutive failing ticks -> outcome error
 arg_error() { sp_emit error 0 0 "" "" "" "n/a" '[]' '[]' '[]' "$1"; exit 0; }
 while [ $# -gt 0 ]; do
   case "$1" in
+    # A flag with no value would hit an unset "$2" under set -u and crash past
+    # the one-JSON contract; catch it as a normal arg error first.
+    --owner|--repo|--pr|--state-dir|--slice-seconds|--total-seconds)
+      [ $# -ge 2 ] || arg_error "missing value for $1" ;;
+  esac
+  case "$1" in
     --owner) OWNER="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --pr) PR_NUM="$2"; shift 2 ;;
@@ -137,11 +143,18 @@ fetch_status() {
   out=$(gh api "repos/$OWNER/$REPO/commits/$CURRENT_SHA/statuses?per_page=100" 2>"$GH_ERR_FILE") || return 1
   LATEST_STATUS=$(sp_latest_cr_status "$out")
 }
+# --paginate follows every page (these endpoints return oldest-first, so page
+# 1 alone goes blind to NEW items once a stream passes 100); it emits one JSON
+# array per page, which `jq -s add` flattens back to a single array.
+fetch_page_all() {
+  ( set -o pipefail
+    gh api --paginate "$1" 2>"$GH_ERR_FILE" | jq -s 'add // []' )
+}
 fetch_streams() {
   local ic rv rc
-  ic=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100" 2>"$GH_ERR_FILE") || return 1
-  rv=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100" 2>"$GH_ERR_FILE") || return 1
-  rc=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100" 2>"$GH_ERR_FILE") || return 1
+  ic=$(fetch_page_all "repos/$OWNER/$REPO/issues/$PR_NUM/comments?per_page=100") || return 1
+  rv=$(fetch_page_all "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews?per_page=100") || return 1
+  rc=$(fetch_page_all "repos/$OWNER/$REPO/pulls/$PR_NUM/comments?per_page=100") || return 1
   NEW_IC=$(sp_filter_new issue_comments "$ic" "$(baseline issue_comments)")
   NEW_RV=$(sp_filter_new reviews "$rv" "$(baseline reviews)")
   NEW_RC=$(sp_filter_new review_comments "$rc" "$(baseline review_comments)")
