@@ -5,8 +5,8 @@
 # shipped PR unwatched.
 #
 # Why a NUDGE and not an auto-run: a hook cannot launch a foreground skill. The
-# canonical watcher /eng:pr-watcher pairs the main agent (dispatcher + fix-applier)
-# with a passive sensor subagent, so it can only run in the main turn. A PostToolUse
+# canonical watcher /eng:pr-watcher runs its dispatcher loop (and its foreground
+# sensor script) in the main agent's own turn, so only the model can start it. A PostToolUse
 # hook CAN return additionalContext that the model reads next turn - verified against
 # Claude Code 2.1.x: {"hookSpecificOutput":{"hookEventName":"PostToolUse",
 # "additionalContext":"..."}} on stdout with exit 0 reliably reaches the model. So
