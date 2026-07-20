@@ -25,4 +25,12 @@
 
 # Agent-doc, local-only (untracked 2026-06-21)
 PLAYBOOK.md
-.gstack/
+
+# Repo-local gstack state stays untracked EXCEPT the QA recipe, which the
+# qa:browser recipe schema requires committed (see
+# qa/skills/browser/references/recipe-schema.md). `.gstack/*` (not `.gstack/`)
+# so the re-inclusions below can reach into the directory.
+.gstack/*
+!.gstack/qa-quincey/
+.gstack/qa-quincey/*
+!.gstack/qa-quincey/recipe.yml
