@@ -6,12 +6,14 @@
 # "Clear" means, on the PR's CURRENT head commit:
 #   - CI required checks are green
 #   - CodeRabbit has finished reviewing and left nothing unresolved
-#       (escape hatch: if CR signals a rate limit on a HEAD it never finished -
-#        whether its commit status is "missing" (never started), stuck "pending"
-#        (started, then hit the limit mid-flight), or resolved to "failure" with a
-#        rate-limit description (an incremental pass that burned the limit) - a
-#        CURRENT local /eng:cr review backstops it: that dimension auto-satisfies,
-#        fully audited. Never both reviewers down.
+#       (escape hatch: if CR signals a rate limit on this HEAD - whether its commit
+#        status is "missing" (never started), stuck "pending" (started, then hit the
+#        limit mid-flight), or resolved to "failure" with a rate-limit description
+#        (an incremental pass burned the limit, often AFTER CR had already reviewed
+#        HEAD) - a CURRENT local /eng:cr review backstops it. The dimension that
+#        auto-satisfies differs by shape: reviewed-head for missing/pending, the
+#        failure status itself for the failure shape. Fully audited either way.
+#        Never both reviewers down.
 #        A GENUINE CR failure has no such auto-satisfy; it takes the explicit
 #        --override-cr-failure operator flag, which ALSO requires the current local
 #        review and is recorded just as loudly.)
@@ -75,9 +77,12 @@ usage: merge-clearance <check|clear|status|enable> [options]
                       operator override for a GENUINE CodeRabbit failure status on
                       this head. Still requires a CURRENT local /eng:cr review
                       (never a bare bypass) and is recorded in the checklist, the
-                      stamp evidence and the posted status description. A
-                      rate-limited failure needs no flag: it auto-satisfies on the
-                      same local-review backstop.
+                      --json verdict, the stamp evidence and the posted status
+                      description. Without that current review the flag does not
+                      clear: it swaps the generic failure blocker for one telling
+                      you to run /eng:cr first. A rate-limited failure needs no
+                      flag (it auto-satisfies on the same backstop, and is recorded
+                      as rate-limited rather than as an override).
     --json            also emit a machine-readable JSON verdict (check only)
 
   enable (repo-level - opt a repo into the gate in one command):
@@ -325,9 +330,11 @@ STATUSES=$(gh api "repos/$REPO/commits/$HEAD/statuses" \
                       | to_entries | map({name:.key, state:.value})' || echo '[]')
 CHECKMAP=$(jq -cn --argjson a "$CHECKRUNS" --argjson b "$STATUSES" '$a + $b')
 
-# state_of <context-name> -> success|failure|pending|missing (success conclusions
-# from check-runs are "success"; a completed status is "success"; everything not
-# yet conclusive is "pending"; absent is "missing").
+# state_of <context-name> -> success|failure|pending|missing. A commit status whose
+# state is failure/error, or a check-run whose conclusion is timed_out / cancelled /
+# action_required, all fold to "failure" (the fold the CodeRabbit failure branch
+# below is built on); any other completed state is "success"; everything not yet
+# conclusive is "pending"; absent is "missing".
 state_of() {
   printf '%s' "$CHECKMAP" | jq -r --arg n "$1" '
     [ .[] | select(.name==$n) | .state ] as $s
@@ -383,8 +390,12 @@ cr_issue_comments() {
 # question: is a "failure" state really a rate limit? So this refetches lazily and
 # is called ONLY from the failure branch below (mirroring head_changed_files /
 # cr_issue_comments - the happy path pays for no extra API call). The statuses
-# endpoint returns newest-first, so `first` is the status that produced the folded
-# state. Echoes "" on any failure (fail closed: an unreadable description feeds
+# endpoint returns newest-first, so `first` is the newest CodeRabbit COMMIT STATUS,
+# which is what produces the folded state today (CR publishes a commit status, not a
+# check-run). Note the asymmetry: state_of folds check-runs AND statuses, while this
+# reads statuses only, so if CR ever also emitted a check-run named "CodeRabbit" the
+# description could go empty while the state stayed "failure". That direction fails
+# CLOSED (the failure keeps blocking), it just makes the hatch stop firing. Echoes "" on any failure (fail closed: an unreadable description feeds
 # mc_cr_failure_rate_limited, which then reports "not a rate limit" and the failure
 # keeps blocking - the safe direction).
 cr_status_description() {
@@ -467,7 +478,13 @@ elif [ "$CR_STATUS_STATE" = "failure" ]; then
   # CR_REVIEWED_HEAD: the failure status blocks on its own (see the verdict section),
   # independently of whether CR reviewed HEAD. Like the other two shapes this only
   # RELAXES the gate together with a current local /eng:cr review (CR_RL_BACKSTOPPED).
-  CR_FAILURE_RATE_LIMITED=$(mc_cr_failure_rate_limited "$CR_STATUS_STATE" "$(cr_status_description)" "$(cr_issue_comments)")
+  # Two-step so the marker proof stays LAZY: the description alone settles the
+  # common case, and only an inconclusive description pays for the paginated
+  # comments fetch. (Passing both as arguments would expand each $(...) up front,
+  # so the comments call would always run.)
+  CR_FAILURE_RATE_LIMITED=$(mc_cr_failure_rate_limited "$CR_STATUS_STATE" "$(cr_status_description)" '[]')
+  [ "$CR_FAILURE_RATE_LIMITED" = "yes" ] \
+    || CR_FAILURE_RATE_LIMITED=$(mc_cr_failure_rate_limited "$CR_STATUS_STATE" "" "$(cr_issue_comments)")
   CR_RATE_LIMITED="$CR_FAILURE_RATE_LIMITED"
 fi
 
@@ -488,12 +505,14 @@ fi
 QA_STATE=$(mc_qa_state "$BODY" "$REQUIRE_QA_PLAN")
 
 # ---- verdict ----------------------------------------------------------------
-# Hard blockers: CI not green, CR not clear, CR mid-review, CR hasn't seen HEAD.
+# Hard blockers: CI not green, CR not clear, CR mid-review, CR hasn't seen HEAD,
+# CR status failure (unless rate-limited + backstopped, or operator-overridden).
 # Soft blockers (block unless --skip-*): /review missing-or-stale, QA incomplete.
 
-# CR rate-limit escape hatch (gated): when CodeRabbit signalled rate-limit on a
-# HEAD it never reviewed, fall back to the local /eng:cr review IFF that review is
-# current for this HEAD. Never lose both reviewers - CR down + no local review
+# CR rate-limit escape hatch (gated): when CodeRabbit signalled rate-limit on this
+# HEAD (never started, stuck mid-flight, or a failure-status limit on an incremental
+# pass - the last of which can happen on a HEAD CR DID review), fall back to the
+# local /eng:cr review IFF that review is current for this HEAD. Never lose both reviewers - CR down + no local review
 # still blocks. Computed here because it needs REVIEW_STATE (section 3).
 CR_RL_BACKSTOPPED=no
 [ "$CR_RATE_LIMITED" = "yes" ] && [ "$REVIEW_STATE" = "current" ] && CR_RL_BACKSTOPPED=yes
@@ -510,13 +529,33 @@ CR_RL_BACKSTOPPED=no
 #     satisfy it: REVIEW_STATE is read independently of that hatch.
 # It is recorded in the checklist, the JSON verdict, the stamp evidence and the
 # posted GitHub status description, so an override is always greppable after the fact.
+#
+# The decision itself lives in mc_cr_failure_disposition (merge-clearance-lib.sh),
+# not in `&&` chains here, because it is the one place a wrong edit turns the flag
+# into a bare merge bypass. As a pure function every row of its truth table is a
+# bats case; as inline shell it could only ever be verified by hand.
+CR_FAILURE_DISPOSITION=$(mc_cr_failure_disposition \
+  "$CR_STATUS_STATE" "$CR_FAILURE_RATE_LIMITED" "$OVERRIDE_CR_FAILURE" "$REVIEW_STATE")
 CR_FAILURE_OVERRIDDEN=no
-[ "$OVERRIDE_CR_FAILURE" -eq 1 ] && [ "$CR_STATUS_STATE" = "failure" ] && [ "$REVIEW_STATE" = "current" ] \
-  && CR_FAILURE_OVERRIDDEN=yes
+[ "$CR_FAILURE_DISPOSITION" = "cleared-override" ] && CR_FAILURE_OVERRIDDEN=yes
+# Deriving the flag FROM the disposition (rather than recomputing it) is what keeps
+# the audit trail honest when both escapes apply at once: the disposition checks the
+# rate limit first, so passing the flag defensively on a rate-limited failure records
+# "rate-limited", not a human override that was never needed. A later grep for real
+# operator overrides then has no false positives.
+[ "$CR_FAILURE_DISPOSITION" = "override-inert" ] \
+  && err "merge-clearance: --override-cr-failure ignored (CodeRabbit status is ${CR_STATUS_STATE}, not failure)"
 
 BLOCKERS=()
+# CR_BLOCKED is set alongside EVERY CodeRabbit-dimension blocker below, and is the
+# ONLY input to the CodeRabbit checklist mark. The mark used to re-derive the same
+# conditions in a second dialect, which is exactly how #58 happened: the expression
+# omitted the failure status, so the one dimension actually blocking rendered as a
+# green tick. Reading the blockers instead of mirroring them makes
+# "mark is green iff nothing is blocking" true by construction.
+CR_BLOCKED=0
 [ "$CI_STATE" = "success" ] || BLOCKERS+=("CI is ${CI_STATE} (${CI_DETAIL})")
-if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); fi
+if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); CR_BLOCKED=1; fi
 # CodeRabbit in-progress (pending commit status). A genuine pending is "review
 # running, wait". But a pending that is really CR stuck after posting its rate-limit
 # notice (CR_RATE_LIMITED, set above only when that notice is CR's latest comment) is
@@ -525,9 +564,9 @@ if [ "$CR_RC" -ne 0 ]; then BLOCKERS+=("CodeRabbit ${CR_VERDICT}"); fi
 # "in progress".
 if [ "$CR_INPROGRESS" -eq 1 ]; then
   if [ "$CR_RATE_LIMITED" = "yes" ]; then
-    [ "$CR_RL_BACKSTOPPED" = "yes" ] || BLOCKERS+=("CodeRabbit is rate-limited (status stuck pending) and no current local review backstops it (run /eng:cr on this head, then land)")
+    [ "$CR_RL_BACKSTOPPED" = "yes" ] || { BLOCKERS+=("CodeRabbit is rate-limited (status stuck pending) and no current local review backstops it (run /eng:cr on this head, then land)"); CR_BLOCKED=1; }
   else
-    BLOCKERS+=("CodeRabbit review in progress on this head")
+    BLOCKERS+=("CodeRabbit review in progress on this head"); CR_BLOCKED=1
   fi
 fi
 # A CodeRabbit commit status of "failure" (state_of folds error/timed_out/
@@ -542,17 +581,19 @@ fi
 #     and stuck-pending rate-limit shapes already get.
 #   - the operator explicitly passed --override-cr-failure for a GENUINE failure.
 #     Human judgment, so it is never inferred.
-if [ "$CR_STATUS_STATE" = "failure" ]; then
-  if [ "$CR_FAILURE_RATE_LIMITED" = "yes" ]; then
-    [ "$CR_RL_BACKSTOPPED" = "yes" ] \
-      || BLOCKERS+=("CodeRabbit is rate-limited (status failure on this head) and no current local review backstops it (run /eng:cr on this head, then land)")
-  elif [ "$OVERRIDE_CR_FAILURE" -eq 1 ]; then
-    [ "$CR_FAILURE_OVERRIDDEN" = "yes" ] \
-      || BLOCKERS+=("--override-cr-failure passed but the local /review is ${REVIEW_STATE} for this head; the override still requires a current /eng:cr review (run it, then retry)")
-  else
+case "$CR_FAILURE_DISPOSITION" in
+  cleared-rate-limited|cleared-override|n/a|override-inert) ;;
+  block-rate-limited-unbackstopped)
+    BLOCKERS+=("CodeRabbit is rate-limited (status failure on this head) and no current local review backstops it (run /eng:cr on this head, then land)")
+    CR_BLOCKED=1 ;;
+  block-override-needs-review)
+    BLOCKERS+=("--override-cr-failure passed but the local /review is ${REVIEW_STATE} for this head; the override still requires a current /eng:cr review (run it, then retry)")
+    CR_BLOCKED=1 ;;
+  *)
+    # Default deny: block-genuine, and any token a future lib change might add.
     BLOCKERS+=("CodeRabbit status is failure on this head (genuine CR failure: fix it, or pass --override-cr-failure with a current /eng:cr review)")
-  fi
-fi
+    CR_BLOCKED=1 ;;
+esac
 if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$CR_STATUS_STATE" = "missing" ] \
    && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ]; then
   if [ "$CR_RATE_LIMITED" = "yes" ]; then
@@ -562,6 +603,7 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$
   else
     BLOCKERS+=("CodeRabbit has not reviewed the current head yet")
   fi
+  CR_BLOCKED=1
 fi
 if [ "$SKIP_REVIEW" -eq 0 ] && { [ "$REVIEW_STATE" = "missing" ] || [ "$REVIEW_STATE" = "stale" ]; }; then
   BLOCKERS+=("local /review ${REVIEW_STATE} for this head (run /review, or pass --skip-review)")
@@ -581,24 +623,14 @@ CLEAR=0; [ "${#BLOCKERS[@]}" -eq 0 ] && CLEAR=1
 mark() { case "$1" in ok) printf '✅';; warn) printf '⚠️ ';; bad) printf '❌';; esac; }
 
 ci_mark=bad;     [ "$CI_STATE" = success ] && ci_mark=ok
-# CodeRabbit mark: ok only when the verdict is clean AND neither the in-progress nor
-# the failure status is blocking. A failure status was previously left out of this
-# expression, so a PR blocked solely by it still rendered CodeRabbit as ✅ while the
-# verdict said NOT CLEAR (observed on #58) - the one dimension that was actually
-# blocking was the one the checklist showed as green. An operator override renders
-# ⚠️ (warn), matching how --skip-review / --skip-qa surface: cleared, but visibly
-# not on the strength of the machine check.
+# CodeRabbit mark: green iff nothing in the CodeRabbit family is blocking. It reads
+# CR_BLOCKED (set beside every CR blocker above) rather than re-deriving those
+# conditions, so the mark cannot disagree with the verdict. An operator override
+# renders ⚠️ (warn), matching how --skip-review / --skip-qa surface: cleared, but
+# visibly not on the strength of the machine check.
 cr_mark=bad
-cr_ok=1
-[ "$CR_RC" -eq 0 ] || cr_ok=0
-[ "$CR_INPROGRESS" -eq 1 ] && [ "$CR_RL_BACKSTOPPED" != "yes" ] && cr_ok=0
-[ "$CR_STATUS_STATE" = "failure" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ] && cr_ok=0
-# Same for the reviewed-head blocker (CR silent on a HEAD it never reviewed, with
-# neither auto-satisfy applying): it blocks, so it must not render green either.
-[ "$CR_STATUS_STATE" = "missing" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
-  && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ] && cr_ok=0
-[ "$cr_ok" -eq 1 ] && cr_mark=ok
-[ "$CR_FAILURE_OVERRIDDEN" = "yes" ] && [ "$CR_RC" -eq 0 ] && cr_mark=warn
+[ "$CR_BLOCKED" -eq 0 ] && cr_mark=ok
+[ "$CR_FAILURE_OVERRIDDEN" = "yes" ] && [ "$CR_BLOCKED" -eq 0 ] && cr_mark=warn
 rev_mark=bad;    case "$REVIEW_STATE" in current) rev_mark=ok;; n/a) rev_mark=warn;; esac
                  [ "$SKIP_REVIEW" -eq 1 ] && rev_mark=warn
 qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; esac
@@ -623,10 +655,10 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   # The status cell states WHICH of the two failure escapes applied, so a cleared
   # failure is never indistinguishable from a green one in the rendered checklist.
   cr_status_note="status=${CR_STATUS_STATE}"
-  [ "$CR_STATUS_STATE" = "failure" ] && [ "$CR_FAILURE_RATE_LIMITED" = "yes" ] && [ "$CR_RL_BACKSTOPPED" = "yes" ] \
-    && cr_status_note="status=failure (auto-satisfied: rate-limited, current local /eng:cr review backstops)"
-  [ "$CR_FAILURE_OVERRIDDEN" = "yes" ] \
-    && cr_status_note="status=failure (OPERATOR OVERRIDE --override-cr-failure; current local /eng:cr review backstops)"
+  case "$CR_FAILURE_DISPOSITION" in
+    cleared-rate-limited) cr_status_note="status=failure (auto-satisfied: rate-limited, current local /eng:cr review backstops)" ;;
+    cleared-override)     cr_status_note="status=failure (OPERATOR OVERRIDE --override-cr-failure; current local /eng:cr review backstops)" ;;
+  esac
   echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) ${cr_verdict_note}, ${cr_status_note}, ${cr_head_note}"
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
@@ -659,12 +691,14 @@ if [ "$WANT_JSON" -eq 1 ]; then
     --arg crhead "$CR_REVIEWED_HEAD" --arg crheadauto "$CR_HEAD_UNREVIEWABLE" \
     --arg crratelimited "$CR_RATE_LIMITED" --arg crrlbackstop "$CR_RL_BACKSTOPPED" \
     --arg crfailrl "$CR_FAILURE_RATE_LIMITED" --arg crfailoverride "$CR_FAILURE_OVERRIDDEN" \
+    --arg crfaildisp "$CR_FAILURE_DISPOSITION" \
     --argjson bk "$([ "$IS_BOOKKEEPING" = "yes" ] && echo true || echo false)" \
     --argjson blockers "$(printf '%s\n' "${BLOCKERS[@]:-}" | jq -R . | jq -sc 'map(select(length>0))')" \
     '{repo:$repo, pr:$pr, head:$head, base:$base, ci:$ci, coderabbit:$cr, coderabbit_status:$crstatus,
       coderabbit_reviewed_head:$crhead, coderabbit_head_auto_satisfied:($crheadauto=="yes"),
       coderabbit_rate_limited:($crratelimited=="yes"), coderabbit_rate_limit_backstopped:($crrlbackstop=="yes"),
       coderabbit_failure_rate_limited:($crfailrl=="yes"), coderabbit_failure_overridden:($crfailoverride=="yes"),
+      coderabbit_failure_disposition:$crfaildisp,
       review:$review, qa:$qa, bookkeeping_fast_lane:$bk, clear:($clear==1), blockers:$blockers}'
 fi
 
@@ -694,10 +728,10 @@ CR_HEAD_EVIDENCE="reviewed-head=${CR_REVIEWED_HEAD}"
 # Same for the CR commit status: when a "failure" was cleared, the evidence records
 # WHICH escape did it, so an audit of the stamp never has to guess.
 CR_STATUS_EVIDENCE="$CR_STATUS_STATE"
-[ "$CR_STATUS_STATE" = "failure" ] && [ "$CR_FAILURE_RATE_LIMITED" = "yes" ] && [ "$CR_RL_BACKSTOPPED" = "yes" ] \
-  && CR_STATUS_EVIDENCE="failure auto-satisfied: rate-limited, local /eng:cr review backstops"
-[ "$CR_FAILURE_OVERRIDDEN" = "yes" ] \
-  && CR_STATUS_EVIDENCE="failure OVERRIDDEN by operator --override-cr-failure (local /eng:cr review backstops)"
+case "$CR_FAILURE_DISPOSITION" in
+  cleared-rate-limited) CR_STATUS_EVIDENCE="failure auto-satisfied: rate-limited, local /eng:cr review backstops" ;;
+  cleared-override)     CR_STATUS_EVIDENCE="failure OVERRIDDEN by operator --override-cr-failure (local /eng:cr review backstops)" ;;
+esac
 
 STAMP_JSON=$(jq -nc \
   --argjson pr "$PR_NUM" --arg head "$HEAD" --arg base "$BASE" \
@@ -715,17 +749,29 @@ STAMP_JSON=$(jq -nc \
 # GitHub commit status - the hard authority the branch ruleset requires. The
 # description carries the auto-satisfy note when it applied, so the audit trail
 # is visible on the commit status itself (descriptions cap ~140 chars).
+# Built by ACCUMULATING every applicable note, not by a run of last-wins overwrites.
+# Overwrites silently dropped information: a docs-only PR whose CR status failed on a
+# rate limit posted only the bookkeeping note, so the most security-relevant fact
+# (a hard CR failure was auto-satisfied) vanished from the most durable audit
+# surface, while the local stamp still recorded it. The two disagreeing is the exact
+# failure this file exists to prevent. Order is by importance, and the join is
+# truncated to GitHub's ~140-char description cap, so the leading (most important)
+# note always survives.
+DESC_NOTES=()
+[ "$CR_FAILURE_OVERRIDDEN" = "yes" ] && DESC_NOTES+=("OPERATOR OVERRIDE --override-cr-failure on a genuine CR failure, local review backstops")
+[ "$CR_FAILURE_DISPOSITION" = "cleared-rate-limited" ] && DESC_NOTES+=("CR status failure = rate limit, local review backstops")
+[ "$CR_RL_BACKSTOPPED" = "yes" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && DESC_NOTES+=("CR rate-limited, local review backstops")
+[ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && DESC_NOTES+=("CR-head auto-satisfied: unreviewable-only HEAD")
+[ "$CR_VERDICT" = "unresolved-waived" ] && DESC_NOTES+=("CR green on HEAD, only OUTDATED CR threads waived")
+[ "$IS_BOOKKEEPING" = "yes" ] && DESC_NOTES+=("bookkeeping fast-lane: docs/inventory only, review+QA waived")
 STATUS_DESC="Cleared by merge-clearance ($ISO)"
-[ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR-head auto-satisfied: unreviewable-only HEAD"
-[ "$CR_RL_BACKSTOPPED" = "yes" ] && STATUS_DESC="Cleared ($ISO); CR rate-limited, local /eng:cr review backstops"
-[ "$CR_STATUS_STATE" = "failure" ] && [ "$CR_FAILURE_RATE_LIMITED" = "yes" ] && [ "$CR_RL_BACKSTOPPED" = "yes" ] \
-  && STATUS_DESC="Cleared ($ISO); CR status failure = rate limit, local /eng:cr review backstops"
-[ "$CR_VERDICT" = "unresolved-waived" ] && STATUS_DESC="Cleared ($ISO); CR green on HEAD, only OUTDATED CR threads waived"
-[ "$IS_BOOKKEEPING" = "yes" ] && STATUS_DESC="Cleared ($ISO) via bookkeeping fast-lane: docs/inventory only, review+QA waived"
-# Last, so it wins over every other note: an operator override is the single most
-# important thing a later reader of this status needs to see.
-[ "$CR_FAILURE_OVERRIDDEN" = "yes" ] \
-  && STATUS_DESC="Cleared ($ISO); OPERATOR OVERRIDE --override-cr-failure on a genuine CR failure; local /eng:cr review backstops"
+if [ "${#DESC_NOTES[@]}" -gt 0 ]; then
+  # printf reuses the format once per argument; strip the leading separator.
+  # (IFS + ${arr[*]} would join on only the FIRST character of IFS, not "; ".)
+  DESC_JOINED=$(printf '; %s' "${DESC_NOTES[@]}"); DESC_JOINED=${DESC_JOINED#'; '}
+  STATUS_DESC="Cleared ($ISO); ${DESC_JOINED}"
+  STATUS_DESC="${STATUS_DESC:0:140}"
+fi
 if gh api -X POST "repos/$REPO/statuses/$HEAD" \
      -f state=success \
      -f context="$CLEARANCE_CONTEXT" \

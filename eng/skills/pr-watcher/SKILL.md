@@ -286,13 +286,15 @@ For every item across `new_issue_comments`, `new_reviews`, `new_review_comments`
 - `out_of_scope` — valid suggestion but outside fix scope, or architectural / cross-cutting.
 - `needs_user_input` — ambiguous, requires human judgment.
 
-**Rate-limit detection (overrides the classifications above).** If any item's body contains the literal `rate limited by coderabbit.ai` (CodeRabbit's rate-limit notice, posted as an auto-generated `status_ping`-shaped comment), set a `cr_rate_limited` flag for this batch. CodeRabbit did NOT actually review this HEAD, so a green `CodeRabbit` commit status here is not a real review: do not let it read as a clean pass. Handle it in the Step 4h short-circuit rather than looping. This is the same rate-limit marker the merge gate keys on. The gate recognizes THREE rate-limit shapes, and the watcher should reach the same conclusion on each:
+**Rate-limit detection (overrides the classifications above).** Set a `cr_rate_limited` flag for this batch when EITHER signal is present: (a) an item's body contains the literal `rate limited by coderabbit.ai` (CodeRabbit's rate-limit notice, posted as an auto-generated `status_ping`-shaped comment), or (b) the CodeRabbit commit status on HEAD is `failure` and its description matches `rate limit` (the same one-call check the `cr_failure` branch in Step 3 makes). CodeRabbit did not COMPLETE a review of this HEAD (in the missing and pending shapes it never reviewed it at all; in the failure shape it may have reviewed HEAD and only tripped the limit on a trailing incremental pass), so its status here is not a real review verdict: do not let it read as a clean pass. Handle it in the Step 4h short-circuit rather than looping. This is the same rate-limit marker the merge gate keys on. The gate recognizes THREE rate-limit shapes, and the watcher should reach the same conclusion on each:
 
 | CR commit status on HEAD | Signal | Gate function |
 |---|---|---|
 | `missing` (CR never started) | marker comment anywhere on the PR | `mc_cr_rate_limited` |
 | `pending`, stuck (started, then hit the limit) | marker is CR's LATEST comment | `mc_cr_rate_limited_latest` |
-| `failure` (an incremental pass burned the limit) | status DESCRIPTION says rate limited, and/or the marker comment | `mc_cr_failure_rate_limited` |
+| `failure` (an incremental pass burned the limit) | status DESCRIPTION says rate limited (non-negated), or the marker is CR's LATEST comment | `mc_cr_failure_rate_limited` |
+
+Note the marker strictness: only row 1 accepts the marker anywhere on the PR, and it can afford to because a `missing` status means CR never posted anything for this HEAD at all. Rows 2 and 3 require the marker to be CR's LATEST comment, because in both of those CR demonstrably ran: a stale marker from an earlier commit must not make a later, genuine CR verdict read as a rate limit.
 
 In every shape the gate treats the rate limit as satisfied ONLY when a current local `/eng:cr` review backstops the HEAD, so the watcher's advice ("run `/eng:cr`, then land") is exactly what the gate will require. A GENUINE CR failure (none of these signals) is different: the gate blocks it unless the operator passes `--override-cr-failure`, which also requires the current local review. The watcher never makes that call; it exits and asks the human to inspect.
 
