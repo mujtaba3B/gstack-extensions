@@ -67,13 +67,25 @@ SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 # Session arming (shared ship-gate-arm-lib.sh, kind "ship"). The marker lets the
 # later PreToolUse:Bash event know a real /ship is in flight.
 #
-# ARM_TTL bounds how long after a /ship invocation an armed Bash command may still
-# mint, i.e. it must span a whole /ship run (invocation -> review/build -> the
-# final `gh pr create`). Kept at 1200s to MATCH the legacy window: the old design
-# minted a 1200s freshness sentinel at /ship invocation, so the create already had
-# to land within 1200s of invocation. Do not widen this without reason; a longer
-# window only enlarges the post-/ship blast radius (any ~/dev repo cd'd into during
-# the window self-clears), which is the accident-guard's main cost.
+# ARM_TTL bounds how long the armed window may go IDLE (no ~/dev-repo Bash activity)
+# before the Bash-mint path goes inert. It is NOT a hard ceiling on the whole /ship
+# run: the Bash branch SLIDES the window forward on every armed Bash command that
+# mints into the target repo (see the Bash case below), so an actively-working
+# /ship keeps itself armed for as long as it keeps running repo commands. This is
+# the fix for the "unpassable long ship" bug: previously the arm marker was written
+# ONCE at /ship invocation and never refreshed, so ARM_TTL after invocation the
+# Bash-mint died, the sentinel froze at its last mint, and any /ship whose
+# invocation->`gh pr create` span exceeded 1200s (routine: review + CodeRabbit + a
+# QA-plan detour) found the sentinel expired at create time. With sliding, only an
+# idle gap LONGER than ARM_TTL (a run left untouched for 20m) lapses the window; a
+# genuine active run never does.
+#
+# 1200s is the per-slide IDLE budget, matched to the sentinel's own TTL. Do not
+# widen it without reason: the sliding property (not a larger fixed window) is what
+# spans a long run, and a bigger fixed TTL only makes clearance linger longer AFTER
+# a ship ends. The post-/ship blast radius (any ~/dev repo cd'd into while armed
+# self-clears) is unchanged in KIND and now activity-bounded rather than fixed at
+# 1200s-from-invocation.
 ARM_TTL=1200
 ARM_DIR="${TMPDIR:-/tmp}"
 arm_session()        { ga_arm       "ship" "$SESSION" "$ARM_DIR" "$(date +%s)"; }
@@ -97,10 +109,14 @@ mint() {
   printf '%s\n' "$sentinel" > "$tmp" 2>/dev/null && mv -f "$tmp" "$gitdir/ship-pr-clearance" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }
 
-# mint_for_dir <workdir> <trigger> : mint iff <workdir> is a ~/dev repo.
+# mint_for_dir <workdir> <trigger> : mint iff <workdir> is a ~/dev repo. Returns 0
+# when <workdir> is an in-scope ~/dev repo (the mint path ran; the sentinel write
+# itself is best-effort), non-zero when out of scope - the Bash branch reads this to
+# slide the arm window only for an in-scope target repo. Skill/prompt callers ignore
+# the return value.
 mint_for_dir() {
   local resolved top gitdir
-  resolved=$(sg_dev_repo_gitdir "$1") || return 0
+  resolved=$(sg_dev_repo_gitdir "$1") || return 1
   top=${resolved%%$'\t'*}
   gitdir=${resolved#*$'\t'}
   mint "$gitdir" "$top" "$2"
@@ -157,7 +173,20 @@ case "$EVENT" in
         CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
         [ -n "$CMD" ] || exit 0
         WORKDIR=$(sg_workdir_from_cmd "$CMD" "$CWD")
-        mint_for_dir "$WORKDIR" "ship-bash"
+        if mint_for_dir "$WORKDIR" "ship-bash"; then
+          # SLIDE the arm window forward: an actively-working /ship (one still
+          # running repo commands) keeps itself armed, so the Bash-mint keeps the
+          # sentinel fresh for the WHOLE run instead of freezing ARM_TTL after
+          # invocation. This is the core of the long-ship fix. It can only EXTEND an
+          # already-armed session: we reach here only past `session_armed_fresh`
+          # above, and only re-arm when the command resolved to an in-scope ~/dev
+          # repo (mint_for_dir returned 0). It therefore never ARMS an unarmed session -
+          # a bare `cd ~/dev/repo && gh pr create` with no prior /ship is still
+          # never armed and still blocks - and never resurrects an expired window
+          # (an idle gap > ARM_TTL fails session_armed_fresh and we exit before
+          # here). The window thus tracks genuine, still-active /ship repo activity.
+          arm_session
+        fi
         ;;
       *) exit 0 ;;
     esac
