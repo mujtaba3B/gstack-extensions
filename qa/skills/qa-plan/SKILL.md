@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 2.0.0
+version: 2.1.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -160,7 +160,14 @@ Mechanics:
 
 Publish a rendered, always-linked view of the same plan as a Claude **artifact**, so there is one pretty page to point at. The artifact is a **companion**, not the source of truth: the gates only ever read the PR-body `## QA` section (Step 4). The artifact can carry the full mechanics that would bloat the table.
 
-1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and swap the content between the `FILL:` markers: the **title**, the **Development** ELI5 + rows, the **Production** ELI5 + rows, the **Production artifacts**, and the **Definition of Done**. The artifact is the leaner companion view: it deliberately drops the QA-driver line, the `Standard (all green)` line, and the QA-posture line (those live in the PR body, the source of truth). The template is self-contained (inline CSS + data-URI images, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NEVER square-bracket checkboxes (the artifact is never gate-parsed, so glyphs are free here).
+1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and swap the content between the `FILL:` markers: the **title**, the story-first **context blocks** (STORY / SOLUTION / PROOF, below), the **Development** ELI5 + rows, the **Production** ELI5 + rows, the **Production artifacts**, and the **Definition of Done**. The artifact is the leaner companion view: it deliberately drops the QA-driver line, the `Standard (all green)` line, and the QA-posture line (those live in the PR body, the source of truth).
+
+   **Story-first context blocks (required).** The page opens with three blocks ABOVE the Development section, so a reader gets what problem is being solved, what is being built, and how the plan proves it before any table:
+   - `FILL: STORY` - the change's user story in one sentence (`As <user>, when <situation>, I want <capability>, so <outcome>`), then the observed problem in a muted line (the incident, gap, or pain that motivated the change, with date/PR when one exists). Derive it from the same success criteria Step 2 pulled (spec, issue, mockup, or the user's own words); never invent it.
+   - `FILL: SOLUTION` - one paragraph naming what is being built to deliver that outcome, concrete enough that the QA rows below visibly test it.
+   - `FILL: PROOF` - 2-4 numbered bullets mapping the plan to the story: each states one thing the plan establishes and ends with a muted pointer to the rows that establish it (for example "(Dev rows 1-3.)", "(Prod row 2.)"). This is the bridge that lets the reader see the QA verifies the solution actually solves the story's problem.
+
+   The template is self-contained (inline CSS + data-URI images, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NEVER square-bracket checkboxes (the artifact is never gate-parsed, so glyphs are free here).
 
    **Driver avatars.** The `Tester` cell shows a logo-only avatar that carries the driver's identity for assistive tech via `role="img"` + `aria-label` (the `title` is the hover tooltip), with the decorative inner `.pic` marked `aria-hidden`: `<span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic <id>" aria-hidden="true"></span></span>`, where `<id>` is a roster id with a built-in avatar (`claude` `mutwo` `muthree` `mufour` `mujtaba`). For any driver without one, use the initials fallback: `<span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic generic" aria-hidden="true">M5</span></span>`. The template's header comment documents how to add a new avatar (inline its `github.com/<handle>.png` as a data URI in a new `.pic.<id>` rule; `claude` is a hand-drawn inline-SVG burst on Anthropic clay).
 

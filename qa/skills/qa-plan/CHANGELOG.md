@@ -1,5 +1,18 @@
 # qa:plan CHANGELOG
 
+## v2.1.0
+
+Story-first companion artifact.
+
+- The artifact template now opens with three context blocks above the
+  Development section: **The story** (the change's user story plus the observed
+  problem), **The solution being built**, and **How this plan proves it**
+  (numbered bullets mapping the plan's rows to the story's outcome), each with
+  its own FILL marker (`STORY` / `SOLUTION` / `PROOF`). Step 4b documents how to
+  fill them from the Step 2 success criteria (never invented). Driven by
+  Mujtaba's 2026-07-20 feedback: a QA artifact should say what problem is being
+  solved and what the solution is before showing any test rows.
+
 ## v2.0.0
 
 Readability overhaul + a pointable companion artifact.
