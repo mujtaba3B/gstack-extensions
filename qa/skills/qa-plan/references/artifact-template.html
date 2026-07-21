@@ -2,7 +2,9 @@
 <!--
   /qa:plan companion-artifact template. COMPANION view, never gate-parsed.
   Clone this file to the scratchpad and swap the content between the FILL markers:
-    FILL: TITLE / DEV ELI5 / DEV ROWS / PROD ELI5 / PROD ROWS / ARTIFACTS / DOD
+    FILL: TITLE / STORY / SOLUTION / PROOF / DEV ELI5 / DEV ROWS / PROD ELI5 / PROD ROWS / ARTIFACTS / DOD
+  The page is story-first: the reader gets the user story (problem + outcome), the
+  solution being built, and how the plan proves it BEFORE any QA table.
   Self-contained (inline CSS + data-URI images) so it satisfies the artifact CSP.
   Theme-aware (light + dark). The default content is a worked example so it renders standalone.
 
@@ -40,6 +42,17 @@
   header.plan{margin-bottom:8px;}
   .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:650;margin:0 0 10px;}
   h1.title{font-size:clamp(24px,3.4vw,34px);line-height:1.12;margin:0 0 8px;letter-spacing:-.02em;text-wrap:balance;font-weight:750;}
+  /* story-first context blocks (The story / The solution / How this plan proves it) */
+  .context{margin-top:22px;display:grid;gap:20px;}
+  .block.story{border-left:3px solid var(--accent);}
+  .block.solution{border-left:3px solid var(--live);}
+  .story-quote{font-size:15.5px;font-weight:600;line-height:1.5;margin:0 0 12px;text-wrap:pretty;}
+  .story-quote .role{color:var(--accent);}
+  .incident{font-size:13.5px;color:var(--muted);}
+  ul.proof{list-style:none;padding:0;margin:0;display:grid;gap:10px;}
+  ul.proof li{display:flex;gap:10px;align-items:flex-start;font-size:14px;max-width:78ch;}
+  ul.proof .tick{color:var(--live);font-weight:700;line-height:1.4;flex:0 0 auto;}
+  ul.proof .where{color:var(--muted);font-size:12.5px;}
   section.phase{margin-top:34px;}
   .phase-head{display:flex;align-items:center;gap:11px;margin:0 0 12px;}
   .phase-head h2{font-size:18px;margin:0;font-weight:700;letter-spacing:-.01em;}
@@ -65,7 +78,7 @@
   .pic.generic{background:linear-gradient(135deg,#5b6675,#3d4756);}
   .aux{margin-top:34px;display:grid;gap:20px;}
   .block{background:var(--panel);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;}
-  .block h3{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:700;}
+  .block h3,.context .block h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:700;}
   .block.artifact{border-left:3px solid var(--live);}
   .block p{margin:0 0 9px;}
   .block p:last-child{margin-bottom:0;}
@@ -81,6 +94,29 @@
     <!-- FILL: TITLE -->
     <h1 class="title">email-hero: LLM-failure health check</h1>
   </header>
+
+  <div class="context">
+    <div class="block story">
+      <h2>The story</h2>
+      <!-- FILL: STORY. The user story (As <user>, when <situation>, I want <capability>, so <outcome>), then the observed problem in muted text. Pull it from the change's success criteria / issue / PR summary; never invent it. -->
+      <p class="story-quote"><span class="role">As Mujtaba,</span> when email-hero's LLM starts failing in production, I want the health check to notice and flag it, so silent LLM breakage surfaces in the mini's triage instead of going unnoticed for days.</p>
+      <p class="incident">Observed problem: LLM calls were failing quietly inside the daemon; <code>email-hero health</code> stayed green because nothing recorded the failures where it could see them.</p>
+    </div>
+    <div class="block solution">
+      <h2>The solution being built</h2>
+      <!-- FILL: SOLUTION. One paragraph: what is being built to deliver the story's outcome. -->
+      <p>A per-failure sink records every LLM failure to <code>llm-failures.jsonl</code>, and <code>email-hero health</code> counts the failures inside its window, exiting non-zero past <code>--llm-max-failures</code> so mini check #8 turns red when the LLM is breaking.</p>
+    </div>
+    <div class="block">
+      <h2>How this plan proves it</h2>
+      <!-- FILL: PROOF. 2-4 numbered bullets mapping the plan's rows to the story's outcome; each ends with a muted (Dev/Prod row N) pointer. -->
+      <ul class="proof">
+        <li><span class="tick">1.</span><span>The counting rules are right in isolation: unit tests cover in-window counting, torn lines, and the cap. <span class="where">(Dev row 1.)</span></span></li>
+        <li><span class="tick">2.</span><span>A forced failure on a real copy is noticed end to end: the sink records it and <code>health</code> exits non-zero at the threshold. <span class="where">(Dev row 2.)</span></span></li>
+        <li><span class="tick">3.</span><span>The live daemon on the mini behaves the same after deploy, which is the story's outcome verified in production. <span class="where">(Prod row 1.)</span></span></li>
+      </ul>
+    </div>
+  </div>
 
   <section class="phase dev">
     <div class="phase-head"><h2>🖥️ Development</h2></div>
