@@ -78,7 +78,7 @@
   .pic.generic{background:linear-gradient(135deg,#5b6675,#3d4756);}
   .aux{margin-top:34px;display:grid;gap:20px;}
   .block{background:var(--panel);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;}
-  .block h3{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:700;}
+  .block h3,.context .block h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:700;}
   .block.artifact{border-left:3px solid var(--live);}
   .block p{margin:0 0 9px;}
   .block p:last-child{margin-bottom:0;}
@@ -97,18 +97,18 @@
 
   <div class="context">
     <div class="block story">
-      <h3>The story</h3>
+      <h2>The story</h2>
       <!-- FILL: STORY. The user story (As <user>, when <situation>, I want <capability>, so <outcome>), then the observed problem in muted text. Pull it from the change's success criteria / issue / PR summary; never invent it. -->
       <p class="story-quote"><span class="role">As Mujtaba,</span> when email-hero's LLM starts failing in production, I want the health check to notice and flag it, so silent LLM breakage surfaces in the mini's triage instead of going unnoticed for days.</p>
       <p class="incident">Observed problem: LLM calls were failing quietly inside the daemon; <code>email-hero health</code> stayed green because nothing recorded the failures where it could see them.</p>
     </div>
     <div class="block solution">
-      <h3>The solution being built</h3>
+      <h2>The solution being built</h2>
       <!-- FILL: SOLUTION. One paragraph: what is being built to deliver the story's outcome. -->
       <p>A per-failure sink records every LLM failure to <code>llm-failures.jsonl</code>, and <code>email-hero health</code> counts the failures inside its window, exiting non-zero past <code>--llm-max-failures</code> so mini check #8 turns red when the LLM is breaking.</p>
     </div>
     <div class="block">
-      <h3>How this plan proves it</h3>
+      <h2>How this plan proves it</h2>
       <!-- FILL: PROOF. 2-4 numbered bullets mapping the plan's rows to the story's outcome; each ends with a muted (Dev/Prod row N) pointer. -->
       <ul class="proof">
         <li><span class="tick">1.</span><span>The counting rules are right in isolation: unit tests cover in-window counting, torn lines, and the cap. <span class="where">(Dev row 1.)</span></span></li>
