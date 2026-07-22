@@ -3,10 +3,18 @@
   /qa:plan companion-artifact template. COMPANION view, never gate-parsed.
   Clone this file to the scratchpad and swap the content between the FILL markers:
     FILL: TITLE / STORY / SOLUTION / PROOF / DEV ELI5 / DEV ROWS / PROD ELI5 / PROD ROWS / ARTIFACTS / DOD
+    (DEV ROWS have NO checkbox cell; DOD is plain bullets; SOLUTION + ARTIFACTS are bullet lists.)
   The page is story-first: the reader gets the user story (problem + outcome), the
-  solution being built, and how the plan proves it BEFORE any QA table.
+  solution, and how the plan proves it BEFORE any QA table. Headings are terse:
+  "Story" / "Solution" / "How this plan proves it". The Story block ends with a
+  muted "Linked issue:" line pointing at the GitHub issue when one exists (write
+  "none" plus provenance when it does not). The Solution and Production-artifacts
+  blocks are BULLET LISTS (ul.proof), not paragraphs. The artifact carries NO
+  checkboxes of any kind (no column in the Dev table, no glyphs in the DoD);
+  checkbox state lives only in the PR body's ## QA section, which the gates read.
   Self-contained (inline CSS + data-URI images) so it satisfies the artifact CSP.
   Theme-aware (light + dark). The default content is a worked example so it renders standalone.
+  (Restructured 2026-07-22: terse headings, bulleted Solution/Artifacts, checkbox-free.)
 
   DRIVER AVATARS: the Tester column shows a logo-only avatar. It carries the driver's
   identity for assistive tech via role="img" + aria-label (title= is the hover tooltip);
@@ -42,7 +50,7 @@
   header.plan{margin-bottom:8px;}
   .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:650;margin:0 0 10px;}
   h1.title{font-size:clamp(24px,3.4vw,34px);line-height:1.12;margin:0 0 8px;letter-spacing:-.02em;text-wrap:balance;font-weight:750;}
-  /* story-first context blocks (The story / The solution / How this plan proves it) */
+  /* story-first context blocks (Story / Solution / How this plan proves it) */
   .context{margin-top:22px;display:grid;gap:20px;}
   .block.story{border-left:3px solid var(--accent);}
   .block.solution{border-left:3px solid var(--live);}
@@ -63,7 +71,6 @@
   thead th{text-align:left;font-weight:650;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--hair-strong);white-space:nowrap;}
   tbody td{padding:13px 16px;border-bottom:1px solid var(--hair);vertical-align:top;}
   tbody tr:last-child td{border-bottom:none;}
-  td.check{width:34px;text-align:center;font-size:18px;color:var(--accent);line-height:1;}
   td.tester{white-space:nowrap;}
   td.expect{color:var(--muted);}
   td.notes{color:var(--muted);font-size:13px;}
@@ -83,9 +90,6 @@
   .block p{margin:0 0 9px;}
   .block p:last-child{margin-bottom:0;}
   .block .mono{font-size:13px;word-break:break-word;}
-  ul.dod{list-style:none;padding:0;margin:0;display:grid;gap:9px;}
-  ul.dod li{display:flex;gap:10px;align-items:flex-start;font-size:14px;}
-  ul.dod .box{color:var(--accent);font-size:17px;line-height:1.35;}
 </style>
 
 <div class="wrap">
@@ -97,15 +101,20 @@
 
   <div class="context">
     <div class="block story">
-      <h2>The story</h2>
-      <!-- FILL: STORY. The user story (As <user>, when <situation>, I want <capability>, so <outcome>), then the observed problem in muted text. Pull it from the change's success criteria / issue / PR summary; never invent it. -->
+      <h2>Story</h2>
+      <!-- FILL: STORY. The user story (As <user>, when <situation>, I want <capability>, so <outcome>), then the observed problem in muted text, then a muted 'Linked issue:' line: an <a> to the GitHub issue when one exists, else 'none' plus where the change originated. Pull it from the change's success criteria / issue / PR summary; never invent it. -->
       <p class="story-quote"><span class="role">As Mujtaba,</span> when email-hero's LLM starts failing in production, I want the health check to notice and flag it, so silent LLM breakage surfaces in the mini's triage instead of going unnoticed for days.</p>
       <p class="incident">Observed problem: LLM calls were failing quietly inside the daemon; <code>email-hero health</code> stayed green because nothing recorded the failures where it could see them.</p>
+      <p class="incident">Linked issue: none (change originated in-session).</p>
     </div>
     <div class="block solution">
-      <h2>The solution being built</h2>
-      <!-- FILL: SOLUTION. One paragraph: what is being built to deliver the story's outcome. -->
-      <p>A per-failure sink records every LLM failure to <code>llm-failures.jsonl</code>, and <code>email-hero health</code> counts the failures inside its window, exiting non-zero past <code>--llm-max-failures</code> so mini check #8 turns red when the LLM is breaking.</p>
+      <h2>Solution</h2>
+      <!-- FILL: SOLUTION. Bullet list (ul.proof, bullet tick spans): 2-5 short bullets naming what is being built to deliver the story's outcome. Never a paragraph. -->
+      <ul class="proof">
+        <li><span class="tick">&#8226;</span><span>A per-failure sink records every LLM failure to <code>llm-failures.jsonl</code>.</span></li>
+        <li><span class="tick">&#8226;</span><span><code>email-hero health</code> counts failures inside its window and exits non-zero past <code>--llm-max-failures</code>.</span></li>
+        <li><span class="tick">&#8226;</span><span>Mini check #8 turns red when the LLM is breaking, surfacing silent failures in triage.</span></li>
+      </ul>
     </div>
     <div class="block">
       <h2>How this plan proves it</h2>
@@ -124,18 +133,16 @@
     <p class="eli5">On a throwaway copy we fake an LLM failure and check the health command notices and flags it, all before this can merge.</p>
     <div class="card"><div class="tablewrap">
       <table>
-        <thead><tr><th>✓</th><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
         <tbody>
-          <!-- FILL: DEV ROWS. Use ☐ (open) / ☑ (passed) in the check cell, never square-bracket checkboxes. Tester = avatar span. -->
+          <!-- FILL: DEV ROWS. NO checkbox cell (pass/fail state lives in the PR body, the source of truth the gates read). Tester = avatar span. -->
           <tr>
-            <td class="check">☐</td>
             <td class="tester"><span class="av" title="claude" role="img" aria-label="claude"><span class="pic claude" aria-hidden="true"></span></span></td>
             <td>Unit tests for <code>llm_health</code></td>
             <td class="expect">Assertions pass; sink fires once per failure; fail-safes never raise</td>
             <td class="notes">in-window counting, torn-line skip, cap trim</td>
           </tr>
           <tr>
-            <td class="check">☐</td>
             <td class="tester"><span class="av" title="mutwo" role="img" aria-label="mutwo"><span class="pic mutwo" aria-hidden="true"></span></span></td>
             <td>E2E on mini: force an LLM failure, run <code>health --llm-max-failures 1</code></td>
             <td class="expect">Row in <code>llm-failures.jsonl</code>; exits <code>1</code> at threshold 1, <code>0</code> at high</td>
@@ -169,17 +176,20 @@
   <div class="aux">
     <div class="block artifact">
       <h3>Production artifacts</h3>
-      <!-- FILL: ARTIFACTS. The exact thing production runs (image digest/tag, bundle id, deploy id) + host + how exercised. -->
-      <p><span class="mono">email-hero</span> on <code>mutwos-mac-mini</code> at the merged <code>main</code> commit, exercised by <code>email-hero health</code> (check #8, every 600s) + the <code>com.emailhero.watch</code> daemon.</p>
+      <!-- FILL: ARTIFACTS. Bullet list (ul.proof): one bullet per artifact fact: the exact thing production runs (image digest/tag, bundle id, deploy id), the host, how it is exercised. Never a paragraph. -->
+      <ul class="proof">
+        <li><span class="tick">&#8226;</span><span><span class="mono">email-hero</span> on <code>mutwos-mac-mini</code> at the merged <code>main</code> commit.</span></li>
+        <li><span class="tick">&#8226;</span><span>Exercised by <code>email-hero health</code> (check #8, every 600s) + the <code>com.emailhero.watch</code> daemon.</span></li>
+      </ul>
     </div>
     <div class="block">
       <h3>Definition of Done</h3>
-      <ul class="dod">
-        <!-- FILL: DOD. Use ☐ / ☑ glyphs. -->
-        <li><span class="box">☐</span><span>Tests written and green</span></li>
-        <li><span class="box">☐</span><span>Independent local review clear (<code>/eng:cr</code>) + CodeRabbit addressed</span></li>
-        <li><span class="box">☐</span><span>Docs updated where user-facing</span></li>
-        <li><span class="box">☐</span><span><code>where-things-run.json</code> bumped if the deploy changed hosts</span></li>
+      <ul class="proof">
+        <!-- FILL: DOD. Plain bullets, no checkbox glyphs (checkbox state lives in the PR body). -->
+        <li><span class="tick">&#8226;</span><span>Tests written and green</span></li>
+        <li><span class="tick">&#8226;</span><span>Independent local review clear (<code>/eng:cr</code>) + CodeRabbit addressed</span></li>
+        <li><span class="tick">&#8226;</span><span>Docs updated where user-facing</span></li>
+        <li><span class="tick">&#8226;</span><span><code>where-things-run.json</code> bumped if the deploy changed hosts</span></li>
       </ul>
     </div>
   </div>

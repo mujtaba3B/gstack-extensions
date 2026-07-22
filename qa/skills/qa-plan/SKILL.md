@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 2.1.0
+version: 2.2.0
 description: |
   QA Quincey's planning skill: turn a change's success criteria into a two-phase
   QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
@@ -162,12 +162,14 @@ Publish a rendered, always-linked view of the same plan as a Claude **artifact**
 
 1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and swap the content between the `FILL:` markers: the **title**, the story-first **context blocks** (STORY / SOLUTION / PROOF, below), the **Development** ELI5 + rows, the **Production** ELI5 + rows, the **Production artifacts**, and the **Definition of Done**. The artifact is the leaner companion view: it deliberately drops the QA-driver line, the `Standard (all green)` line, and the QA-posture line (those live in the PR body, the source of truth).
 
-   **Story-first context blocks (required).** The page opens with three blocks ABOVE the Development section, so a reader gets what problem is being solved, what is being built, and how the plan proves it before any table:
-   - `FILL: STORY` - the change's user story in one sentence (`As <user>, when <situation>, I want <capability>, so <outcome>`), then the observed problem in a muted line (the incident, gap, or pain that motivated the change, with date/PR when one exists). Derive it from the same success criteria Step 2 pulled (spec, issue, mockup, or the user's own words); never invent it.
-   - `FILL: SOLUTION` - one paragraph naming what is being built to deliver that outcome, concrete enough that the QA rows below visibly test it.
+   **Story-first context blocks (required).** The page opens with three blocks ABOVE the Development section, headed tersely **"Story"**, **"Solution"**, and **"How this plan proves it"**, so a reader gets what problem is being solved, what is being built, and how the plan proves it before any table:
+   - `FILL: STORY` - the change's user story in one sentence (`As <user>, when <situation>, I want <capability>, so <outcome>`), then the observed problem in a muted line (the incident, gap, or pain that motivated the change, with date/PR when one exists), then a muted **`Linked issue:`** line: link the GitHub issue when one exists; otherwise write `none` plus where the change originated (e.g. "requested in-session, <date>"). Derive it all from the same success criteria Step 2 pulled (spec, issue, mockup, or the user's own words); never invent it.
+   - `FILL: SOLUTION` - a short **bullet list** (2-5 bullets, `ul.proof` markup), never a paragraph, naming what is being built to deliver that outcome, concrete enough that the QA rows below visibly test it.
    - `FILL: PROOF` - 2-4 numbered bullets mapping the plan to the story: each states one thing the plan establishes and ends with a muted pointer to the rows that establish it (for example "(Dev rows 1-3.)", "(Prod row 2.)"). This is the bridge that lets the reader see the QA verifies the solution actually solves the story's problem.
 
-   The template is self-contained (inline CSS + data-URI images, theme-aware, no external assets, which the artifact CSP requires) and uses display checkbox glyphs (`☐` / `☑`), NEVER square-bracket checkboxes (the artifact is never gate-parsed, so glyphs are free here).
+   The **Production artifacts** block is likewise a **bullet list** (one bullet per artifact fact), never a paragraph.
+
+   The template is self-contained (inline CSS + data-URI images, theme-aware, no external assets, which the artifact CSP requires) and carries **NO checkboxes of any kind**: no checkbox column in the Development table, plain bullets in the Definition of Done, and never square-bracket boxes. Checkbox state lives ONLY in the PR body's `## QA` section, the source of truth the merge gates read; the artifact is the readable view of the plan, not a tracker.
 
    **Driver avatars.** The `Tester` cell shows a logo-only avatar that carries the driver's identity for assistive tech via `role="img"` + `aria-label` (the `title` is the hover tooltip), with the decorative inner `.pic` marked `aria-hidden`: `<span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic <id>" aria-hidden="true"></span></span>`, where `<id>` is a roster id with a built-in avatar (`claude` `mutwo` `muthree` `mufour` `mujtaba`). For any driver without one, use the initials fallback: `<span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic generic" aria-hidden="true">M5</span></span>`. The template's header comment documents how to add a new avatar (inline its `github.com/<handle>.png` as a data URI in a new `.pic.<id>` rule; `claude` is a hand-drawn inline-SVG burst on Anthropic clay).
 
@@ -175,7 +177,7 @@ Publish a rendered, always-linked view of the same plan as a Claude **artifact**
    - **Re-run (URL already in the PR body):** read the existing `📄 Plan view:` URL from the body and call `Artifact` with that same `file_path` AND `url: <existing-url>` so it updates in place and the link never changes.
    - **First run (no URL yet):** call `Artifact` with the `file_path` (no `url`). Use a **stable** `title` and `favicon` (🧪) so redeploys stay one artifact. Take the returned URL and write it into the `📄 Plan view:` line of the PR body (re-edit the body via `gh pr edit`). If there is no PR yet, hold the URL and include the `📄 Plan view:` line when `/ship` folds the section in (or hand the user the URL to paste).
 
-3. **Tell the user it is private.** Artifacts are private by default. If a reviewer or teammate needs to open the plan view, the user shares it from the artifact page's share menu; the PR body link works for anyone who can see the PR regardless. Note that the artifact is a **snapshot at plan-authoring time** (boxes unchecked); the live checkbox state is in the PR body. Re-running `/qa:plan` refreshes the artifact.
+3. **Tell the user it is private.** Artifacts are private by default. If a reviewer or teammate needs to open the plan view, the user shares it from the artifact page's share menu; the PR body link works for anyone who can see the PR regardless. Note that the artifact is a **snapshot at plan-authoring time** and deliberately carries no checkboxes; the live checkbox state is in the PR body's `## QA` section. Re-running `/qa:plan` refreshes the artifact.
 
 If the `Artifact` tool is unavailable (non-interactive / headless run), skip this step, keep the PR-body section (the source of truth) intact, and note that the companion artifact was not published.
 

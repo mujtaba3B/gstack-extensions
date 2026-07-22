@@ -1,5 +1,17 @@
 # qa:plan CHANGELOG
 
+## v2.2.0
+
+Checkbox-free, skimmable companion artifact.
+
+- Template restructure (Mujtaba's 2026-07-22 feedback): terse "Story" /
+  "Solution" headings; the Solution and Production-artifacts blocks are bullet
+  lists, never paragraphs; the Story block ends with a muted "Linked issue:"
+  line (the GitHub issue when one exists, else "none" + provenance); and the
+  artifact carries NO checkboxes at all (no Dev-table column, plain-bullet
+  Definition of Done). Checkbox state lives only in the PR body's ## QA
+  section, which the merge gates read. Step 4b instructions updated to match.
+
 ## v2.1.0
 
 Story-first companion artifact.
