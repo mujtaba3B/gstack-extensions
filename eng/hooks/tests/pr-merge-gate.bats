@@ -106,6 +106,18 @@ ld_sentinel() { printf '{"set_at_epoch":%s,"ttl_seconds":1800,"repo":"owner/name
   echo "$output" | grep -q '"decision":"block"'
 }
 
+@test "block: an EMPTY env-var prefix before gh is still caught (no stamp)" {
+  # Regression. The command-position prefix required a non-empty assignment
+  # value ([^[:space:]]+), so `FOO= gh pr merge` matched neither the bare form
+  # (no shell separator before gh) nor the env-prefixed one, and sailed through.
+  # Found while building deploy-gate.sh, which copied this same prefix; the
+  # quantifier is now `*` in every gate that carries it.
+  opt_in
+  run bash -c "printf '%s' '$(payload "cd $REPO && FOO= gh pr merge")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
 @test "merge gate: sibling lib resolution ignores a bogus CLAUDE_PLUGIN_ROOT (env-independence)" {
   opt_in
   run bash -c "cd '$REPO' && CLAUDE_PLUGIN_ROOT=/nonexistent/other-plugin printf '%s' '$(payload "gh pr merge 1 --squash")' | bash '$GATE'"

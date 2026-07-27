@@ -29,7 +29,7 @@ CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 # Match `gh pr create` at command position (line start or after a shell
 # separator), tolerating env-var prefixes and an absolute/relative path to gh, so
 # the phrase inside a quoted arg / heredoc body does not trip the gate.
-printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
+printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
 
 # Resolve the repo the command targets, honoring a leading `cd <dir>` (hooks run
 # from the session cwd, not the cwd a `cd ... &&` switched into).
