@@ -28,12 +28,15 @@ tuples() {
   expected=$(printf '%s\n' \
     'PostToolUse|Bash|review-skill-stamp.sh' \
     'PostToolUse|Bash|ship-watch-nudge.sh' \
+    'PreToolUse|Bash|deploy-gate.sh' \
     'PreToolUse|Bash|land-deploy-sentinel.sh' \
     'PreToolUse|Bash|pr-merge-gate.sh' \
     'PreToolUse|Bash|ship-gate-sentinel.sh' \
     'PreToolUse|Bash|ship-pr-gate.sh' \
+    'PreToolUse|Skill|deploy-gate.sh' \
     'PreToolUse|Skill|land-deploy-sentinel.sh' \
     'PreToolUse|Skill|ship-gate-sentinel.sh' \
+    'UserPromptSubmit||deploy-gate.sh' \
     'UserPromptSubmit||land-deploy-sentinel.sh' \
     'UserPromptSubmit||ship-gate-sentinel.sh' \
     | sort)

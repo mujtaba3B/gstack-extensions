@@ -44,7 +44,7 @@
 #   output), so the loose match is acceptable and kept byte-identical to the gate on
 #   purpose. Echo "no" otherwise.
 swn_is_pr_create() {
-  printf '%s' "$1" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' \
+  printf '%s' "$1" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' \
     && { echo "yes"; return 0; }
   echo "no"; return 1
 }

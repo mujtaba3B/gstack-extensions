@@ -54,7 +54,7 @@ CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 # non-malicious prefixes: leading env-var assignments (`GH_TOKEN=x gh pr create`)
 # and an absolute/relative path to gh (`/opt/homebrew/bin/gh pr create`). This is
 # an accident-guard, so deeply obfuscated forms (bash -c "...") are out of scope.
-printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
+printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
 
 command -v git >/dev/null 2>&1 || exit 0
 

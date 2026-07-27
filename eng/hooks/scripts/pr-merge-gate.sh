@@ -41,7 +41,7 @@ CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 # (`/opt/homebrew/bin/gh pr merge`). This is an accident-guard, not an
 # adversary-proof sandbox (the GitHub required check is the real authority), so
 # deeply obfuscated forms like `bash -c "..."` are out of scope by design.
-printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' || exit 0
+printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' || exit 0
 
 # Shared repo resolver (single source of truth with land-deploy-sentinel.sh), so the
 # gate and the sentinel can never disagree about which repo a command targets.
