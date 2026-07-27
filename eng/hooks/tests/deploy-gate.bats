@@ -115,6 +115,95 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
   assert_allow
 }
 
+@test "allow: a read-only flag later in the same invocation" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh --force --dry-run")"
+  assert_allow
+}
+
+# --- regressions: the read-only escape must not be a bypass ------------------
+# Caught in review. The escape originally tested for the bare word `check`
+# ANYWHERE in the command, so chaining a real deploy to a check read as
+# read-only and deployed straight past the gate.
+
+@test "block: a real deploy chained to a check is NOT read-only" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh && devops check")"
+  assert_block
+}
+
+@test "block: a real deploy followed by a check after a semicolon" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh; devops check")"
+  assert_block
+}
+
+@test "block: the word check in a trailing comment is not read-only" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh --force # check the mini after")"
+  assert_block
+}
+
+# --- regressions: the trailing boundary must accept shell separators ---------
+# Also caught in review. With a whitespace-or-end-only boundary, a deploy
+# immediately followed by a separator was not recognized as a deploy at all.
+
+@test "block: entrypoint immediately followed by a semicolon" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh;echo done")"
+  assert_block
+}
+
+@test "block: entrypoint immediately followed by && (no space)" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh&&echo done")"
+  assert_block
+}
+
+@test "block: entrypoint inside a subshell" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "(scripts/deploy.sh)")"
+  assert_block
+}
+
+# =========================== degraded inputs still gate ======================
+# The gate fails OPEN on missing dependencies, but a malformed or thin config is
+# not a missing dependency: it must still gate, or a corrupt marker would
+# silently disarm the repo.
+
+@test "block: a malformed marker still gates (falls back to deploy.json)" {
+  printf 'NOT JSON AT ALL' > "$REPO/.deploy-gate.json"
+  deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh")"
+  assert_block
+}
+
+@test "block: no deploy.json still gates (falls back to scripts/deploy.sh)" {
+  opt_in
+  run_gate "$(bash_payload "scripts/deploy.sh")"
+  assert_block
+}
+
+@test "gates a custom entrypoint declared in deploy.json, and only that one" {
+  opt_in
+  printf '{"deploy":{"command":"bin/ship-it"}}' > "$REPO/deploy.json"
+  run_gate "$(bash_payload "bin/ship-it --now")"
+  assert_block
+  # A repo that declares bin/ship-it should not also gate an unrelated
+  # scripts/deploy.sh it does not use.
+  run_gate "$(bash_payload "scripts/deploy.sh")"
+  assert_allow
+}
+
+@test "the allow path writes nothing to stdout (hook protocol)" {
+  # Any stray stdout would be parsed as a hook decision. This fires on every
+  # Bash call in every ~/dev repo, so a single stray byte is a fleet-wide bug.
+  opt_in; deploy_json
+  run bash -c "printf '%s' '$(bash_payload "git status")' > '$PFILE'; bash '$GATE' < '$PFILE' | od -c | head -1"
+  [ "$status" -eq 0 ]
+  [ -z "$(printf '%s' "$output" | tr -d '[:space:]')" ]
+}
+
 # =========================== block: tier 2, the hand-roll ====================
 
 @test "block: the 2026-07-24 hand-rolled ssh deploy" {

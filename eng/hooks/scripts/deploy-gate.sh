@@ -167,8 +167,11 @@ EOF
 ALT="${ALT:+$ALT|}deploy-[A-Za-z0-9_-]+\\.sh"
 
 # Anchored at command position (line start or after a shell separator), tolerating
-# leading env assignments, a `bash`/`sh`/`exec` prefix, and any leading path.
-T1_RE="(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((bash|sh|exec)[[:space:]]+)*([^[:space:];&|]*/)?(${ALT})([[:space:]]|\$)"
+# leading env assignments, a `bash`/`sh`/`exec` prefix, and any leading path. The
+# TRAILING boundary accepts a shell separator as well as whitespace/end: with
+# whitespace-or-end only, `scripts/deploy.sh; ...` and `scripts/deploy.sh&&...`
+# were not recognized as deploy commands at all and sailed through.
+T1_RE="(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((bash|sh|exec)[[:space:]]+)*([^[:space:];&|]*/)?(${ALT})([[:space:];&|)]|\$)"
 
 # ---- Tier 2: the hand-rolled ssh shape (the 2026-07-24 incident) -------------
 # Fires only on an ssh to a host the marker lists AND a mutating verb, so
@@ -189,7 +192,13 @@ SHAPE=""
 if printf '%s' "$CMD" | grep -Eq "$T1_RE"; then
   # A read-only invocation of the deploy script is never gated: a retry follows a
   # failure, and diagnosing that failure must not require a ceremony.
-  if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]])(check|--status|--dry-run)([[:space:]]|$)'; then
+  #
+  # The read-only token must belong to THIS invocation's argument list, which is
+  # why the span is anchored to the matched command name and may not cross a shell
+  # separator or a comment (`[^;&|#]*`). An earlier version tested for the bare
+  # word anywhere in the command, so `scripts/deploy.sh && devops check` (a wholly
+  # natural thing to type) read as read-only and deployed straight past the gate.
+  if printf '%s' "$CMD" | grep -Eq "(${ALT})[^;&|#]*[[:space:]](check|--status|--dry-run)([[:space:]]|\$)"; then
     exit 0
   fi
   SHAPE="entrypoint"
