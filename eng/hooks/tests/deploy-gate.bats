@@ -198,10 +198,15 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
 @test "the allow path writes nothing to stdout (hook protocol)" {
   # Any stray stdout would be parsed as a hook decision. This fires on every
   # Bash call in every ~/dev repo, so a single stray byte is a fleet-wide bug.
+  #
+  # Assert on FILE SIZE, not on captured output: bats strips trailing newlines
+  # from $output, so a lone stray "\n" would read as empty. Piping through `od`
+  # is also wrong here, GNU od prints an offset line for empty input while BSD od
+  # prints nothing, which passed on macOS and failed in CI.
   opt_in; deploy_json
-  run bash -c "printf '%s' '$(bash_payload "git status")' > '$PFILE'; bash '$GATE' < '$PFILE' | od -c | head -1"
-  [ "$status" -eq 0 ]
-  [ -z "$(printf '%s' "$output" | tr -d '[:space:]')" ]
+  printf '%s' "$(bash_payload "git status")" > "$PFILE"
+  bash "$GATE" < "$PFILE" > "$REPO/.stdout" 2>/dev/null
+  [ ! -s "$REPO/.stdout" ]
 }
 
 # =========================== block: tier 2, the hand-roll ====================
