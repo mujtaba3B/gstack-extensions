@@ -83,11 +83,13 @@ State plainly what is about to change, so the user can catch a surprise before i
 
 ```bash
 WTR=~/dev/infra/where-things-run/wtr
-if HOST_STATE=$("$WTR" status "$(jq -r .id deploy.json)" 2>&1); then
-  printf '%s\n' "$HOST_STATE"
-else
-  printf 'wtr status FAILED (rc=%s):\n%s\n' "$?" "$HOST_STATE"
+if ! HOST_STATE=$("$WTR" status "$(jq -r .id deploy.json)" 2>&1); then
+  RC=$?
+  printf 'wtr status FAILED (rc=%s):\n%s\n' "$RC" "$HOST_STATE" >&2
+  echo "Cannot read live host state. NOT deploying." >&2
+  exit 1
 fi
+printf '%s\n' "$HOST_STATE"
 git log --oneline -1 origin/main
 ```
 
