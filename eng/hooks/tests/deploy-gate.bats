@@ -263,6 +263,68 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
   assert_block
 }
 
+# --- regressions from the CodeRabbit review on #64 ---------------------------
+# All three were verified failing against the real mutwo checkout before the fix.
+# Note CodeRabbit marked the first two "addressed" on commit activity alone while
+# they were still live, so each of these asserts the behavior, not the label.
+
+@test "block: an override string embedded in a quoted payload is NOT a bypass" {
+  # The gate defeat: as a bare substring search, the literal text
+  # DEPLOY_GATE_OVERRIDE=x anywhere in the command authorized the bypass with no
+  # variable ever being set, including inside the exact hand-rolled ssh this gate
+  # exists to block.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh mutwos-mac-mini \"git commit -m 'DEPLOY_GATE_OVERRIDE=oops' && git pull && pnpm run build\"")"
+  assert_block
+}
+
+@test "block: a real deploy chained after a read-only one" {
+  # Judged per invocation. A single regex over the whole command read this as
+  # read-only on the strength of the FIRST invocation's flag.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "scripts/deploy.sh --dry-run && scripts/deploy.sh --force")"
+  assert_block
+}
+
+@test "allow: a verb-prefixed word is not a mutating verb" {
+  # `pnpm run builder` / `git pull-request` are not `pnpm run build` / `git pull`.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh mutwos-mac-mini 'pnpm run builder'")"
+  assert_allow
+  run_gate "$(bash_payload "ssh mutwos-mac-mini 'echo git pull-request'")"
+  assert_allow
+}
+
+@test "allow: a local command chained after a read-only ssh" {
+  # The mutating verb must run ON THE HOST. Here `git pull` is local, and the ssh
+  # payload is read-only, so this is not a hand-rolled deploy.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh mutwos-mac-mini 'tail -50 log' ; git pull")"
+  assert_allow
+}
+
+@test "block: the quoted ssh payload survives segment splitting" {
+  # The separators inside the quotes are part of the REMOTE command. A
+  # quote-blind splitter cut there and lost the mutating verb.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh mutwos-mac-mini 'cd ~/nanoclaw && git pull --ff-only && pnpm run build'")"
+  assert_block
+}
+
+@test "block: ssh flags before the host still resolve the host" {
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh -p 22 mutwos-mac-mini 'git pull'")"
+  assert_block
+}
+
+@test "allow: a listed host name appearing outside the ssh target" {
+  # The host is read from the ssh invocation's own target token, not searched for
+  # across the whole command.
+  opt_in; deploy_json
+  run_gate "$(bash_payload "ssh some-other-box 'cd /srv/mutwos-mac-mini && git pull && pnpm run build'")"
+  assert_allow
+}
+
 # =========================== arming ==========================================
 
 @test "arm: a Skill invocation of land-and-deploy allows the entrypoint" {

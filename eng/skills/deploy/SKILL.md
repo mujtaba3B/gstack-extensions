@@ -82,11 +82,18 @@ The deploy itself pulls from `origin` on the host, so `origin/main` is what actu
 State plainly what is about to change, so the user can catch a surprise before it ships rather than after.
 
 ```bash
-~/dev/infra/where-things-run/wtr status "$(jq -r .id deploy.json)" 2>/dev/null || true
+WTR=~/dev/infra/where-things-run/wtr
+if HOST_STATE=$("$WTR" status "$(jq -r .id deploy.json)" 2>&1); then
+  printf '%s\n' "$HOST_STATE"
+else
+  printf 'wtr status FAILED (rc=%s):\n%s\n' "$?" "$HOST_STATE"
+fi
 git log --oneline -1 origin/main
 ```
 
 `wtr status` live-queries the host (running commit and approximate deploy time); it is never read from the stored inventory, which carries structural data only. It is not on `PATH`, hence the absolute path.
+
+**A failed status query is a STOP, not a shrug.** If `wtr status` exits non-zero, report the captured error and stop before deploying. The whole point of this step is to know what the host is running before changing it; deploying blind is how you discover afterwards that the host was not where you thought. The one case worth offering to continue past is an explicit recovery deploy where the host is known-unreachable, and even then say so out loud and get a yes.
 
 Report it as a two-line delta, then continue:
 
@@ -103,9 +110,23 @@ Do not fire a readiness modal otherwise. Invoking the ceremony is the consent; s
 
 Run the repo's declared command, forwarding any flags the user passed to this skill (`--rebuild-base`, `--rederive-all`, `--recycle`, `--force`):
 
+Build an argv array rather than interpolating a placeholder. `<forwarded flags>` is not executable shell (a bare `<` is input redirection), and quoting the whole declared command as `"$CMD"` treats `foo --bar` as one executable named `foo --bar`:
+
 ```bash
-CMD=$(jq -r '.deploy.command // "scripts/deploy.sh"' deploy.json)
-"$CMD" <forwarded flags>
+# The declared command may carry its own arguments, so split it into argv.
+read -r -a DEPLOY_CMD <<< "$(jq -r '.deploy.command // "scripts/deploy.sh"' deploy.json)"
+
+# Only the flags this skill declares are forwarded; anything else is refused
+# above rather than passed through to the deploy script.
+FLAGS=()
+for f in "$@"; do
+  case "$f" in
+    --rebuild-base|--rederive-all|--recycle|--force) FLAGS+=("$f") ;;
+    *) echo "refusing unknown flag: $f" >&2; exit 2 ;;
+  esac
+done
+
+"${DEPLOY_CMD[@]}" "${FLAGS[@]}"
 ```
 
 Stream the output. If it exits non-zero, STOP and report the failing step verbatim. Do not retry automatically and do not fall back to a hand-rolled sequence: the hand-roll is exactly what skips the host's upgrade-marker stamp, and on nanoclaw that trips a version tripwire which crash-loops the host silently behind a circuit breaker.

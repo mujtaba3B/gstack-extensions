@@ -523,3 +523,15 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
+
+@test "block: an EMPTY env-var prefix before gh pr create is still caught" {
+  # Regression, paired with the same case in pr-merge-gate.bats. The shared
+  # command-position prefix required a non-empty assignment value, so
+  # `FOO= gh pr create` matched neither the env-prefixed branch nor the bare one
+  # and sailed past every gate carrying that matcher. Each consumer gets its own
+  # case so copy drift cannot reopen the bypass in only one of them.
+  opt_in
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && FOO= gh pr create")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}

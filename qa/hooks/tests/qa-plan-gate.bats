@@ -475,3 +475,13 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$status" -eq 0 ]
   [[ "$output" == *'"decision":"block"'* ]]
 }
+
+@test "pr gate blocks: an EMPTY env-var prefix before gh pr create is still caught" {
+  # Regression, paired with pr-merge-gate.bats and ship-pr-gate.bats. This gate
+  # carries a copy of the same command-position matcher; the empty-value case
+  # bypassed all of them.
+  opt_in
+  run bash -c "cd '$REPO' && printf '%s' '$(create_payload "FOO= gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}

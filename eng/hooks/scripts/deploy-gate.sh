@@ -166,12 +166,16 @@ EOF
 # stash in a prior incident.
 ALT="${ALT:+$ALT|}deploy-[A-Za-z0-9_-]+\\.sh"
 
-# Anchored at command position (line start or after a shell separator), tolerating
-# leading env assignments, a `bash`/`sh`/`exec` prefix, and any leading path. The
-# TRAILING boundary accepts a shell separator as well as whitespace/end: with
-# whitespace-or-end only, `scripts/deploy.sh; ...` and `scripts/deploy.sh&&...`
-# were not recognized as deploy commands at all and sailed through.
-T1_RE="(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((bash|sh|exec)[[:space:]]+)*([^[:space:];&|]*/)?(${ALT})([[:space:];&|)]|\$)"
+# Matched per SEGMENT, not against the whole command. A single regex over the
+# whole string cannot tell which invocation an argument belongs to, so
+# `scripts/deploy.sh --dry-run && scripts/deploy.sh --force` read as read-only on
+# the strength of the FIRST invocation's flag and let the second one deploy. Every
+# invocation is now judged on its own argument list.
+#
+# Anchored at segment start, tolerating leading env assignments, a
+# `bash`/`sh`/`exec` prefix, and any leading path.
+T1_RE="^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((bash|sh|exec)[[:space:]]+)*([^[:space:]]*/)?(${ALT})([[:space:]]|\$)"
+RO_RE='(^|[[:space:]])(check|--status|--dry-run)([[:space:]]|$)'
 
 # ---- Tier 2: the hand-rolled ssh shape (the 2026-07-24 incident) -------------
 # Fires only on an ssh to a host the marker lists AND a mutating verb, so
@@ -186,35 +190,101 @@ while IFS= read -r h; do
 done <<EOF
 $HOSTS
 EOF
-MUTATING_RE='git[[:space:]]+pull|pnpm[[:space:]]+run[[:space:]]+build|npm[[:space:]]+run[[:space:]]+build|launchctl[[:space:]]+kickstart|systemctl([[:space:]]+--user)?[[:space:]]+restart'
+# Each verb carries a trailing boundary, so `pnpm run builder` and
+# `git pull-request` are not mutating verbs. Without it, ordinary remote commands
+# that merely START with a verb's spelling read as deploys.
+MUTATING_RE='(git[[:space:]]+pull|pnpm[[:space:]]+run[[:space:]]+build|npm[[:space:]]+run[[:space:]]+build|launchctl[[:space:]]+kickstart|systemctl([[:space:]]+--user)?[[:space:]]+restart)([[:space:]]|$)'
+
+# Split the command into segments at shell separators, so each invocation can be
+# judged on its own arguments.
+#
+# QUOTE-AWARE on purpose. A plain sed split also cuts at separators INSIDE a
+# quoted argument, which shreds exactly the payload tier 2 needs to read: the
+# `&&` in `ssh host 'cd ~/nanoclaw && git pull && pnpm run build'` is part of the
+# REMOTE command, not a local separator, and splitting there left a first segment
+# with no mutating verb in it. A `#` outside quotes starts a comment and ends the
+# line; inside quotes it is ordinary text.
+segments() {
+  printf '%s' "$1" | awk '{
+    n = length($0); q = ""; seg = "";
+    for (i = 1; i <= n; i++) {
+      c = substr($0, i, 1);
+      if (q != "") { seg = seg c; if (c == q) q = ""; continue }
+      if (c == "\047" || c == "\"") { q = c; seg = seg c; continue }
+      if (c == ";" || c == "&" || c == "|" || c == "(" || c == ")") { print seg; seg = ""; continue }
+      if (c == "#") break;
+      seg = seg c;
+    }
+    print seg;
+  }'
+}
+
+# ssh_payload <segment> : echo "<host>\t<remote command>" for an ssh invocation,
+# or return 1. The remote command is the QUOTED argument when there is one, so a
+# locally chained command after a read-only ssh (`ssh host 'tail log' ; git pull`)
+# cannot masquerade as a hand-rolled deploy. Scoping the host this way also stops
+# a host name appearing incidentally elsewhere in the command from matching.
+ssh_payload() {
+  local after host rest
+  after=$(printf '%s' "$1" | sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]]*\/)?ssh[[:space:]]+(.*)$/\3/p')
+  [ -n "$after" ] || return 1
+  # Skip ssh flags to reach the host token. A flag taking a value consumes it too.
+  while :; do
+    case "$after" in
+      -[pilo]*[[:space:]]*) after=${after#* }; after=${after#* } ;;
+      -*)                   after=${after#* } ;;
+      *) break ;;
+    esac
+    [ -n "$after" ] || return 1
+  done
+  host=${after%% *}
+  rest=${after#* }
+  [ -n "$host" ] || return 1
+  [ "$rest" = "$after" ] && rest=""      # host with no remote command
+  case "$rest" in
+    \'*) rest=${rest#\'}; rest=${rest%%\'*} ;;
+    \"*) rest=${rest#\"}; rest=${rest%%\"*} ;;
+  esac
+  printf '%s\t%s' "$host" "$rest"
+}
 
 SHAPE=""
-if printf '%s' "$CMD" | grep -Eq "$T1_RE"; then
-  # A read-only invocation of the deploy script is never gated: a retry follows a
-  # failure, and diagnosing that failure must not require a ceremony.
-  #
-  # The read-only token must belong to THIS invocation's argument list, which is
-  # why the span is anchored to the matched command name and may not cross a shell
-  # separator or a comment (`[^;&|#]*`). An earlier version tested for the bare
-  # word anywhere in the command, so `scripts/deploy.sh && devops check` (a wholly
-  # natural thing to type) read as read-only and deployed straight past the gate.
-  if printf '%s' "$CMD" | grep -Eq "(${ALT})[^;&|#]*[[:space:]](check|--status|--dry-run)([[:space:]]|\$)"; then
-    exit 0
+DEPLOY_SEG=0
+while IFS= read -r seg; do
+  [ -n "$seg" ] || continue
+  # Tier 1: this segment invokes the declared entrypoint.
+  if printf '%s' "$seg" | grep -Eq "$T1_RE"; then
+    DEPLOY_SEG=1
+    # A read-only invocation is never gated: a retry follows a failure, and
+    # diagnosing that failure must not require a ceremony. The flag has to be in
+    # THIS invocation's own arguments.
+    printf '%s' "$seg" | grep -Eq "$RO_RE" || { SHAPE="entrypoint"; break; }
+    continue
   fi
-  SHAPE="entrypoint"
-elif [ -n "$HOST_ALT" ] \
-  && printf '%s' "$CMD" | grep -Eq "(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?ssh[[:space:]]" \
-  && printf '%s' "$CMD" | grep -Eq "(${HOST_ALT})" \
-  && printf '%s' "$CMD" | grep -Eq "$MUTATING_RE"; then
+  # Tier 2: this segment is an ssh to a listed host whose REMOTE command mutates.
+  [ -n "$HOST_ALT" ] || continue
+  hp=$(ssh_payload "$seg") || continue
+  h=${hp%%$'\t'*}; rc=${hp#*$'\t'}
+  printf '%s' "$h"  | grep -Eq "(${HOST_ALT})" || continue
+  printf '%s' "$rc" | grep -Eq "$MUTATING_RE" || continue
   SHAPE="hand-rolled"
-fi
+  break
+done <<EOF
+$(segments "$CMD")
+EOF
 
 [ -n "$SHAPE" ] || exit 0
 
 # Break-glass. Deliberately verbose and reason-carrying so it reads as an
 # exception in a transcript rather than a shortcut. /eng:deploy, not this, is the
 # routine path for a PR-less deploy.
-if printf '%s' "$CMD" | grep -Eq 'DEPLOY_GATE_OVERRIDE=(["'"'"'][^"'"'"']+["'"'"']|[^[:space:]]+)'; then
+#
+# ANCHORED at command position, like every other matcher here. As a bare substring
+# search this was a total gate defeat: the literal text `DEPLOY_GATE_OVERRIDE=x`
+# anywhere in the command authorized the bypass with no variable ever being set,
+# so `ssh host "git commit -m 'DEPLOY_GATE_OVERRIDE=oops' && git pull && pnpm run
+# build"` walked straight through the gate this exists to enforce.
+if printf '%s' "$CMD" | grep -Eq "(^|[;&|(])[[:space:]]*DEPLOY_GATE_OVERRIDE=([\"'][^\"']+[\"']|[^[:space:]]+)([[:space:]]|\$)"; then
   exit 0
 fi
 
