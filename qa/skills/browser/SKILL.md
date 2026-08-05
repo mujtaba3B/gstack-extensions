@@ -689,7 +689,7 @@ Also pull any Pencil link from the issue body. Pattern: a `pencil.dev` URL, an a
 
 ### 3b. From a Pencil `.pen` file
 
-Use the Pencil MCP. The canvas convention (see `~/dev/WIREFRAMES.md`) is horizontal = view sequence, vertical = variants of the same view. So the happy path is the top row of screens, read left to right.
+Use the Pencil MCP. The canvas convention (see the `design` plugin's `references/wireframes-cross-tool.md`) is horizontal = view sequence, vertical = variants of the same view. So the happy path is the top row of screens, read left to right.
 
 ```
 # Open the document

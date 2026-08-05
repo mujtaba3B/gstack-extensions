@@ -45,7 +45,7 @@ Read `shared/core.md` from the plugin root before proceeding. The file lives at 
 
 1. `get_editor_state(include_schema: true)` to load the schema and see what file is active. (Skip the reload only if the schema is already in this session's context.)
 2. `get_guidelines` for Pencil's design guidance.
-3. Read the sibling skill's canvas reference at `../pencil-mockup/references/wireframes.md`, especially its **"Style guide frame"** section: it defines the five-card anatomy, placement, and sync rule this skill produces. It defers to a project-level `spec/WIREFRAMES.md` and a workspace `~/dev/WIREFRAMES.md` when those exist, so read those too if present.
+3. Read the sibling skill's canvas reference at `../pencil-mockup/references/wireframes.md`, especially its **"Style guide frame"** section: it defines the five-card anatomy, placement, and sync rule this skill produces. It defers to a project-level `spec/WIREFRAMES.md` when one exists, so read that too if present.
 
 ## Step 3: Interview (one question at a time, never a batch)
 

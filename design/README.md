@@ -20,7 +20,7 @@ Denise is a basket; more skills (review, variant exploration, and so on) will la
 ## Conventions
 
 - `shared/core.md` carries the Denise persona plus the Pencil ground rules (MCP-only, schema-first via `get_editor_state(include_schema: true)`, the in-memory save model).
-- Canvas layout follows the plugin's bundled `skills/pencil-mockup/references/wireframes.md` (self-contained, so the plugin is portable). It defers, in order, to a project-level `spec/WIREFRAMES.md` and then a workspace-level `~/dev/WIREFRAMES.md` when either exists. Horizontal is a new view, vertical is a state variant, overlap is a hard error, annotations are sticky notes, planned views carry the `🚧 NEW NEW` marker.
+- Canvas layout follows the plugin's bundled `skills/pencil-mockup/references/wireframes.md` (self-contained, so the plugin is portable). It defers to a project-level `spec/WIREFRAMES.md` when one exists. Horizontal is a new view, vertical is a state variant, overlap is a hard error, annotations are sticky notes, planned views carry the `🚧 NEW NEW` marker. The tool-agnostic principles alone (for any future non-Pencil tool) live at `references/wireframes-cross-tool.md`; the Pencil reference is the superset.
 
 ## Requirements
 

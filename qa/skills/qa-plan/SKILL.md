@@ -69,7 +69,7 @@ Read `../../shared/core.md` (the plugin root's shared file; resolves wherever th
 2. Pull the **success criteria**, in this order of preference. Never invent them silently:
    - A `/spec` artifact for this work, if one exists.
    - The linked GitHub issue (PM Penny's `## QA instructions` / acceptance criteria).
-   - A Pencil `.pen` mockup whose flow defines the expected behavior (see `~/dev/WIREFRAMES.md`).
+   - A Pencil `.pen` mockup whose flow defines the expected behavior (see the `design` plugin's `references/wireframes-cross-tool.md`).
    - As a last resort, ask the user to state the acceptance criteria. Capture, do not paraphrase.
 3. Express each criterion in a checkable form: **Given/When/Then** for behavior, **EARS** (`WHEN <x> THE SYSTEM SHALL <y>`) for system requirements.
 4. Separate **per-change Acceptance Criteria** (what proves THIS change is correct) from the universal **Definition of Done** (the engineering bar every change meets).

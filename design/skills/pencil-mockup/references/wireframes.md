@@ -1,14 +1,14 @@
 # Pencil canvas conventions
 
-The canvas layout contract Designer Denise follows for every `.pen` create or update. This is the plugin's own copy, so the skill is self-contained: it carries these conventions wherever the `design` plugin is installed, with no dependency on any workspace-level file.
+The **Pencil operating contract** Designer Denise follows for every `.pen` create or update: the `mcp__pencil__*` calls, the stroke JSON, and the Pencil-only protocol. The tool-agnostic principles it rests on live beside it in the same plugin at `../../../references/wireframes-cross-tool.md`. Both files ship inside the `design` plugin, so reading one from the other always resolves and neither depends on any workspace-level file.
 
-**Precedence (most specific wins).** If a more specific convention file exists, defer to it for anything it covers, and fall back to this doc for everything it does not:
+**Precedence (most specific wins).** If a more specific convention file exists, defer to it for anything it covers, and fall back down the chain for everything it does not:
 
 1. A project-level `spec/WIREFRAMES.md` in the repo you are working in (most specific).
-2. A workspace-level `~/dev/WIREFRAMES.md`, if one exists (the user's cross-tool conventions).
-3. This file (the always-present baseline).
+2. This file, for **Pencil operating detail**: how to execute a rule with the Pencil MCP.
+3. `../../../references/wireframes-cross-tool.md`, **authoritative for the shared principles** themselves.
 
-The principles below are tool-agnostic; the operating detail (the `mcp__pencil__*` calls, the stroke JSON) is Pencil-specific and is what makes this the design plugin's home for the contract.
+Read both this file and the cross-tool sibling before laying anything out. The shared principles are restated below so the Pencil protocol reads as one continuous contract, but the sibling is the source of truth for them: **where the two ever disagree on a shared principle, the cross-tool file wins**, and the drift is a bug to fix here rather than a difference to work around.
 
 ---
 
