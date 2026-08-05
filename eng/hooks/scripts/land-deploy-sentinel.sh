@@ -69,11 +69,19 @@ CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
 SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 
-# ARM_TTL bounds how long after a /land-and-deploy invocation an armed Bash command
-# may still mint. It must span a whole run: invocation -> wait on CI + the merge
-# queue -> the actual `gh pr merge`, which can be many minutes. 1800s (30m) matches
-# the sentinel's own default TTL; the sentinel is head_sha-bound, so a long window
-# is safe (a stale commit cannot be merged on an old sentinel).
+# ARM_TTL bounds how long the armed window may go IDLE (no ~/dev-repo Bash activity)
+# before the Bash-mint path goes inert. It is NOT a hard ceiling on the whole run:
+# the Bash branch SLIDES the window forward on every armed Bash command that mints
+# into the target repo (see the Bash case below), so an actively-working
+# /land-and-deploy keeps itself armed while it runs repo commands (invocation ->
+# wait on CI + the merge queue -> the actual `gh pr merge`). This mirrors the
+# ship-gate fix: previously the arm marker was written once at invocation and never
+# refreshed, so ARM_TTL later the Bash-mint died and the sentinel froze - a
+# /land-and-deploy longer than the window found it expired at merge time. With
+# sliding, only an idle gap LONGER than ARM_TTL lapses the window. 1800s (30m) is
+# the per-slide idle budget, matched to the sentinel's own default TTL; the
+# sentinel is also head_sha-bound, so a live window is doubly safe (a stale commit
+# cannot be merged on an old sentinel).
 ARM_TTL=1800
 ARM_DIR="${TMPDIR:-/tmp}"
 arm_session()     { ga_arm       "land" "$SESSION" "$ARM_DIR" "$(date +%s)"; }
@@ -82,10 +90,13 @@ land_armed_fresh() { ga_armed_fresh "land" "$SESSION" "$ARM_DIR" "$(date +%s)" "
 # mint <workdir> <pr_number> <source> : write the target-bound sentinel for the
 # repo that <workdir> resolves to, iff it is a ~/dev repo. head_sha + repo are read
 # from THAT checkout (not the session cwd), so the bindings match what the gate
-# validates against the target PR.
+# validates against the target PR. Returns 0 when <workdir> is an in-scope ~/dev
+# repo (the mint path ran; the sentinel write itself is best-effort), non-zero when
+# out of scope - the Bash branch reads this to slide the arm window only for an
+# in-scope target repo. Skill/prompt callers ignore the return value.
 mint() {
   local workdir="$1" pr="$2" source="$3" resolved top gitdir head_sha remote repo ttl marker now sentinel tmp
-  resolved=$(sg_dev_repo_gitdir "$workdir") || return 0
+  resolved=$(sg_dev_repo_gitdir "$workdir") || return 1
   top=${resolved%%$'\t'*}
   gitdir=${resolved#*$'\t'}
   head_sha=$(git -C "$workdir" rev-parse HEAD 2>/dev/null || echo "")
@@ -142,7 +153,16 @@ case "$EVENT" in
         CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
         [ -n "$CMD" ] || exit 0
         WORKDIR=$(sg_workdir_from_cmd "$CMD" "$CWD")
-        mint "$WORKDIR" "$(pr_from_cmd "$CMD")" "land-bash"
+        if mint "$WORKDIR" "$(pr_from_cmd "$CMD")" "land-bash"; then
+          # SLIDE the arm window forward (mirrors ship-gate-sentinel.sh): an
+          # actively-working /land-and-deploy keeps itself armed, so the Bash-mint
+          # keeps the head_sha-bound sentinel fresh (and current with HEAD) for the
+          # whole run instead of freezing ARM_TTL after invocation. Only EXTENDS an
+          # already-armed session (we passed land_armed_fresh above) and only when the
+          # command resolved to an in-scope ~/dev repo (mint returned 0), so it never
+          # arms an unarmed session nor resurrects an expired window.
+          arm_session
+        fi
         ;;
       *) exit 0 ;;
     esac

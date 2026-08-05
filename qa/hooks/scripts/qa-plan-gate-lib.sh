@@ -4,7 +4,7 @@
 # transcript, or any hook plumbing. Every function takes everything it needs as
 # arguments and writes only to stdout.
 #
-# Policy (BUILD-PROCEDURE.md non-negotiable #4): the two-phase QA plan must be
+# Policy (the two-phase QA-plan approval policy): the two-phase QA plan must be
 # PRESENTED to and APPROVED by the human BEFORE building, BEFORE the PR goes up,
 # and verified-passed BEFORE deploy. /qa:plan ends with an AskUserQuestion
 # approval gate that writes an approval stamp; these helpers are what the three
@@ -209,6 +209,14 @@ qpg_gate_enabled() {
     [ "$g" = "$gate" ] && return 0
   done
   return 1
+}
+
+# qpg_build_procedure_ref <marker_json>
+#   Optional per-repo pointer to the user's own build-procedure doc. Echoes the
+#   string if the marker sets "build_procedure_ref", else empty. Lets a workspace
+#   cite its own procedure in gate messages without the plugin hardcoding a path.
+qpg_build_procedure_ref() {
+  printf '%s' "$1" | jq -r '.build_procedure_ref // empty' 2>/dev/null
 }
 
 # qpg_base_in_scope <marker_json> <base_branch>

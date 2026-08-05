@@ -372,3 +372,166 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   bash -c "printf '%s' '$(sentinel_bash_payload "gh pr create --base main" "$REPO" "$SID")' | bash '$SENTINEL_HOOK'"
   [ -f "$GITDIR/ship-pr-clearance" ]
 }
+
+# ---- sliding arm window (the long-ship fix) --------------------------------
+
+@test "armed mint: an armed Bash command SLIDES the arm window forward (long /ship stays armed past the initial ARM_TTL)" {
+  # THE long-ship fix. The arm marker used to be written once at /ship invocation and
+  # never refreshed, so ARM_TTL(1200s) later the Bash-mint went inert, the sentinel
+  # froze at its last mint, and any /ship whose invocation->create span exceeded the
+  # TTL found it expired (the 2026-07-21 mutwo-skills incident). Now every armed Bash
+  # command that mints into the target repo re-arms the session, so an actively-
+  # working /ship keeps itself armed. Assert the slide directly: an arm marker near
+  # expiry is advanced to ~now by a mint.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
+  NOWS=$(date +%s)
+  printf '%s\n' "$((NOWS-1100))" > "$ARM"     # armed 1100s ago: still fresh (<1200), 100s from lapsing
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && git status" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ -f "$GITDIR/ship-pr-clearance" ]          # minted into the target repo
+  [ "$(head -1 "$ARM")" -ge "$((NOWS-10))" ]  # arm window slid forward to ~now (was T-1100)
+  rm -f "$ARM"
+}
+
+@test "armed mint + gate: a stale sentinel from early in a long run is refreshed by a later armed Bash command -> create allowed (incident repro)" {
+  # Reproduces the incident end to end: the FIRST mint has since expired, yet the
+  # session is still armed and running repo commands. A later armed Bash command must
+  # re-mint a fresh sentinel so the eventual `gh pr create` PASSES instead of the
+  # blocking [sentinel: expired] observed in the field.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
+  NOWS=$(date +%s)
+  write_sentinel "$((NOWS-3000))" 1200        # an early mint, now long expired
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  echo "$output" | grep -q '"decision":"block"'   # stale sentinel blocks: the bug's symptom
+  printf '%s\n' "$NOWS" > "$ARM"              # session still armed (slid by ongoing repo work)
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && git status" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]       # refreshed sentinel -> allowed
+  rm -f "$ARM"
+}
+
+@test "armed mint: an EXPIRED arm marker neither mints nor self-arms (slide only extends a live window)" {
+  # The slide must not resurrect a dead window: under an expired arm marker a Bash
+  # command must not mint AND must not re-arm, so an abandoned /ship (idle > ARM_TTL)
+  # cannot keep authorizing creates. This is the accident-guard backstop for sliding.
+  opt_in
+  SID="sgtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
+  NOWS=$(date +%s)
+  printf '%s\n' "$((NOWS-3000))" > "$ARM"     # expired (age 3000 > ARM_TTL 1200)
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $REPO && git status" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$GITDIR/ship-pr-clearance" ]         # did not mint
+  [ "$(head -1 "$ARM")" = "$((NOWS-3000))" ]   # arm marker unchanged: no self-arm
+  rm -f "$ARM"
+}
+
+@test "armed mint: an armed Bash command OUT of ~/dev scope does NOT slide the arm window (the return-1 guard)" {
+  # Pins the mint_for_dir `return 0`->`return 1` flip, the whole mechanism gating the
+  # slide: an armed, still-fresh session running a Bash command that resolves OUTSIDE
+  # ~/dev must NOT re-arm, so the window stays bound to genuine target-repo activity.
+  # Arm at a distinctly OLDER time so a wrongful slide (to ~now) is detectable; a
+  # regression to `return 0` would silently re-arm off any out-of-scope Bash activity
+  # and this test would catch it (the "non-dev repo mints nothing" test cannot: it
+  # arms at ~now, so a bad slide to ~now is invisible).
+  SID="sgtest-$BATS_TEST_NUMBER"
+  ARM="${TMPDIR:-/tmp}/gstack-ship-armed-$SID"
+  NOWS=$(date +%s)
+  OUT=$(mktemp -d "/tmp/.sgtestout.XXXXXX")
+  git -C "$OUT" init -q; git -C "$OUT" commit -q --allow-empty -m init
+  OUTGIT=$(git -C "$OUT" rev-parse --absolute-git-dir)
+  printf '%s\n' "$((NOWS-1100))" > "$ARM"     # armed, fresh, near-lapse
+  bash -c "printf '%s' '$(sentinel_bash_payload "cd $OUT && git status" "$HOME" "$SID")' | bash '$SENTINEL_HOOK'"
+  [ ! -f "$OUTGIT/ship-pr-clearance" ]         # out of scope -> not minted
+  [ "$(head -1 "$ARM")" = "$((NOWS-1100))" ]   # arm marker UNCHANGED: no slide out of scope
+  rm -rf "$OUT"; rm -f "$ARM"
+}
+
+# ========================================================================
+# Out-of-~/dev binding: a `gh pr create --repo <gated-repo>` run from a cwd
+# OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder) must still be
+# gated for the repo it names. Helpers live in ship-gate-repo-lib.sh.
+# ========================================================================
+
+@test "repo-lib: sg_norm_repo normalizes URL / scp / host-prefixed / case / trailing-slash to owner/name" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_norm_repo "https://github.com/Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "git@github.com:Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "ssh://git@github.com/Owner/Name.git")" = "owner/name" ]
+  [ "$(sg_norm_repo "Owner/Name")" = "owner/name" ]
+  # regressions the review found: trailing slash after .git, uppercase scheme, host-prefixed form
+  [ "$(sg_norm_repo "https://github.com/o/n.git/")" = "o/n" ]
+  [ "$(sg_norm_repo "HTTPS://github.com/O/N.git")" = "o/n" ]
+  [ "$(sg_norm_repo "github.com/owner/name")" = "owner/name" ]
+  # a repo name containing a dot must survive (only a trailing .git is stripped)
+  [ "$(sg_norm_repo "owner/repo.js")" = "owner/repo.js" ]
+}
+
+@test "repo-lib: sg_repo_from_flags reads --repo / --repo= / -R / -RX / GH_REPO=, last wins, else 1" {
+  . "$BATS_TEST_DIRNAME/../scripts/ship-gate-repo-lib.sh"
+  [ "$(sg_repo_from_flags "gh pr create --repo owner/name --base main")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create --repo=owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create -R owner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "gh pr create -Rowner/name")" = "owner/name" ]
+  [ "$(sg_repo_from_flags "GH_REPO=owner/name gh pr create --base main")" = "owner/name" ]
+  # last --repo wins, mirroring gh (an earlier decoy must not shadow the real target)
+  [ "$(sg_repo_from_flags "gh pr create --repo owner/decoy --repo owner/real")" = "owner/real" ]
+  run sg_repo_from_flags "gh pr create --base main"
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+}
+
+@test "gate block: --repo names a gated ~/dev repo, create run from OUTSIDE ~/dev, no sentinel -> block" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate block: compact -Rowner/repo (no space) from OUTSIDE ~/dev binds and blocks" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create -Rsgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate block: host-prefixed --repo github.com/owner/repo from OUTSIDE ~/dev binds and blocks" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo github.com/sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate allow: --repo names a gated ~/dev repo from OUTSIDE ~/dev WITH a fresh sentinel" {
+  opt_in
+  git -C "$REPO" remote add origin "https://github.com/sgtest-owner/sgtest-repo.git"
+  write_sentinel "$NOW"
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo sgtest-owner/sgtest-repo --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: --repo names a repo with NO gated ~/dev checkout -> out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --repo nobody/nowhere-sgtest --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "gate allow: bare create (no --repo) from OUTSIDE ~/dev stays out of scope" {
+  run bash -c "cd /tmp && printf '%s' '$(bash_payload "gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "block: an EMPTY env-var prefix before gh pr create is still caught" {
+  # Regression, paired with the same case in pr-merge-gate.bats. The shared
+  # command-position prefix required a non-empty assignment value, so
+  # `FOO= gh pr create` matched neither the env-prefixed branch nor the bare one
+  # and sailed past every gate carrying that matcher. Each consumer gets its own
+  # case so copy drift cannot reopen the bypass in only one of them.
+  opt_in
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && FOO= gh pr create")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}

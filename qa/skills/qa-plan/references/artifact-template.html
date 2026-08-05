@@ -1,0 +1,196 @@
+<title>QA plan</title>
+<!--
+  /qa:plan companion-artifact template. COMPANION view, never gate-parsed.
+  Clone this file to the scratchpad and swap the content between the FILL markers:
+    FILL: TITLE / STORY / SOLUTION / PROOF / DEV ELI5 / DEV ROWS / PROD ELI5 / PROD ROWS / ARTIFACTS / DOD
+    (DEV ROWS have NO checkbox cell; DOD is plain bullets; SOLUTION + ARTIFACTS are bullet lists.)
+  The page is story-first: the reader gets the user story (problem + outcome), the
+  solution, and how the plan proves it BEFORE any QA table. Headings are terse:
+  "Story" / "Solution" / "How this plan proves it". The Story block ends with a
+  muted "Linked issue:" line pointing at the GitHub issue when one exists (write
+  "none" plus provenance when it does not). The Solution and Production-artifacts
+  blocks are BULLET LISTS (ul.proof), not paragraphs. The artifact carries NO
+  checkboxes of any kind (no column in the Dev table, no glyphs in the DoD);
+  checkbox state lives only in the PR body's ## QA section, which the gates read.
+  Self-contained (inline CSS + data-URI images) so it satisfies the artifact CSP.
+  Theme-aware (light + dark). The default content is a worked example so it renders standalone.
+  (Restructured 2026-07-22: terse headings, bulleted Solution/Artifacts, checkbox-free.)
+
+  DRIVER AVATARS: the Tester column shows a logo-only avatar. It carries the driver's
+  identity for assistive tech via role="img" + aria-label (title= is the hover tooltip);
+  the decorative inner .pic is aria-hidden so screen readers do not announce it twice.
+    <span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic <id>" aria-hidden="true"></span></span>
+  where <id> is a roster id with a built-in avatar: claude | mutwo | muthree | mufour | mujtaba.
+  For any driver WITHOUT a built-in avatar, use the initials fallback (put 2-3 chars inside):
+    <span class="av" title="<id>" role="img" aria-label="<id>"><span class="pic generic" aria-hidden="true">M5</span></span>
+  To add a new driver avatar: fetch github.com/<handle>.png, inline it as a data URI in a
+  new `.pic.<id>` rule (mirror .pic.mutwo). claude has no GitHub account; its mark is a
+  hand-drawn inline-SVG burst on Anthropic clay.
+-->
+<style>
+  :root {
+    --bg:#eef1f6; --panel:#fff; --ink:#1c2430; --muted:#5c6773; --hair:#e0e5ec; --hair-strong:#cfd6df;
+    --accent:#2f6feb; --accent-soft:#e4ecff; --live:#1a7f4b; --live-soft:#d9f2e4;
+    --code-bg:#eef1f5; --code-ink:#384250; --shadow:0 1px 2px rgba(20,28,40,.06),0 8px 24px rgba(20,28,40,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0b0e14; --panel:#131822; --ink:#e6edf5; --muted:#93a0b2; --hair:#232b38; --hair-strong:#303a49;
+      --accent:#6ea8ff; --accent-soft:#182741; --live:#46c483; --live-soft:#10281d;
+      --code-bg:#1b222d; --code-ink:#c3cdda; --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{--bg:#eef1f6;--panel:#fff;--ink:#1c2430;--muted:#5c6773;--hair:#e0e5ec;--hair-strong:#cfd6df;--accent:#2f6feb;--accent-soft:#e4ecff;--live:#1a7f4b;--live-soft:#d9f2e4;--code-bg:#eef1f5;--code-ink:#384250;--shadow:0 1px 2px rgba(20,28,40,.06),0 8px 24px rgba(20,28,40,.05);}
+  :root[data-theme="dark"]{--bg:#0b0e14;--panel:#131822;--ink:#e6edf5;--muted:#93a0b2;--hair:#232b38;--hair-strong:#303a49;--accent:#6ea8ff;--accent-soft:#182741;--live:#46c483;--live-soft:#10281d;--code-bg:#1b222d;--code-ink:#c3cdda;--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  code{font-size:.86em;background:var(--code-bg);color:var(--code-ink);padding:.12em .42em;border-radius:6px;}
+  .wrap{max-width:940px;margin:0 auto;padding:44px 22px 88px;}
+  header.plan{margin-bottom:8px;}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:650;margin:0 0 10px;}
+  h1.title{font-size:clamp(24px,3.4vw,34px);line-height:1.12;margin:0 0 8px;letter-spacing:-.02em;text-wrap:balance;font-weight:750;}
+  /* story-first context blocks (Story / Solution / How this plan proves it) */
+  .context{margin-top:22px;display:grid;gap:20px;}
+  .block.story{border-left:3px solid var(--accent);}
+  .block.solution{border-left:3px solid var(--live);}
+  .story-quote{font-size:15.5px;font-weight:600;line-height:1.5;margin:0 0 12px;text-wrap:pretty;}
+  .story-quote .role{color:var(--accent);}
+  .incident{font-size:13.5px;color:var(--muted);}
+  ul.proof{list-style:none;padding:0;margin:0;display:grid;gap:10px;}
+  ul.proof li{display:flex;gap:10px;align-items:flex-start;font-size:14px;max-width:78ch;}
+  ul.proof .tick{color:var(--live);font-weight:700;line-height:1.4;flex:0 0 auto;}
+  ul.proof .where{color:var(--muted);font-size:12.5px;}
+  section.phase{margin-top:34px;}
+  .phase-head{display:flex;align-items:center;gap:11px;margin:0 0 12px;}
+  .phase-head h2{font-size:18px;margin:0;font-weight:700;letter-spacing:-.01em;}
+  .eli5{font-size:13px;color:var(--muted);margin:0 0 13px;line-height:1.55;}
+  .card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;}
+  .tablewrap{overflow-x:auto;}
+  table{border-collapse:collapse;width:100%;font-size:14px;}
+  thead th{text-align:left;font-weight:650;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--hair-strong);white-space:nowrap;}
+  tbody td{padding:13px 16px;border-bottom:1px solid var(--hair);vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.tester{white-space:nowrap;}
+  td.expect{color:var(--muted);}
+  td.notes{color:var(--muted);font-size:13px;}
+  /* driver avatars (logo-only; name on hover via title=) */
+  .av{display:inline-flex;align-items:center;white-space:nowrap;}
+  .av .pic{width:26px;height:26px;border-radius:50%;background-size:cover;background-position:center;background-repeat:no-repeat;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex:0 0 auto;box-shadow:0 0 0 1px rgba(0,0,0,.18) inset;}
+  .pic.claude{background-image:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxMDAgMTAwJz48ZyBmaWxsPScjZmZmJz48cG9seWdvbiBwb2ludHM9JzUwLjAwLDQuMDAgNTMuMjAsNDUuMDAgNDYuODAsNDUuMDAnLz48cG9seWdvbiBwb2ludHM9JzczLjAwLDEwLjE2IDU1LjI3LDQ3LjI3IDQ5LjczLDQ0LjA3Jy8+PHBvbHlnb24gcG9pbnRzPSc4OS44NCwyNy4wMCA1NS45Myw1MC4yNyA1Mi43Myw0NC43MycvPjxwb2x5Z29uIHBvaW50cz0nOTYuMDAsNTAuMDAgNTUuMDAsNTMuMjAgNTUuMDAsNDYuODAnLz48cG9seWdvbiBwb2ludHM9Jzg5Ljg0LDczLjAwIDUyLjczLDU1LjI3IDU1LjkzLDQ5LjczJy8+PHBvbHlnb24gcG9pbnRzPSc3My4wMCw4OS44NCA0OS43Myw1NS45MyA1NS4yNyw1Mi43MycvPjxwb2x5Z29uIHBvaW50cz0nNTAuMDAsOTYuMDAgNDYuODAsNTUuMDAgNTMuMjAsNTUuMDAnLz48cG9seWdvbiBwb2ludHM9JzI3LjAwLDg5Ljg0IDQ0LjczLDUyLjczIDUwLjI3LDU1LjkzJy8+PHBvbHlnb24gcG9pbnRzPScxMC4xNiw3My4wMCA0NC4wNyw0OS43MyA0Ny4yNyw1NS4yNycvPjxwb2x5Z29uIHBvaW50cz0nNC4wMCw1MC4wMCA0NS4wMCw0Ni44MCA0NS4wMCw1My4yMCcvPjxwb2x5Z29uIHBvaW50cz0nMTAuMTYsMjcuMDAgNDcuMjcsNDQuNzMgNDQuMDcsNTAuMjcnLz48cG9seWdvbiBwb2ludHM9JzI3LjAwLDEwLjE2IDUwLjI3LDQ0LjA3IDQ0LjczLDQ3LjI3Jy8+PGNpcmNsZSBjeD0nNTAnIGN5PSc1MCcgcj0nNC4yJy8+PC9nPjwvc3ZnPg=="),radial-gradient(circle at 50% 40%,#e0866a,#c15f3c);background-size:64%,cover;background-repeat:no-repeat,no-repeat;background-position:center,center;}
+  .pic.mutwo{background-image:url("data:image/jpeg;base64,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");}
+  .pic.muthree{background-image:url("data:image/jpeg;base64,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");}
+  .pic.mufour{background-image:url("data:image/jpeg;base64,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");}
+  .pic.mujtaba{background-image:url("data:image/jpeg;base64,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");}
+  .pic.generic{background:linear-gradient(135deg,#5b6675,#3d4756);}
+  .aux{margin-top:34px;display:grid;gap:20px;}
+  .block{background:var(--panel);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;}
+  .block h3,.context .block h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:700;}
+  .block.artifact{border-left:3px solid var(--live);}
+  .block p{margin:0 0 9px;}
+  .block p:last-child{margin-bottom:0;}
+  .block .mono{font-size:13px;word-break:break-word;}
+</style>
+
+<div class="wrap">
+  <header class="plan">
+    <p class="eyebrow">QA plan</p>
+    <!-- FILL: TITLE -->
+    <h1 class="title">email-hero: LLM-failure health check</h1>
+  </header>
+
+  <div class="context">
+    <div class="block story">
+      <h2>Story</h2>
+      <!-- FILL: STORY. The user story (As <user>, when <situation>, I want <capability>, so <outcome>), then the observed problem in muted text, then a muted 'Linked issue:' line: an <a> to the GitHub issue when one exists, else 'none' plus where the change originated. Pull it from the change's success criteria / issue / PR summary; never invent it. -->
+      <p class="story-quote"><span class="role">As Mujtaba,</span> when email-hero's LLM starts failing in production, I want the health check to notice and flag it, so silent LLM breakage surfaces in the mini's triage instead of going unnoticed for days.</p>
+      <p class="incident">Observed problem: LLM calls were failing quietly inside the daemon; <code>email-hero health</code> stayed green because nothing recorded the failures where it could see them.</p>
+      <p class="incident">Linked issue: none (change originated in-session).</p>
+    </div>
+    <div class="block solution">
+      <h2>Solution</h2>
+      <!-- FILL: SOLUTION. Bullet list (ul.proof, bullet tick spans): 2-5 short bullets naming what is being built to deliver the story's outcome. Never a paragraph. -->
+      <ul class="proof">
+        <li><span class="tick">&#8226;</span><span>A per-failure sink records every LLM failure to <code>llm-failures.jsonl</code>.</span></li>
+        <li><span class="tick">&#8226;</span><span><code>email-hero health</code> counts failures inside its window and exits non-zero past <code>--llm-max-failures</code>.</span></li>
+        <li><span class="tick">&#8226;</span><span>Mini check #8 turns red when the LLM is breaking, surfacing silent failures in triage.</span></li>
+      </ul>
+    </div>
+    <div class="block">
+      <h2>How this plan proves it</h2>
+      <!-- FILL: PROOF. 2-4 numbered bullets mapping the plan's rows to the story's outcome; each ends with a muted (Dev/Prod row N) pointer. -->
+      <ul class="proof">
+        <li><span class="tick">1.</span><span>The counting rules are right in isolation: unit tests cover in-window counting, torn lines, and the cap. <span class="where">(Dev row 1.)</span></span></li>
+        <li><span class="tick">2.</span><span>A forced failure on a real copy is noticed end to end: the sink records it and <code>health</code> exits non-zero at the threshold. <span class="where">(Dev row 2.)</span></span></li>
+        <li><span class="tick">3.</span><span>The live daemon on the mini behaves the same after deploy, which is the story's outcome verified in production. <span class="where">(Prod row 1.)</span></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <section class="phase dev">
+    <div class="phase-head"><h2>🖥️ Development</h2></div>
+    <!-- FILL: DEV ELI5 (one plain-language line, no jargon) -->
+    <p class="eli5">On a throwaway copy we fake an LLM failure and check the health command notices and flags it, all before this can merge.</p>
+    <div class="card"><div class="tablewrap">
+      <table>
+        <thead><tr><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
+        <tbody>
+          <!-- FILL: DEV ROWS. NO checkbox cell (pass/fail state lives in the PR body, the source of truth the gates read). Tester = avatar span. -->
+          <tr>
+            <td class="tester"><span class="av" title="claude" role="img" aria-label="claude"><span class="pic claude" aria-hidden="true"></span></span></td>
+            <td>Unit tests for <code>llm_health</code></td>
+            <td class="expect">Assertions pass; sink fires once per failure; fail-safes never raise</td>
+            <td class="notes">in-window counting, torn-line skip, cap trim</td>
+          </tr>
+          <tr>
+            <td class="tester"><span class="av" title="mutwo" role="img" aria-label="mutwo"><span class="pic mutwo" aria-hidden="true"></span></span></td>
+            <td>E2E on mini: force an LLM failure, run <code>health --llm-max-failures 1</code></td>
+            <td class="expect">Row in <code>llm-failures.jsonl</code>; exits <code>1</code> at threshold 1, <code>0</code> at high</td>
+            <td class="notes">branch worktree</td>
+          </tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <section class="phase prod">
+    <div class="phase-head"><h2>🚀 Production</h2></div>
+    <!-- FILL: PROD ELI5 -->
+    <p class="eli5">After it's live on the mini, we run the same fake-failure check against the real running command to confirm it behaves in production.</p>
+    <div class="card"><div class="tablewrap">
+      <table>
+        <thead><tr><th>Tester</th><th>Check</th><th>Expect</th><th>Notes</th></tr></thead>
+        <tbody>
+          <!-- FILL: PROD ROWS. No checkbox column. -->
+          <tr>
+            <td class="tester"><span class="av" title="mujtaba" role="img" aria-label="mujtaba"><span class="pic mujtaba" aria-hidden="true"></span></span></td>
+            <td>After deploy: <code>email-hero health</code> (mini check #8)</td>
+            <td class="expect">Exits <code>0</code> with freshness + LLM line; forced failure logs; check #8 green</td>
+            <td class="notes">daemon installs sink at startup</td>
+          </tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <div class="aux">
+    <div class="block artifact">
+      <h3>Production artifacts</h3>
+      <!-- FILL: ARTIFACTS. Bullet list (ul.proof): one bullet per artifact fact: the exact thing production runs (image digest/tag, bundle id, deploy id), the host, how it is exercised. Never a paragraph. -->
+      <ul class="proof">
+        <li><span class="tick">&#8226;</span><span><span class="mono">email-hero</span> on <code>mutwos-mac-mini</code> at the merged <code>main</code> commit.</span></li>
+        <li><span class="tick">&#8226;</span><span>Exercised by <code>email-hero health</code> (check #8, every 600s) + the <code>com.emailhero.watch</code> daemon.</span></li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>Definition of Done</h3>
+      <ul class="proof">
+        <!-- FILL: DOD. Plain bullets, no checkbox glyphs (checkbox state lives in the PR body). -->
+        <li><span class="tick">&#8226;</span><span>Tests written and green</span></li>
+        <li><span class="tick">&#8226;</span><span>Independent local review clear (<code>/eng:cr</code>) + CodeRabbit addressed</span></li>
+        <li><span class="tick">&#8226;</span><span>Docs updated where user-facing</span></li>
+        <li><span class="tick">&#8226;</span><span><code>where-things-run.json</code> bumped if the deploy changed hosts</span></li>
+      </ul>
+    </div>
+  </div>
+</div>

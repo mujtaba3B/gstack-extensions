@@ -305,6 +305,16 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$status" -ne 0 ]
 }
 
+@test "build_procedure_ref: returns the value when the marker sets it" {
+  run qpg_build_procedure_ref '{"build_procedure_ref":"docs/BUILD.md"}'
+  [ "$output" = "docs/BUILD.md" ]
+}
+
+@test "build_procedure_ref: returns empty when the marker omits it" {
+  run qpg_build_procedure_ref '{"base_branches":["main"]}'
+  [ -z "$output" ]
+}
+
 @test "base_in_scope: main in default scope" {
   run qpg_base_in_scope '{}' "main"
   [ "$output" = "in" ]; [ "$status" -eq 0 ]
@@ -464,4 +474,14 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   run bash -c "CLAUDE_PLUGIN_ROOT=/nonexistent/other-plugin printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"decision":"block"'* ]]
+}
+
+@test "pr gate blocks: an EMPTY env-var prefix before gh pr create is still caught" {
+  # Regression, paired with pr-merge-gate.bats and ship-pr-gate.bats. This gate
+  # carries a copy of the same command-position matcher; the empty-value case
+  # bypassed all of them.
+  opt_in
+  run bash -c "cd '$REPO' && printf '%s' '$(create_payload "FOO= gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
 }

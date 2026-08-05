@@ -213,7 +213,7 @@ The verdict is what Deployer Danny reads when deciding whether to ship.
 
 ## QA posture contract (every qa:* run states it)
 
-Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. The postures are two-phase, matching `~/dev/BUILD-PROCEDURE.md` (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
+Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. The postures are two-phase (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
 
 - PASS in dev / preview (pre-merge) → `QA_STATUS: dev_verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it). `verified` is accepted as an alias.
 - PASS live in production (post-deploy) → `QA_STATUS: prod_verified` + `EVIDENCE:`.

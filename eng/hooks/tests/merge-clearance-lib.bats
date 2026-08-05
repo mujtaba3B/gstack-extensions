@@ -163,6 +163,96 @@ stamp() {
   [ "$output" = "unresolved" ]
 }
 
+# --- green HEAD waives only STALE (outdated) CR threads, never current ones ----
+# The real wedge (mutwo-skills#118): CodeRabbit left a Minor, isOutdated=true
+# nitpick thread unresolved on an earlier commit, then posted a `success` commit
+# status on every commit incl. HEAD. mc_cr_verdict counted the stale thread as a
+# HARD block, so a PR CR itself marks green could not clear (it had to be merged
+# by bypassing the gate). CRITICAL SAFETY FACT: CR's `success` status means CR
+# FINISHED reviewing HEAD, not that it approved it - CR posts success alongside
+# actionable COMMENTED feedback. So the waiver applies ONLY to OUTDATED threads
+# (the anchored code changed and CR re-reviewed HEAD green without re-flagging).
+# A CURRENT (isOutdated!=true) unresolved CR thread is CR asking for changes on the
+# code as it stands and ALWAYS blocks. 3rd arg = resolved CR commit-status state.
+
+@test "cr verdict: success + an OUTDATED unresolved CR nitpick is waived (the #118 case)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved-waived" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success + a CURRENT (non-outdated) unresolved CR thread STILL BLOCKS" {
+  # CR asking for changes on the code as it stands - the green status must NOT waive it
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success + mixed outdated+current unresolved threads BLOCKS (a current one exists)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}},{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: an unresolved thread with NO isOutdated field defaults to current -> blocks under success" {
+  # fail-closed: unknown freshness must not be waived
+  threads='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success + outdated thread + CHANGES_REQUESTED review still BLOCKS (not waived)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  reviews='[{"author":{"login":"coderabbitai"},"state":"CHANGES_REQUESTED","commit":{"oid":"x"}}]'
+  run mc_cr_verdict "$threads" "$reviews" "success"
+  [ "$status" -eq 1 ]
+  [ "$output" != "unresolved-waived" ]
+}
+
+@test "cr verdict: pending status does NOT waive even an outdated thread (review in flight blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "pending"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: failure status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "failure"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: missing status does NOT waive an outdated thread (blocks)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "missing"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: two-arg call (no status) still hard-blocks an outdated unresolved thread (backward compat)" {
+  threads='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+  run mc_cr_verdict "$threads" "[]"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr verdict: success status with NO unresolved threads is plain clear (unchanged)" {
+  run mc_cr_verdict "[]" "[]" "success"
+  [ "$output" = "clear" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr verdict: success status still fails CLOSED on degraded thread data" {
+  run mc_cr_verdict "null" "[]" "success"
+  [ "$output" = "unknown" ]
+  [ "$status" -eq 1 ]
+}
+
 # ---- mc_cr_reviewed_head ----------------------------------------------------
 
 @test "cr reviewed head: yes when a coderabbit review is on HEAD" {
@@ -181,6 +271,58 @@ stamp() {
   reviews='[{"author":{"login":"mujtaba3B"},"state":"APPROVED","commit":{"oid":"abc123def456"}}]'
   run mc_cr_reviewed_head "$reviews" "$HEAD"
   [ "$output" = "no" ]
+}
+
+# --- green-but-quiet CodeRabbit: success commit status on HEAD proves review ---
+# The bug: on a clean incremental commit CodeRabbit flips its per-commit STATUS to
+# success and posts NO new review object. The review-object-only check reported
+# reviewed-head=no and wedged a fully clean PR. A success CR commit status on the
+# exact HEAD sha (per-commit statuses API) is proof CR evaluated HEAD.
+
+@test "cr reviewed head: yes when CR commit status is success on HEAD (no review object)" {
+  # review object is on an ANCESTOR only, but CR's status on HEAD is success
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr reviewed head: yes on success status even with an empty reviews array" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: pending CR status does NOT satisfy reviewed-head (review in flight)" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"older000"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "pending"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: failure CR status does NOT satisfy reviewed-head" {
+  run mc_cr_reviewed_head "[]" "$HEAD" "failure"
+  [ "$output" = "no" ]
+}
+
+@test "cr reviewed head: missing CR status falls through to the review-object proof" {
+  reviews='[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"abc123def456"}}]'
+  run mc_cr_reviewed_head "$reviews" "$HEAD" "missing"
+  [ "$output" = "yes" ]
+}
+
+@test "cr reviewed head: guard - success status satisfies reviewed-head yet a CURRENT thread still blocks the verdict" {
+  # Mirror the REAL caller: merge-clearance.sh feeds the same CR_STATUS_STATE into
+  # BOTH mc_cr_reviewed_head and mc_cr_verdict. A success status makes reviewed-head
+  # "yes", but the verdict is independent and a CURRENT (non-outdated) unresolved CR
+  # thread is CR asking for changes on the code as it stands: it still blocks even
+  # under the same green status. Only an OUTDATED thread would be waived (see the
+  # verdict tests above). This pins that the green-status relaxation never clears a
+  # live CR objection.
+  run mc_cr_reviewed_head "[]" "$HEAD" "success"
+  [ "$output" = "yes" ]
+  threads='[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"}}]}}]'
+  run mc_cr_verdict "$threads" "[]" "success"
+  [ "$output" = "unresolved" ]
+  [ "$status" -eq 1 ]
 }
 
 # ---- mc_qa_state (the b5 require-a-QA-plan dimension) -----------------------
@@ -225,6 +367,44 @@ stamp() {
   body=$'## QA\n### Development QA\n- [x] dev done\n## Notes\n- [ ] unrelated box outside QA'
   run mc_qa_state "$body" 0
   [ "$output" = "complete" ]
+}
+
+# ---- mc_qa_state: Template B table format (DEV boxes live in table cells) ----
+
+@test "qa state (Template B): an unchecked DEV table row -> incomplete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [ ] | claude | run bats | green |'
+  run mc_qa_state "$body" 0
+  [ "$output" = "incomplete" ]
+}
+
+@test "qa state (Template B): all DEV rows checked + DoD boxes checked -> complete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n| DEV | [x] | claude | lint | clean |\n\n**Definition of Done:**\n- [x] Tests written and green\n- [x] Review clear'
+  run mc_qa_state "$body" 0
+  [ "$output" = "complete" ]
+}
+
+@test "qa state (Template B): a PROD row with a hyphen status does not count as a box" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n| PROD | - | mutwo | live smoke | 200 |'
+  run mc_qa_state "$body" 1
+  [ "$output" = "complete" ]
+}
+
+@test "qa state (Template B): a PROD hyphen row alone (no DEV box) never blocks by itself" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| PROD | - | mutwo | live smoke | 200 |\nQA_STATUS: dev_verified'
+  run mc_qa_state "$body" 0
+  [ "$output" = "n/a" ]
+}
+
+@test "qa state (Template B): a PROD hyphen row alone with require=1 -> missing" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| PROD | - | mutwo | live smoke | 200 |\nQA_STATUS: dev_verified'
+  run mc_qa_state "$body" 1
+  [ "$output" = "missing" ]
+}
+
+@test "qa state (Template B): an unchecked DoD box with all DEV rows checked -> incomplete" {
+  body=$'## QA\n| Phase | Status | Tester | Flow | Expect |\n|---|---|---|---|---|\n| DEV | [x] | claude | run bats | green |\n\n**Definition of Done:**\n- [ ] Tests written and green'
+  run mc_qa_state "$body" 0
+  [ "$output" = "incomplete" ]
 }
 
 # ---- mc_head_cr_unreviewable (the CR-unreviewable-only HEAD auto-satisfy) ----
@@ -723,5 +903,205 @@ rlmarker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai 
   [ "$status" -eq 1 ]
   run mc_cr_rate_limited_latest "garbage"
   [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+# ---- mc_cr_failure_rate_limited (the FAILURE-status shape) -------------------
+# CodeRabbit resolving its per-commit status to failure with a "Review rate limited"
+# description, typically with NO marker comment anywhere on the PR. Observed on
+# gstack-extensions#58: CR had fully reviewed the PR and acked every finding, then
+# its incremental pass over a trailing test-only commit burned the limit.
+
+MARKER="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+
+cr_comment() {
+  # cr_comment <body> -> a one-element CR-authored comments array
+  jq -nc --arg b "$1" '[{author:"coderabbitai[bot]", body:$b}]'
+}
+
+@test "cr failure rate-limited: failure + 'Review rate limited' description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: description match is case-insensitive, spaced or hyphenated" {
+  local d
+  # A plain substring test on "rate limit" missed the hyphenated spelling, and that
+  # miss is SILENT: the operator gets told a rate-limited failure is genuine.
+  for d in "RATE LIMIT EXCEEDED - please wait 12 minutes" \
+           "CodeRabbit is Rate Limited for this repository" \
+           "Rate-limited" \
+           "review rate-limit hit"; do
+    run mc_cr_failure_rate_limited "failure" "$d" "[]"
+    [ "$output" = "yes" ] || fail "expected yes for description: $d"
+  done
+}
+
+@test "cr failure rate-limited: a NEGATED mention of rate limiting does not qualify" {
+  local d
+  for d in "not rate limited" \
+           "not a rate limit issue" \
+           "no rate-limit was hit; parser crashed"; do
+    run mc_cr_failure_rate_limited "failure" "$d" "[]"
+    [ "$output" = "no" ] || fail "expected no for description: $d"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure rate-limited: failure + marker as CR's latest comment -> yes" {
+  run mc_cr_failure_rate_limited "failure" "" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: failure + latest marker under an unrelated description -> yes" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" "$(cr_comment "$MARKER")"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cr failure rate-limited: a STALE marker cannot make a later GENUINE failure read as rate-limited" {
+  # The regression that mattered: CR is rate-limited on an early commit (marker
+  # posted, never deleted), then recovers, reviews, and its status on a later HEAD
+  # resolves to a GENUINE failure. Keying on "marker anywhere on the PR" would
+  # auto-clear that failure with no operator flag AND label the audit trail
+  # "rate-limited". Requiring the marker to be CR's LATEST comment closes it, the
+  # same discipline mc_cr_rate_limited_latest applies to the stuck-pending shape.
+  local history
+  history=$(jq -nc --arg m "$MARKER" '[
+    {author:"coderabbitai[bot]", body:$m},
+    {author:"coderabbitai[bot]", body:"Actionable comments posted: 4"},
+    {author:"coderabbitai[bot]", body:"**Walkthrough**\n\nThe changes ..."}
+  ]')
+  run mc_cr_failure_rate_limited "failure" "Review failed" "$history"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: GENUINE failure (neither signal) -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review completed with errors" \
+    "$(cr_comment 'Actionable comments posted: 3')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: genuine failure with an empty description -> no" {
+  run mc_cr_failure_rate_limited "failure" "" "[]"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: non-failure states never qualify" {
+  # Even carrying both signals: success / pending / missing are handled by the
+  # other two shapes (or are not a gap at all), so this function must stay quiet.
+  local state
+  for state in success pending missing ""; do
+    run mc_cr_failure_rate_limited "$state" "Review rate limited" "$(cr_comment "$MARKER")"
+    [ "$output" = "no" ] || fail "expected no for state: ${state:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure rate-limited: a rate-limit marker from a NON-CR author does not count" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" \
+    "$(jq -nc --arg b "$MARKER" '[{author:"mujtaba3B", body:$b}]')"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: unreadable comments fail closed -> no" {
+  run mc_cr_failure_rate_limited "failure" "Review failed" '{"not":"an array"}'
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+  run mc_cr_failure_rate_limited "failure" "Review failed" "garbage"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure rate-limited: comments argument is optional (defaults to [])" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "Review failed"
+  [ "$output" = "no" ]
+}
+
+# ---- mc_cr_failure_disposition (the whole CR-failure decision, as a table) ----
+# This is the gate's most security-relevant decision: what stands between
+# --override-cr-failure and a bare merge bypass. Every row below is a case that
+# used to be verifiable only by hand.
+
+disp() {
+  # disp <state> <rate_limited> <override> <review_state>
+  mc_cr_failure_disposition "$1" "$2" "$3" "$4"
+}
+
+@test "cr failure disposition: a genuine failure blocks, with or without a current review" {
+  run disp failure no 0 current
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+  run disp failure no 0 missing
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure disposition: the override clears ONLY with a current local review" {
+  run disp failure no 1 current
+  [ "$output" = "cleared-override" ]
+  [ "$status" -eq 0 ]
+  # The interlock. Anything other than a current review must refuse, including the
+  # n/a case (running outside a checkout, where there is no stamp to read at all).
+  local rs
+  for rs in stale missing n/a ""; do
+    run disp failure no 1 "$rs"
+    [ "$output" = "block-override-needs-review" ] || fail "override cleared with review_state=${rs:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure disposition: a rate-limited failure clears ONLY with a current local review" {
+  run disp failure yes 0 current
+  [ "$output" = "cleared-rate-limited" ]
+  [ "$status" -eq 0 ]
+  local rs
+  for rs in stale missing n/a ""; do
+    run disp failure yes 0 "$rs"
+    [ "$output" = "block-rate-limited-unbackstopped" ] || fail "rate-limit cleared with review_state=${rs:-<empty>}"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "cr failure disposition: rate-limit wins over the flag, so the audit trail stays honest" {
+  # An operator who passes the flag defensively on a failure the machine can already
+  # classify must NOT have it recorded as a human override; otherwise a later grep
+  # for real overrides returns false positives.
+  run disp failure yes 1 current
+  [ "$output" = "cleared-rate-limited" ]
+  [ "$status" -eq 0 ]
+  run disp failure yes 1 stale
+  [ "$output" = "block-rate-limited-unbackstopped" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "cr failure disposition: the flag is inert on any non-failure status" {
+  local state
+  for state in success pending missing; do
+    run disp "$state" no 0 current
+    [ "$output" = "n/a" ] || fail "expected n/a for state: $state"
+    [ "$status" -eq 0 ]
+    # Flag passed where there is no failure to override: reported so the caller can
+    # tell the operator, but it never clears anything on its own.
+    run disp "$state" no 1 current
+    [ "$output" = "override-inert" ] || fail "expected override-inert for state: $state"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "cr failure disposition: defaults deny (missing/garbage arguments never clear)" {
+  run mc_cr_failure_disposition failure
+  [ "$output" = "block-genuine" ]
+  [ "$status" -eq 1 ]
+  run disp failure "garbage" "garbage" current
+  [ "$output" = "block-genuine" ]
   [ "$status" -eq 1 ]
 }

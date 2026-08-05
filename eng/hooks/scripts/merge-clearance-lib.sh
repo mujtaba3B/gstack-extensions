@@ -189,10 +189,11 @@ EOF
   echo "no"; return 1
 }
 
-# mc_cr_verdict <threads_json> <reviews_json>
+# mc_cr_verdict <threads_json> <reviews_json> [cr_status_state]
 #   Turn GitHub GraphQL output for one PR into a CodeRabbit-resolution verdict.
-#   Echoes one of: clear | unresolved | changes_requested. Returns 0 only for
-#   "clear". This is the structural signal (Codex flagged that parsing the review
+#   Echoes one of: clear | unresolved | unresolved-waived | changes_requested.
+#   Returns 0 for "clear" and "unresolved-waived" (both non-blocking), non-zero
+#   otherwise. This is the structural signal (Codex flagged that parsing the review
 #   body string "Actionable comments posted: 0" is brittle; that string is fallback
 #   evidence only, never the gate).
 #
@@ -200,14 +201,34 @@ EOF
 #     [ { "isResolved": bool, "comments": { "nodes": [ { "author": {"login": "..."} } ] } }, ... ]
 #   reviews_json:  the PR's reviews nodes (chronological), shape
 #     [ { "author": {"login": "..."}, "state": "...", "submittedAt": "...", "commit": {"oid": "..."} }, ... ]
+#   cr_status_state (optional): CodeRabbit's resolved per-commit commit-status on
+#     HEAD (state_of "CodeRabbit"): success | failure | pending | missing. Optional
+#     so existing two-arg callers/tests keep their meaning ("" is never "success").
 #
 #   Precedence: an unresolved CodeRabbit thread is the most common actionable
 #   blocker, so it wins; then a CHANGES_REQUESTED CodeRabbit review; else clear.
 #   "coderabbitai" is matched as a case-insensitive substring of the author login
 #   because the bot appears as both "coderabbitai" (GraphQL Bot) and
 #   "coderabbitai[bot]" (REST) depending on the surface.
+#
+#   Stale-thread waiver (the mutwo-skills#118 wedge): CodeRabbit's "success" commit
+#   status means it FINISHED reviewing HEAD, NOT that it approved it (state_of folds
+#   any completed status into "success"; CR routinely posts success alongside
+#   actionable COMMENTED feedback). So "success" alone must NOT waive open CR
+#   objections. The ONLY unresolved threads waived here are ones GitHub marks
+#   isOutdated=true: the code the thread was anchored to has since changed, and CR
+#   re-reviewed HEAD (its status IS on HEAD, per-commit) without re-flagging it, so
+#   the stale thread is addressed-or-moot. A CURRENT (isOutdated != true) unresolved
+#   CR thread is CodeRabbit asking for changes on the code AS IT STANDS: it ALWAYS
+#   blocks, regardless of status. The waiver fires only when (a) CR is green on
+#   HEAD (cr_status == "success"), AND (b) every unresolved CR thread is outdated,
+#   AND (c) CR's latest review is not CHANGES_REQUESTED -> "unresolved-waived"
+#   (rc 0). Non-green status (pending / failure / missing) never waives. The waiver
+#   is CodeRabbit-only; a human's unresolved thread was never counted here.
+#   Threads missing the isOutdated field default to CURRENT (fail-closed: an
+#   unknown-freshness thread blocks rather than being waived).
 mc_cr_verdict() {
-  local threads="$1" reviews="$2"
+  local threads="$1" reviews="$2" cr_status="${3:-}"
 
   # Fail CLOSED on degraded GitHub data. A GraphQL timeout / partial response (gh
   # exits 0 with .data present but null nodes) would otherwise reach here as
@@ -221,14 +242,22 @@ mc_cr_verdict() {
   printf '%s' "$threads" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "unknown"; return 1; }
   printf '%s' "$reviews" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo "unknown"; return 1; }
 
-  local unresolved
+  # Total unresolved CodeRabbit threads, and the subset that are CURRENT (not
+  # outdated). A thread with no isOutdated field counts as current (fail closed).
+  local unresolved unresolved_current
   unresolved=$(printf '%s' "$threads" | jq '
     [ .[]
       | select(.isResolved != true)
       | select( any(.comments.nodes[]?; (.author.login // "") | ascii_downcase | contains("coderabbitai")) )
     ] | length
   ' 2>/dev/null) || { echo "unknown"; return 1; }
-  if [ "${unresolved:-0}" -gt 0 ] 2>/dev/null; then echo "unresolved"; return 1; fi
+  unresolved_current=$(printf '%s' "$threads" | jq '
+    [ .[]
+      | select(.isResolved != true)
+      | select(.isOutdated != true)
+      | select( any(.comments.nodes[]?; (.author.login // "") | ascii_downcase | contains("coderabbitai")) )
+    ] | length
+  ' 2>/dev/null) || { echo "unknown"; return 1; }
 
   # Latest CodeRabbit review state (last by array order, which the query returns
   # chronologically). COMMENTED / APPROVED do not block; CHANGES_REQUESTED does.
@@ -237,19 +266,53 @@ mc_cr_verdict() {
     [ .[] | select( (.author.login // "") | ascii_downcase | contains("coderabbitai") ) ]
     | (last // {}) | (.state // "")
   ' 2>/dev/null) || { echo "unknown"; return 1; }
+
+  if [ "${unresolved:-0}" -gt 0 ] 2>/dev/null; then
+    # Waive ONLY when CR is green on HEAD, EVERY unresolved CR thread is outdated
+    # (no current one), and CR is not explicitly requesting changes. Anything else
+    # with an unresolved thread blocks - including a current thread under a green
+    # status (CR asking for changes on the code as it stands).
+    if [ "$cr_status" = "success" ] && [ "${unresolved_current:-0}" -eq 0 ] 2>/dev/null \
+       && [ "$latest_state" != "CHANGES_REQUESTED" ]; then
+      echo "unresolved-waived"; return 0
+    fi
+    echo "unresolved"; return 1
+  fi
+
   if [ "$latest_state" = "CHANGES_REQUESTED" ]; then echo "changes_requested"; return 1; fi
 
   echo "clear"; return 0
 }
 
-# mc_cr_reviewed_head <reviews_json> <head_sha>
-#   Has CodeRabbit submitted at least one review whose commit oid is the current
-#   HEAD? Echoes "yes" / "no". Used to avoid clearing a PR while CodeRabbit is
-#   still mid-review of the latest push (Codex: confirm CR FINISHED the current
-#   HEAD before clearing). A "no" is advisory - the live "CodeRabbit" commit-status
-#   context is the stronger in-progress signal the CLI also checks.
+# mc_cr_reviewed_head <reviews_json> <head_sha> [cr_status_state]
+#   Has CodeRabbit EVALUATED the current HEAD? Echoes "yes" / "no". Two
+#   independent proofs, either of which suffices:
+#     1. A CodeRabbit REVIEW object whose commit oid == HEAD. This is the strong
+#        proof, but CR only re-posts a formal review object when it has FINDINGS.
+#        On a clean incremental commit (a trivial follow-up fix) CR flips its
+#        per-commit status to green and stays quiet, posting no new review object,
+#        so this proof alone misses the "green but quiet" case.
+#     2. CodeRabbit's own per-commit COMMIT STATUS is "success" on HEAD. The
+#        GitHub commit-status API is per-commit, so a success status attached to
+#        the exact HEAD sha proves CR ran on HEAD and passed it green with nothing
+#        to say. The caller passes the already-resolved CR commit-status state
+#        (state_of "CodeRabbit", keyed to repos/../commits/HEAD/statuses) as the
+#        optional third arg; it is optional so existing two-arg callers/tests keep
+#        their meaning ("" is never "success", so they fall through to proof 1).
+#   Only "success" counts for proof 2: "pending" (review in flight) and "failure"
+#   are NOT evidence HEAD was cleared, and the caller handles those separately.
+#   This relaxes ONLY the reviewed-head dimension; the separate "CR clear" verdict
+#   (mc_cr_verdict: unresolved threads / changes-requested) still blocks regardless,
+#   so a real CodeRabbit objection on a green-status HEAD is unaffected.
+#   A "no" is advisory - the live "CodeRabbit" commit-status context is the
+#   stronger in-progress signal the CLI also checks.
 mc_cr_reviewed_head() {
-  local reviews="$1" head="$2"
+  local reviews="$1" head="$2" cr_status="${3:-}"
+  # Proof 2: green-but-quiet. A success commit status on the exact HEAD sha means
+  # CR evaluated HEAD even when it posted no review object (clean incremental
+  # commit). state_of already keyed this to the per-commit statuses API for HEAD,
+  # so it cannot be inherited or stale from an ancestor commit.
+  if [ "$cr_status" = "success" ]; then echo "yes"; return 0; fi
   local hit
   hit=$(printf '%s' "$reviews" | jq -r --arg h "$head" '
     [ .[]
@@ -328,6 +391,135 @@ mc_cr_rate_limited_latest() {
   ' 2>/dev/null) || { echo "no"; return 1; }
   if [ "$hit" = "yes" ]; then echo "yes"; return 0; fi
   echo "no"; return 1
+}
+
+# mc_cr_failure_rate_limited <cr_status_state> <cr_status_description> [comments_json]
+#   Decide whether a CodeRabbit commit status of "failure" on HEAD is really a RATE
+#   LIMIT rather than a genuine CodeRabbit objection or CR-side error. This is the
+#   third rate-limit shape, and the one the two functions above miss:
+#     1. status MISSING  + marker comment  -> mc_cr_rate_limited
+#     2. status PENDING (stuck) + marker as CR's LATEST comment
+#                                          -> mc_cr_rate_limited_latest
+#     3. status FAILURE, description "Review rate limited"  -> THIS function
+#   Shape 3 is what CodeRabbit posts when it burns its limit on an INCREMENTAL pass:
+#   it has already reviewed the PR (often posting acks on every finding), then the
+#   final pass over a trailing commit trips the limit and CR resolves its per-commit
+#   status to failure with a rate-limit description. In that flavour CR posts NO
+#   marker comment at all, so keying only on "rate limited by coderabbit.ai" (as the
+#   two functions above do) leaves the PR wedged behind a hard failure blocker. The
+#   marker is therefore the SECONDARY proof here, for the residual case where CR
+#   posts both; the description is the primary one.
+#
+#   cr_status_state:       the already-folded CR commit-status state on HEAD
+#     (state_of "CodeRabbit"): success | failure | pending | missing. Only "failure"
+#     can be a shape-3 rate limit; every other state echoes "no" (the caller handles
+#     missing / pending through the two functions above).
+#   cr_status_description: the description string on that CodeRabbit status
+#     (e.g. "Review rate limited"). Matched case-insensitively against
+#     "rate[ -]?limit", so "Review rate limited", "Rate limit exceeded",
+#     "Rate-limited" and "ratelimit" all hit. A plain substring test missed the
+#     hyphenated spelling, and that miss would be SILENT: the operator would be
+#     told the failure is genuine when it is not.
+#     A NEGATED phrasing ("not rate limited", "no rate limit hit") is explicitly
+#     excluded, so a description that mentions rate limiting only to deny it
+#     cannot buy the escape hatch. This is a prefix-negation guard, NOT a semantic
+#     parser: a trailing negation ("rate limit was not the cause") would still
+#     classify as a rate limit. Accepted, and bounded: even then the failure only
+#     degrades from a hard block to "requires a current local /eng:cr review",
+#     which is the same deal the other two shapes get. Widen the guard if CR's
+#     wording ever makes that theoretical case real.
+#   comments_json (optional): the PR's issue comments, SAME shape as
+#     mc_cr_rate_limited. Checked as a SECOND, independent proof, via the STRICT
+#     mc_cr_rate_limited_latest: the marker must be CR's LATEST comment. The loose
+#     mc_cr_rate_limited would match a marker anywhere in the PR's history, so a
+#     stale rate-limit notice from an early commit would let a LATER, genuine CR
+#     failure auto-clear while the audit trail called it a rate limit. That is the
+#     same stale-evidence trap mc_cr_rate_limited_latest already exists to close
+#     for the stuck-pending shape; shape 3 gets the same discipline.
+#     Defaults to [] so a description-only caller works.
+#
+#   Echoes "yes" iff the state is "failure" AND (the description says rate limit,
+#   non-negated, OR the marker is CR's latest comment); else "no". Return code
+#   mirrors the verdict. Fails CLOSED in every degraded direction: a non-failure
+#   state, an unreadable description, and an unparseable comments array all yield
+#   "no", so a genuine CR failure is never mistaken for a rate limit. Like the other
+#   two shapes this only ever RELAXES the gate in combination with a current local
+#   /eng:cr review; mc_cr_failure_disposition owns that interlock.
+mc_cr_failure_rate_limited() {
+  local state="$1" desc="${2:-}" comments="${3:-[]}"
+  [ "$state" = "failure" ] || { echo "no"; return 1; }
+  # Positive match, minus negations. grep -i keeps the case-insensitivity without
+  # a tr round-trip, and -E gives the optional space/hyphen between the words.
+  if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
+     && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
+    echo "yes"; return 0
+  fi
+  # Second proof: the marker as CR's LATEST comment. mc_cr_rate_limited_latest
+  # returns rc 1 on "no", but it is read here as a string in $(...), so only its
+  # stdout token is authoritative.
+  if [ "$(mc_cr_rate_limited_latest "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
+# mc_cr_failure_disposition <cr_status_state> <failure_rate_limited> <override_flag> <review_state>
+#   The gate's whole decision about a CodeRabbit FAILURE status on HEAD, as one
+#   pure function. This lives here rather than as shell control flow in
+#   merge-clearance.sh because it is the single most security-relevant decision the
+#   gate makes: it is what stands between "--override-cr-failure" and a bare merge
+#   bypass. As inline `&&` chains in the I/O script it could only ever be verified
+#   by hand; here every row of its truth table is a bats case.
+#
+#   Arguments are all already-computed scalars (no network, no git):
+#     cr_status_state:       success | failure | pending | missing (state_of "CodeRabbit")
+#     failure_rate_limited:  yes | no  (mc_cr_failure_rate_limited)
+#     override_flag:         1 | 0     (the --override-cr-failure flag)
+#     review_state:          current | stale | missing | n/a  (the /eng:cr stamp vs HEAD)
+#
+#   Echoes exactly one disposition token; rc 0 for the non-blocking ones, 1 for the
+#   blocking ones so callers can branch on either:
+#     n/a                             - not a failure status; nothing to decide (rc 0)
+#     override-inert                  - flag passed on a non-failure status; it does
+#                                       nothing, and the caller should SAY so (rc 0)
+#     cleared-rate-limited            - rate limit + current local review (rc 0)
+#     cleared-override                - genuine failure + explicit flag + current
+#                                       local review (rc 0)
+#     block-rate-limited-unbackstopped- rate limit but no current local review (rc 1)
+#     block-override-needs-review     - flag passed but no current local review (rc 1)
+#     block-genuine                   - genuine CR failure, no flag (rc 1)
+#
+#   The invariants this function EXISTS to enforce, none of which may be relaxed:
+#     1. NOTHING clears a failure without review_state == "current". Not the rate
+#        limit, not the operator flag. "Never both reviewers down."
+#     2. review_state is read as given. The caller must NOT fold --skip-review or
+#        the bookkeeping fast lane into it: those waive the review DIMENSION, they
+#        do not conjure a review that can backstop a broken CodeRabbit.
+#     3. The rate-limit path is checked BEFORE the override path, so a failure the
+#        machine can classify never gets ATTRIBUTED to human judgment. Passing the
+#        flag defensively on a rate-limited failure yields cleared-rate-limited, so
+#        a later grep for real operator overrides stays free of false positives.
+#     4. The default is to block. Any state that is not explicitly cleared above
+#        falls through to block-genuine.
+mc_cr_failure_disposition() {
+  local state="$1" rate_limited="${2:-no}" override="${3:-0}" review="${4:-}"
+
+  if [ "$state" != "failure" ]; then
+    [ "$override" = "1" ] && { echo "override-inert"; return 0; }
+    echo "n/a"; return 0
+  fi
+
+  # Invariant 3: machine-detectable rate limit wins over the human flag.
+  if [ "$rate_limited" = "yes" ]; then
+    [ "$review" = "current" ] && { echo "cleared-rate-limited"; return 0; }
+    echo "block-rate-limited-unbackstopped"; return 1
+  fi
+
+  if [ "$override" = "1" ]; then
+    [ "$review" = "current" ] && { echo "cleared-override"; return 0; }
+    echo "block-override-needs-review"; return 1
+  fi
+
+  # Invariant 4: default deny.
+  echo "block-genuine"; return 1
 }
 
 # mc_head_cr_unreviewable <files_json> <globs_json>
@@ -418,6 +610,14 @@ mc_head_cr_unreviewable() {
 #   that documents the gate (```- [ ] ...```) is not parsed as real QA boxes.
 #   require_qa_plan is opt-in per repo via .merge-clearance.json; default 0
 #   preserves the prior behavior exactly (no checklist -> n/a, non-blocking).
+#
+#   Checkbox detection reads BOTH shapes: the legacy bullet checkbox (- [ ] / - [x]
+#   in the Definition-of-Done list and older PR bodies) AND the Template B DEV-row
+#   TABLE CELL checkbox (| [ ] | / | [x] |), which has no leading "- ". It matches
+#   any checkbox bracket [ ]/[x]/[X] within the fence-stripped section, so a single
+#   unchecked box in either place classifies "incomplete". Template B PROD rows use
+#   "-" (a plain hyphen, no bracket) in their Status cell, so they correctly do not
+#   count toward the merge gate.
 mc_qa_state() {
   local body="$1" require="${2:-0}"
   local section
@@ -436,8 +636,8 @@ mc_qa_state() {
     }
     inqa{print}
   ')
-  if printf '%s' "$section" | grep -q '\- \['; then
-    if printf '%s' "$section" | grep -q '\- \[ \]'; then echo "incomplete"; return 1; fi
+  if printf '%s' "$section" | grep -qE '\[[ xX]\]'; then
+    if printf '%s' "$section" | grep -qE '\[ \]'; then echo "incomplete"; return 1; fi
     echo "complete"; return 0
   fi
   if [ "$require" = "1" ]; then echo "missing"; return 1; fi

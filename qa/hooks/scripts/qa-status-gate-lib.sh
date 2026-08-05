@@ -85,7 +85,7 @@ qa_gate_decision() {
 #
 # These functions let the gate reject a prod_verified EVIDENCE line that names
 # only an upstream / base / proxy artifact instead of the exact production
-# artifact the approved plan named in its `Production artifact:` field. They are
+# artifact the approved plan named in its `Production artifacts:` field. They are
 # PURE (no I/O): qa-status-gate.sh fetches the PR body, extracts the field, and
 # passes it in.
 #
@@ -95,7 +95,7 @@ qa_gate_decision() {
 # exact production ref -- the precise shape of a base/proxy substitution.
 # Evidence that does not reference the family at all, a plan field with no
 # machine-matchable token, or an absent field all return a non-blocking verdict.
-# Enforcement engages only when a `Production artifact:` field is actually
+# Enforcement engages only when a `Production artifacts:` field is actually
 # present, so PRs without it behave exactly as before this change.
 
 # qa_extract_evidence <message>
@@ -107,15 +107,23 @@ qa_extract_evidence() {
 }
 
 # qa_extract_prod_artifact <pr_body>
-#   Echo each structured `Production artifact:` field value from a PR body (the
-#   shape /qa:plan writes: a plan list item, or a bare line). Anchored to the
-#   start of a line (after optional leading whitespace and an optional list
-#   bullet) so PROSE that merely MENTIONS the words "Production artifact:"
-#   mid-sentence (e.g. a PR summary describing the field, like this very repo's
-#   PRs) is NOT mistaken for a declared artifact. Pure, so the hook's one impure
-#   step (the gh fetch) is the only untested line.
+#   Echo each structured Production-artifact(s) field value from a PR body. The
+#   /qa:plan template writes this field as `**Production artifacts:**` (bold,
+#   plural); older plans wrote a plain `Production artifact:` line or a
+#   `- Production artifact:` bullet. The match tolerates all of these: optional
+#   leading indentation, list bullets, and `**` bold markers, in any order, with
+#   the noun singular or plural. It stays ANCHORED to the start of a line so PROSE
+#   that merely MENTIONS the words "Production artifact(s):" mid-sentence (e.g. a
+#   PR summary describing the field, like this very repo's PRs) is NOT mistaken
+#   for a declared artifact. Pure, so the hook's one impure step (the gh fetch) is
+#   the only untested line.
+#
+#   History: the anchor once required the singular `Production artifact:` with at
+#   most one bullet char, so it never matched the template's bold plural label and
+#   the artifact-evidence gate below sat DORMANT (fail-open on every PR). The
+#   character class `[-*[:space:]]*` now absorbs `**`, bullets, and indent alike.
 qa_extract_prod_artifact() {
-  printf '%s\n' "$1" | grep -oiE '^[[:space:]]*[-*]?[[:space:]]*Production artifact:.*'
+  printf '%s\n' "$1" | grep -oiE '^[[:space:]]*[-*[:space:]]*Production artifacts?:.*'
 }
 
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
@@ -134,7 +142,7 @@ qa_extract_prod_artifact() {
 qa_evidence_artifact_verdict() {
   local evidence="$1" field="$2"
 
-  # Backward compat: no Production artifact field -> enforcement disabled.
+  # Backward compat: no Production artifacts field -> enforcement disabled.
   [ -n "$(printf '%s' "$field" | tr -d '[:space:]')" ] || { echo "n/a"; return 0; }
 
   # Strip URLs first so a "how it is exercised" URL like https://host:443/path

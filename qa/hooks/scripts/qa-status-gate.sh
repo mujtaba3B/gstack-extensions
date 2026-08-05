@@ -90,9 +90,9 @@ fi
 
 # Posture is stated, so the "did you decide?" gate allows. Incident hardening:
 # if the agent claims prod_verified and the PR's approved QA plan named a
-# specific `Production artifact:`, reject EVIDENCE that names only a base /
+# specific `Production artifacts:`, reject EVIDENCE that names only a base /
 # upstream / proxy artifact instead of that one. Fail OPEN at every step: a
-# missing gh, no PR, or no `Production artifact:` field leaves PROD_ARTIFACT
+# missing gh, no PR, or no `Production artifacts:` field leaves PROD_ARTIFACT
 # empty and the gate behaves exactly as before. The gh lookup is gated on the
 # prod_verified keyword so a normal turn never pays for a network call.
 if printf '%s' "$LAST" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
