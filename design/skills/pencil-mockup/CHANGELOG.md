@@ -2,7 +2,11 @@
 
 ## v1.3.0
 
-Designer Denise now owns the cross-tool wireframe conventions outright. The workspace-level `~/dev/WIREFRAMES.md` (the old tool-agnostic source of truth other tools read) was retired and its tool-agnostic principles moved into the design pack at `design/references/wireframes-cross-tool.md`. The bundled Pencil reference (`references/wireframes.md`) stays the Pencil-specific superset; its precedence dropped the workspace-override tier and is now just project `spec/WIREFRAMES.md` -> this file. `shared/core.md`, `SKILL.md`, `style-guide/SKILL.md`, and the plugin README were repointed off the workspace path. The `qa` plugin's citations were repointed to the new cross-tool reference too.
+Designer Denise now owns the cross-tool wireframe conventions. This release copies the tool-agnostic principles into the design pack at `design/references/wireframes-cross-tool.md`, makes that file authoritative for anything shared across tools, and removes the workspace-level `~/dev/WIREFRAMES.md` from Denise's precedence chain.
+
+**Scope note:** this release does not delete the workspace file. Removing `~/dev/WIREFRAMES.md` itself is a companion `~/dev` PR and is still pending; until that lands, the file remains on disk and is simply no longer consulted by this plugin. Do not read this entry as a claim that it is gone.
+
+The bundled Pencil reference (`references/wireframes.md`) keeps the Pencil operating detail and now defers to the cross-tool file for the shared principles rather than superseding it, so the two cannot silently disagree. Precedence is project `spec/WIREFRAMES.md` -> this Pencil reference (for Pencil operating detail) -> the cross-tool reference (for shared principles). `shared/core.md`, `SKILL.md`, `style-guide/SKILL.md`, and the plugin README were repointed off the workspace path. The `qa` plugin's citations were repointed to the new cross-tool reference too.
 
 ## v1.2.0
 

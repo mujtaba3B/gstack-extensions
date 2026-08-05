@@ -24,7 +24,7 @@ Naming should match the stacking. If `S1b. Build - bio empty` is a state variant
 
 ## Overlap is a hard error (no frame may sit on top of another)
 
-**This is the most common mistake when adding or resizing frames, and it must stop.** Two frames may never share canvas space. Edges touching is fine; one pixel of overlap is not. Touching counts as overlap when the frames have visible strokes, since the strokes will visually merge.
+**This is the most common mistake when adding or resizing frames, and it must stop.** Two frames may never share canvas space. One pixel of overlap is never allowed. Bounding-box edges may touch only when neither frame renders a visible stroke; if either one does, leave a gap, because the strokes would visually merge into each other.
 
 The principle: **check before you write, and re-check after.** Snapshot the current layout before inserting, copying, moving, or resizing a frame; pick the new position with a real empty-space check rather than eyeballing the previous frame's height; and run the tool's overlap detector after, confirming it passes before you call the edit done. When you grow a frame, everything stacked below it in the same column probably now overlaps, so re-check.
 
