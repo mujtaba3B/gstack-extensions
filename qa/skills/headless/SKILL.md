@@ -2,20 +2,8 @@
 name: headless
 preamble-tier: 4
 version: 2.0.0
-description: |
-  QA Quincey's backend-feature QA skill. Systematically verify backend features
-  that have no UI: cron jobs, queue workers, webhook handlers, notifiers, CLIs,
-  ETL/data pipelines. Drive the feature in dry-run, capture side effects
-  (Slack messages, emails, DB writes, log lines, generated files), render them
-  readably, find bugs, fix them with atomic commits, re-verify. Sibling to
-  qa:browser inside the qa plugin; both share
-  the QA Quincey identity defined in shared/core.md. Use when asked to
-  "qa quincey headless", "test this cron", "test this worker", "test this notifier",
-  "qa the backend", "test the digest", "/qa:headless", or when you need to verify
-  a backend feature whose output is a side effect rather than a rendered page.
-  v1 ships Python end-to-end; Node, Ruby, and Go shape detection works, with
-  HTTP capture coming in follow-up PRs. Successor to /qa-headless. (gstack-extensions)
-  Voice triggers (speech-to-text aliases): "test the cron", "test the worker", "test the notifier", "qa the backend", "test the digest".
+description: >-
+  QA Quincey's backend-feature QA skill. Systematically verify backend features that have no UI: cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL/data pipelines. Drive the feature in dry-run, capture side effects (Slack messages, emails, DB writes, log lines, generated files), render them readably, find bugs, fix them with atomic commits, re-verify. Sibling to qa:browser inside the qa plugin; both share the QA Quincey identity in shared/core.md. Use for "qa quincey headless", "test this cron", "test this worker", "test this notifier", "qa the backend", "test the digest", "/qa:headless", or any backend feature whose output is a side effect rather than a rendered page. (gstack-extensions)
 allowed-tools:
   - Bash
   - Read
