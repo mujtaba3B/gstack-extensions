@@ -2,23 +2,8 @@
 name: browser
 preamble-tier: 4
 version: 2.0.0
-description: |
-  QA Quincey's flagship skill: defined-flow LIVE-browser QA that drives the
-  real running app through the user's persistent agent-browser session
-  (abrowser, headed) at click/pixel level, not just endpoint calls. Pulls the
-  happy path from a GitHub issue, spec, or Pencil mockup; WALKS THE SPEC
-  (spec/eng docs + Pencil frames) and reports per-assertion Spec compliance
-  (matches/drifts/missing); boots the app and seeds TAGGED test data via the
-  repo's own recipe, then tears it down exactly; observes at the real surface
-  (URL/redirect, rendered DOM, screenshots) with at least one adversarial
-  off-happy-path probe; and ends by stating the QA posture contract
-  (QA_STATUS: verified + EVIDENCE) that satisfies the build-time Stop hook and
-  the PR qa-gate CI. Use when the user says "qa quincey", "live qa", "qa this
-  flow", "test the happy path on the real browser", "verify the deploy on X",
-  "walk the spec", or invokes this skill directly. Use this rather than /qa
-  when the goal is to verify one specific flow against an explicit acceptance
-  bar and record a QA posture, not to sweep the app for any bugs. (gstack-extensions)
-  Voice triggers (speech-to-text aliases): "qa quincey", "live qa", "verify the happy path", "test this flow on the real browser", "walk the spec".
+description: >-
+  QA Quincey's flagship skill: defined-flow LIVE-browser QA that drives the real running app through the user's persistent agent-browser session (abrowser, headed) at click/pixel level, not just endpoint calls. Pulls the happy path from a GitHub issue, spec, or Pencil mockup; walks the spec and reports per-assertion compliance (matches/drifts/missing); boots the app and seeds TAGGED test data via the repo's own recipe, then tears it down exactly; observes at the real surface (URL/redirect, rendered DOM, screenshots) with at least one adversarial off-happy-path probe; and ends by stating the QA posture contract (QA_STATUS: verified + EVIDENCE) that the build-time Stop hook and PR qa-gate CI read. Use for "qa quincey", "live qa", "qa this flow", "test the happy path on the real browser", "verify the deploy on X", "verify the happy path", "walk the spec". Use rather than /qa when verifying one flow against an explicit acceptance bar. (gstack-extensions)
 allowed-tools:
   - Bash
   - Read

@@ -1,26 +1,8 @@
 ---
 name: qa-plan
 version: 2.2.0
-description: |
-  QA Quincey's planning skill: turn a change's success criteria into a two-phase
-  QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a
-  Development QA section (must pass in a dev / preview environment before merge),
-  a Production QA section (verified live after deploy), and a Definition of Done.
-  It also publishes a companion Claude artifact: a rendered, pointable, always-linked
-  view of the same plan (the PR body stays the machine source of truth the gates read).
-  Each item traces to an acceptance criterion (Given/When/Then or EARS) and names
-  the tool that exercises it. It PLANS QA; it does not execute it (Development QA is
-  run by /qa, qa:browser, or qa:headless; Production QA by /canary). It ENDS by
-  presenting the plan (and a recommended QA driver from the qa plugin's qa-roster.json,
-  default mutwo, named in the PR body with their handle) for the human's approval
-  and, on a yes, writing the approval stamp the QA-plan gates read (build / PR /
-  deploy). It feeds the two-phase QA posture (dev_verified /
-  prod_verified) the QA-status gate reads. Use when the user says "qa plan", "write
-  the qa plan", "plan the QA", "qa section for the PR", "dev and prod QA plan",
-  "/qa:plan", or when a change needs its QA plan authored before the PR goes up.
-  Sibling to qa:browser and qa:headless inside the qa plugin; shares the QA Quincey
-  identity in shared/core.md. (gstack-extensions)
-  Voice triggers (speech-to-text aliases): "qa plan", "write the qa plan", "plan the QA", "dev and prod QA plan".
+description: >-
+  QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Also publishes a companion Claude artifact rendering the same plan (the PR body stays the machine source of truth the gates read). It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
 allowed-tools:
   - Bash
   - Read
