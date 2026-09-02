@@ -144,3 +144,24 @@ bash_payload() {
   run decision "$SCRIPTS/ship-pr-gate.sh" "$(bash_payload 'gh pr create --base release --title x --body y')"
   [ "$output" = "allow" ]
 }
+
+@test "a worktree parked OUTSIDE ~/dev is still in gate scope (sg_dev_repo_gitdir)" {
+  # A worktree of the ~/dev repo itself must live outside ~/dev, so a path-only
+  # scope test exempted it from every gate while the policy called it governed.
+  # The gate wins that disagreement, so the checkout was silently ungated.
+  git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m wt
+  OUTSIDE=$(mktemp -d "/tmp/.gitest-outside.XXXXXX"); rm -rf "$OUTSIDE"
+  git -C "$REPO" worktree add -q -b outside-wt "$OUTSIDE"
+  # shellcheck source=/dev/null
+  . "$SCRIPTS/ship-gate-repo-lib.sh"
+  run sg_dev_repo_gitdir "$OUTSIDE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "$OUTSIDE"* ]]           # keyed to the worktree, not the main checkout
+  git -C "$REPO" worktree remove --force "$OUTSIDE" 2>/dev/null || true
+}
+
+@test "a directory genuinely outside any ~/dev repo stays out of gate scope" {
+  . "$SCRIPTS/ship-gate-repo-lib.sh"
+  run sg_dev_repo_gitdir /tmp
+  [ "$status" -ne 0 ]
+}

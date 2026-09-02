@@ -39,10 +39,9 @@ while [ ! -d "$DIR" ] && [ "$DIR" != "/" ] && [ "$DIR" != "." ]; do DIR=$(dirnam
 [ -d "$DIR" ] || exit 0
 
 TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-case "$TOP" in
-  "$HOME/dev"|"$HOME/dev/"*) ;;
-  *) exit 0 ;;
-esac
+# No path pre-filter here: gp_gate_config below makes the whole scope decision,
+# and a duplicate path-only test would wrongly exempt a worktree parked outside
+# ~/dev (a worktree of the ~/dev repo itself has to live outside it).
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
 [ -f "$LIB" ] || exit 0

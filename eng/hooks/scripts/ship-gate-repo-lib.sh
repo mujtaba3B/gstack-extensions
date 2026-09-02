@@ -46,12 +46,27 @@ sg_workdir_from_cmd() {
 #   bleed across linked worktrees. Both the gate and the mint resolve the repo
 #   this one way, so they can never key a different file.
 sg_dev_repo_gitdir() {
-  local wd="$1" top gitdir
+  local wd="$1" top gitdir main
   command -v git >/dev/null 2>&1 || return 1
   top=$(git -C "$wd" rev-parse --show-toplevel 2>/dev/null) || return 1
+  # Scope follows the REPO, not the directory. A linked worktree can legitimately
+  # sit outside ~/dev, and a worktree of the ~/dev repo itself HAS to, so judging
+  # by <top>'s own path left those checkouts ungated: the policy said "governed"
+  # while every gate said "not a ~/dev repo, allow", and the gate wins. Found when
+  # the land-deploy sentinel would not mint in ~/dev-gates (and, in the same breath,
+  # explained why that worktree's own `gh pr create` was never blocked).
+  # <top> itself is still what gets returned, so sentinels stay keyed per-worktree.
   case "$top" in
     "$HOME/dev"|"$HOME/dev/"*) ;;
-    *) return 1 ;;
+    *)
+      main=$(git -C "$wd" rev-parse --git-common-dir 2>/dev/null) || return 1
+      case "$main" in /*) ;; *) main="$top/$main" ;; esac
+      main=$(cd -P "$main/.." 2>/dev/null && pwd) || return 1
+      case "$main" in
+        "$HOME/dev"|"$HOME/dev/"*) ;;
+        *) return 1 ;;
+      esac
+      ;;
   esac
   gitdir=$(git -C "$wd" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   printf '%s\t%s' "$top" "$gitdir"

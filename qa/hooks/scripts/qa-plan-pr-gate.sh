@@ -38,10 +38,9 @@ case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/
 { [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
 
 TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-case "$TOP" in
-  "$HOME/dev"|"$HOME/dev/"*) ;;
-  *) exit 0 ;;
-esac
+# No path pre-filter here: gp_gate_config below makes the whole scope decision,
+# and a duplicate path-only test would wrongly exempt a worktree parked outside
+# ~/dev (a worktree of the ~/dev repo itself has to live outside it).
 
 # Effective gate config. Every repo under the policy root is gated by DEFAULT,
 # resolved from the tracked ~/dev/gate-policy.json; per-repo tuning lives in that
