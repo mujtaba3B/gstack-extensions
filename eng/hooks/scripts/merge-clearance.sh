@@ -349,9 +349,16 @@ fi
 # ---- gather check / status state for HEAD ----------------------------------
 # Merge check-runs (Actions) and commit statuses (CodeRabbit et al.) into one
 # name->state map. Statuses come newest-first; keep only the first per context.
+# Check-runs need more care: GitHub keeps every historical run on a commit and a
+# re-run opens a NEW suite rather than replacing the old one, so the raw list can
+# hold a stale failure alongside the passing re-run. mc_collapse_checkruns keeps
+# only each name's newest SUITE (and every run of that name within it, so a
+# multi-run name still needs them all green). Without it, a check fixed by a
+# re-run could never clear the gate until the head moved.
 CHECKRUNS=$(gh api --paginate "repos/$REPO/commits/$HEAD/check-runs" \
-              -q '.check_runs[] | {name:.name, state:(.conclusion // .status)}' 2>/dev/null \
+              -q '.check_runs[] | {name:.name, state:(.conclusion // .status), suite:.check_suite.id, started:.started_at}' 2>/dev/null \
             | jq -sc '.' || echo '[]')
+CHECKRUNS=$(mc_collapse_checkruns "$CHECKRUNS")
 STATUSES=$(gh api "repos/$REPO/commits/$HEAD/statuses" \
               -q '.[] | {name:.context, state:.state}' 2>/dev/null \
             | jq -sc 'reduce .[] as $s ({}; if has($s.name) then . else . + {($s.name):$s.state} end)
