@@ -676,3 +676,55 @@ mc_qa_state() {
   if [ "$require" = "1" ]; then echo "missing"; return 1; fi
   echo "n/a"; return 0
 }
+
+# mc_collapse_checkruns <checkruns_json>
+#   Collapse raw GitHub check-runs for one commit into a name->state list, keeping
+#   ONLY the runs belonging to each name's most recent check SUITE.
+#
+#   Why this exists. GitHub keeps every historical check-run on a commit, and a
+#   re-run creates a NEW check suite rather than replacing the old one. The caller
+#   folds a name's states with "any failure wins", so without this collapse a check
+#   that failed and was then fixed by a re-run stays failed forever: the old
+#   failing run is still on the commit and still wins. The gate could then never
+#   clear until the head moved, which cost an empty commit and a re-review every
+#   time. Observed on Healthcare-Super-Connector/hesco#92 (head 0babf999b66e):
+#   qa-status had failure/failure/success across three suites and merge-clearance
+#   reported CI FAIL while every check's current state was green.
+#
+#   Why not simply "newest run per name". A single check suite can legitimately
+#   carry several runs sharing one name, and ALL of them must pass. Taking only the
+#   newest would report success while a sibling leg failed, turning a conservative
+#   bug into a permissive one. That is strictly worse for a gate whose job is to
+#   refuse on doubt. So: pick the newest SUITE per name, then keep EVERY run of
+#   that name inside it and let the caller's any-failure-wins fold do its work.
+#
+#   Recency is the max started_at among that name's runs, with the suite id as a
+#   tie-break (suite ids increase over time, so this is stable when started_at is
+#   absent or equal). Note GitHub's own filter=latest does NOT do this: it means
+#   "latest attempt within each suite", which is why three qa-status runs came back
+#   above. Verified against the live API on 2026-09-02.
+#
+#   checkruns_json: [ { "name": ..., "state": ..., "suite": ..., "started": ... }, ... ]
+#   Echoes a compact JSON array of { name, state } for the surviving runs.
+#   Unparseable or non-array input echoes [] (fail closed: the caller reads a
+#   missing name as "missing", never as a pass).
+mc_collapse_checkruns() {
+  _mcc_raw="${1:-}"
+  # Empty input is its own case: jq on empty stdin exits 0 with NO output, so a
+  # bare `|| echo []` never fires and the caller would receive an empty string
+  # (and then fail on --argjson). Handle it before jq ever runs.
+  if [ -z "$_mcc_raw" ]; then echo '[]'; return 0; fi
+  _mcc_out=$(printf '%s' "$_mcc_raw" | jq -c '
+    if type != "array" then []
+    else
+      group_by(.name)
+      | map(
+          ( max_by([(.started // ""), (.suite // 0)]) | (.suite // null) ) as $newest
+          | map(select((.suite // null) == $newest) | {name: .name, state: .state})
+        )
+      | add // []
+    end
+  ' 2>/dev/null) || _mcc_out=''
+  [ -n "$_mcc_out" ] || _mcc_out='[]'
+  printf '%s\n' "$_mcc_out"
+}
