@@ -141,8 +141,16 @@ VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH" "$CURRENT_DIGEST")
 # qpg_unattested_disposition for why blocking it produced an unsatisfiable gate.
 # Logged, never silent, so the remaining population stays visible.
 if [ "$VERDICT" = "unattested" ]; then
-  _mtime=$(stat -f %m "$GITDIR/qa-plan-approved" 2>/dev/null || stat -c %Y "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+  _mtime=$(qpt_stamp_mtime "$GITDIR/qa-plan-approved" || echo "")
   _win=$(qpt_unattested_in_window "$_mtime")
+  # A legacy stamp is honored at PR time only if it carries a REAL digest. Without
+  # one the drift check has nothing to compare and skips, so a digest-less stamp
+  # would be a permanent, drift-immune standing approval: strictly LESS checked
+  # than a forged token, which at least yields a digest that does get compared.
+  # A genuine pre-fix stamp written through the old --digest path has one. The
+  # build gate stays lenient, so this costs a re-approval at ship time only.
+  _sdig=$(printf '%s' "$STAMP" | jq -r '.criteria_digest // empty' 2>/dev/null || echo "")
+  { [ -n "$_sdig" ] && [ "$_sdig" != "none" ]; } || _win="out"
   if [ "$(qpg_unattested_disposition pr "$_win")" = "allow" ]; then
     printf '%s pr-gate ALLOW(unattested-prefix-stamp) branch=%s mtime=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "${_mtime:-?}" >> "$LOG" 2>/dev/null || true
@@ -150,7 +158,6 @@ if [ "$VERDICT" = "unattested" ]; then
   fi
 fi
 
-LOG="$HOME/.claude/qa-plan-gate.log"
 printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$VERDICT" >> "$LOG" 2>/dev/null || true
 

@@ -714,3 +714,63 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
+
+# ========================================================================
+# Second review round: parser quoting, portable mtime, bounded carve-out
+# ========================================================================
+
+@test "body_file: a -F inside a quoted --body does not FALSE-BLOCK the real body" {
+  # Restores an assertion an earlier edit silently dropped, and pins the bug that
+  # reopened when it went: awk has no notion of shell quoting, so the bare -F
+  # inside the quoted string matched first and the digest was computed from the
+  # WRONG document, blocking a correct create with "the plan changed".
+  run qpg_body_file_from_cmd "gh pr create --body 'see -F notes.md for details' --body-file /tmp/real.md"
+  [ "$output" = "/tmp/real.md" ]
+}
+
+@test "body_file: a -F inside a quoted --title does not win either" {
+  run qpg_body_file_from_cmd "gh pr create --title \"x -F sneaky.md\" --body-file /tmp/real.md"
+  [ "$output" = "/tmp/real.md" ]
+}
+
+@test "body_file: a neighbouring gh api -F in the same line is ignored" {
+  # Segment-aware: only the shell segment carrying `gh pr create` is scanned, so
+  # this no longer depends on first-vs-last position luck.
+  run qpg_body_file_from_cmd "gh api r -F key=val && gh pr create --body-file /tmp/a.md"
+  [ "$output" = "/tmp/a.md" ]
+}
+
+@test "body_file: a quoted path containing a space survives intact" {
+  run qpg_body_file_from_cmd "gh pr create --body-file \"/tmp/my body.md\""
+  [ "$output" = "/tmp/my body.md" ]
+}
+
+@test "body_file: --body-file= with a quoted value still parses" {
+  run qpg_body_file_from_cmd "gh pr create --body-file=\"/tmp/q.md\""
+  [ "$output" = "/tmp/q.md" ]
+}
+
+@test "body_file: a dangling --body-file with no value yields nothing" {
+  run qpg_body_file_from_cmd "gh pr create --body-file"
+  [ -z "$output" ]
+}
+
+@test "pr gate: a pre-fix stamp with NO digest is refused at ship time" {
+  # Without a digest the drift check has nothing to compare and skips, so such a
+  # stamp would be a permanent drift-immune standing approval: strictly LESS
+  # checked than a forged token. The build gate stays lenient.
+  opt_in
+  printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "build gate: that same digest-less pre-fix stamp still lets you BUILD" {
+  opt_in
+  printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}

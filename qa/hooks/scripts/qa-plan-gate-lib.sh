@@ -332,11 +332,19 @@ EOF
 #   Echo the path given to the FIRST `--body-file` / `--body-file=` / `-F` in a
 #   `gh pr create` command, or nothing. Surrounding quotes are stripped.
 #
-#   Tokenized with awk rather than matched with a regex. The regex version took
-#   the LAST match (its leading `.*` was greedy, so a trailing `gh api ... -F
-#   key=val` won and could point the drift check at the wrong document, producing
-#   a FALSE BLOCK) and it also matched a `-F` appearing inside an inline
-#   `--body "see -F notes"`. Walking argv left to right has neither problem.
+#   Tokenized with awk, and QUOTED REGIONS ARE BLANKED FIRST. Both parts are
+#   needed, and the second was learned the hard way twice.
+#
+#   The regex version took the LAST match (its leading `.*` was greedy), so a
+#   trailing `gh api ... -F key=val` won. Switching to first-match fixed that and
+#   opened the mirror-image bug: awk has no notion of shell quoting, so
+#   `--body "see -F notes.md for context"` tokenizes to `--body`, `"see`, `-F`,
+#   `notes.md`, ... and the bare `-F` matched FIRST, ahead of the real
+#   `--body-file`. That is not a harmless skip: if `notes.md` exists and carries
+#   an older `## QA` section, the digest is computed from the WRONG document and
+#   a perfectly correct create is BLOCKED with "the QA plan changed after it was
+#   approved", which is a lie. Blanking quoted spans first makes the parse
+#   independent of which flag happens to come first.
 #
 #   SCOPE, stated honestly: an unexpanded shell variable cannot be resolved from a
 #   PreToolUse payload, which sees the RAW command string. gstack /ship emits
@@ -348,12 +356,37 @@ EOF
 #   silently.
 qpg_body_file_from_cmd() {
   printf '%s' "$1" | awk '
+    function seg_has_create(t) { return (t ~ /gh[ \t]+pr[ \t]+create/) }
     {
-      for (i = 1; i <= NF; i++) {
-        if ($i == "--body-file" || $i == "-F") { if (i < NF) { print $(i+1); exit } }
-        else if (index($i, "--body-file=") == 1) { print substr($i, 13); exit }
+      # 1. Quoting JOINS words. Inside a quoted span, spaces become \001 and the
+      #    quote marks are dropped, so `--body "see -F notes.md"` becomes ONE
+      #    token that can never equal "-F", while `"$PR_BODY_FILE"` survives
+      #    intact as a value we can still report. Blanking the contents instead
+      #    (a first attempt) also destroyed --body-file="path" and the
+      #    unexpanded-variable form the PR gate needs in order to log honestly.
+      out = ""; q = ""; n = length($0)
+      for (k = 1; k <= n; k++) {
+        c = substr($0, k, 1)
+        if (q == "") {
+          if (c == "\"" || c == "\047") q = c
+          else out = out c
+        } else if (c == q) q = ""
+        else out = out (c == " " || c == "\t" ? "\001" : c)
       }
-    }' | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'
+      # 2. Only look at the shell segment that actually carries `gh pr create`.
+      #    Otherwise a neighbouring `gh api ... -F key=val` in the same line wins
+      #    or loses on position alone, which is a coin flip either way.
+      nseg = split(out, seg, /&&|\|\||;/)
+      pick = out
+      for (s = 1; s <= nseg; s++) if (seg_has_create(seg[s])) { pick = seg[s]; break }
+      m = split(pick, tok, /[ \t]+/)
+      for (i = 1; i <= m; i++) {
+        v = ""
+        if ((tok[i] == "--body-file" || tok[i] == "-F") && i < m) v = tok[i+1]
+        else if (index(tok[i], "--body-file=") == 1) v = substr(tok[i], 13)
+        if (v != "") { gsub(/\001/, " ", v); print v; exit }
+      }
+    }'
 }
 
 # qpg_marker_gates <marker_json>

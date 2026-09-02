@@ -408,3 +408,61 @@ mint_approval() { ask_payload "QA plan" "Approve the plan? <qa-plan-digest:$DIGE
   run bash "$STAMP" digest "$BATS_TEST_TMPDIR/c.md"
   [ "$status" -ne 0 ]
 }
+
+# ========================================================================
+# Second review round: portable mtime, header reuse, multi-line questions
+# ========================================================================
+
+@test "stamp_mtime: reads a real file's mtime on this host" {
+  touch "$BATS_TEST_TMPDIR/f"
+  run qpt_stamp_mtime "$BATS_TEST_TMPDIR/f"
+  [ "$status" -eq 0 ]
+  case "$output" in ''|*[!0-9]*) false ;; *) true ;; esac
+}
+
+@test "stamp_mtime: a missing file yields nothing and fails" {
+  run qpt_stamp_mtime "$BATS_TEST_TMPDIR/nope"
+  [ "$status" -ne 0 ]; [ -z "$output" ]
+}
+
+@test "stamp_mtime: the result is always numeric, never a stat error blob" {
+  # GNU stat spells -f as --file-system, so `stat -f %m` prints a six-line
+  # filesystem block to STDOUT and exits 1. A BSD-first chain captured that blob,
+  # appended the real epoch, and produced a non-numeric string, which killed the
+  # migration carve-out on every Linux host and turned CI red.
+  touch "$BATS_TEST_TMPDIR/g"
+  m=$(qpt_stamp_mtime "$BATS_TEST_TMPDIR/g")
+  run qpt_unattested_in_window "$m" 9999999999
+  [ "$output" = "in" ]
+}
+
+@test "mint: duplicate question text does not select another question's header" {
+  # The header is reused from the matched question, not re-derived by text with
+  # a jq `first`, which used to pick the wrong one and silently mint nothing.
+  jq -nc --arg cwd "$REPO" --arg q "Approve? <qa-plan-digest:$DIGEST_A>" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q,header:"Memory writes"},{question:$q,header:"QA plan"}]},
+      tool_response:{answers:{($q):"Approve"}}}' | bash "$MINT"
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "mint: a question containing a newline still mints" {
+  # Questions are keyed by index now; `read` used to truncate at the first line,
+  # the answers lookup missed, and the operator was told to restart Claude Code
+  # for a problem a restart cannot fix.
+  Q="Approve this plan?
+Second line of context. <qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg cwd "$REPO" --arg q "$Q" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q,header:"QA plan"}]},
+      tool_response:{answers:{($q):"Approve"}}}' | bash "$MINT"
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+  run jq -r .plan_digest "$GITDIR/qa-plan-approval-token"
+  [ "$output" = "$DIGEST_A" ]
+}
+
+@test "mint: an empty questions array mints nothing" {
+  jq -nc --arg cwd "$REPO" '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[]}, tool_response:{answers:{}}}' | bash "$MINT"
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+}

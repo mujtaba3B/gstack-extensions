@@ -209,6 +209,32 @@ qpt_digest_from_question() {
 #   be cheaper than the thing it is migrating from.
 QPT_UNATTESTED_CUTOFF=1788307200
 
+# qpt_stamp_mtime <path>
+#   Echo a file's mtime as an epoch, or nothing. GNU form FIRST, then BSD.
+#
+#   The order is load-bearing and the reverse of what reads naturally on a Mac.
+#   GNU coreutils spells `-f` as --file-system, so `stat -f %m <file>` treats %m
+#   as a FILE operand: it fails on %m (exit 1) but STILL SUCCEEDS on the real
+#   file and prints a six-line filesystem block to STDOUT. A
+#   `stat -f %m || stat -c %Y` chain therefore captures that block, appends the
+#   real epoch, and yields a non-numeric string, which fails the window check and
+#   kills the migration carve-out on every Linux host. BSD stat has no such
+#   ambiguity: `stat -c` is simply an invalid option, exit 1 with EMPTY stdout,
+#   so GNU-first degrades cleanly in both directions. CI runs ubuntu-latest, so
+#   the wrong order is also a red required check.
+#
+#   Lives here rather than inline in the two gates because it was duplicated
+#   byte-for-byte in both, which is exactly the shape this repo's lib rule
+#   exists to prevent, and it now has its own truth table.
+qpt_stamp_mtime() {
+  local f="$1" m
+  [ -e "$f" ] || return 1
+  m=$(stat -c %Y "$f" 2>/dev/null) || m=""
+  case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$f" 2>/dev/null) || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$m"
+}
+
 # qpt_unattested_in_window <stamp_mtime_epoch> [cutoff]
 #   Echo "in" / "out"; return 0 when the stamp predates the cutoff and may
 #   therefore be honored as a pre-fix approval. A missing or non-numeric mtime is

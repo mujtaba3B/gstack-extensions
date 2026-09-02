@@ -90,7 +90,7 @@ VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 # refused. Logged rather than silent, so the shrinking migration population is
 # visible in the gate log instead of looking like the stamp was fine all along.
 if [ "$VERDICT" = "unattested" ]; then
-  _mtime=$(stat -f %m "$GITDIR/qa-plan-approved" 2>/dev/null || stat -c %Y "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+  _mtime=$(qpt_stamp_mtime "$GITDIR/qa-plan-approved" || echo "")
   if [ "$(qpg_unattested_disposition build "$(qpt_unattested_in_window "$_mtime")")" = "allow" ]; then
     printf '%s build-gate ALLOW(unattested-prefix-stamp) branch=%s file=%s mtime=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "${_mtime:-?}" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true

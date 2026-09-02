@@ -69,23 +69,40 @@ BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # `.tool_response.answers` is keyed by QUESTION TEXT, so the answer is looked up
 # by the matched question's own text. That ordering is what stops a modal asking
 # several things at once from having an unrelated "Approve" harvested.
-QUESTION=""
-while IFS=$'\t' read -r _hdr _q; do
-  [ -n "$_q" ] || continue
-  if [ "$(qpt_header_is_qa_plan "$_hdr")" = "qa-plan" ]; then QUESTION="$_q"; break; fi
-done <<EOF
-$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.questions[]? | "\(.header // "")\t\(.question // "")"' 2>/dev/null)
-EOF
+# Questions are keyed by INDEX, never by their text, and the matched header is
+# reused rather than re-derived. Two bugs came out of doing it the other way:
+#   - Re-deriving the header with a jq `select(.question == $q) | first` picked
+#     the WRONG question's header when two questions in one modal shared text,
+#     silently minting nothing.
+#   - `read` is record-oriented, so a question containing a literal newline was
+#     truncated, the answers lookup missed, and again nothing minted.
+# Both fail closed, but a silent no-mint is the worst failure this file has: the
+# stamp writer then tells the operator the hook is "probably not registered",
+# which sends them to restart Claude Code for a problem a restart cannot fix.
+QUESTION=""; HEADER=""
+_count=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_input.questions // []) | length' 2>/dev/null) || _count=0
+case "$_count" in ''|*[!0-9]*) _count=0 ;; esac
+_i=0
+while [ "$_i" -lt "$_count" ]; do
+  _hdr=$(printf '%s' "$PAYLOAD" | jq -r --argjson i "$_i" '.tool_input.questions[$i].header // ""' 2>/dev/null)
+  if [ "$(qpt_header_is_qa_plan "$_hdr")" = "qa-plan" ]; then
+    HEADER="$_hdr"
+    QUESTION=$(printf '%s' "$PAYLOAD" | jq -r --argjson i "$_i" '.tool_input.questions[$i].question // ""' 2>/dev/null)
+    break
+  fi
+  _i=$(( _i + 1 ))
+done
 [ -n "$QUESTION" ] || exit 0
 
+# `.tool_response.answers` is keyed by QUESTION TEXT, so the answer is looked up
+# by the matched question's own text. That ordering is what stops a modal asking
+# several things at once from having an unrelated "Approve" harvested.
 ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
   .tool_response.answers[$q] // empty
 ' 2>/dev/null) || exit 0
 
 # THE decision, in one pure call whose truth table is enumerated in bats.
-[ "$(qpt_should_mint "$TOOL" "$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
-  [ .tool_input.questions[]? | select((.question // "") == $q) | .header // empty ] | first // empty
-' 2>/dev/null)" "$ANSWER" "$BRANCH")" = "mint" ] || exit 0
+[ "$(qpt_should_mint "$TOOL" "$HEADER" "$ANSWER" "$BRANCH")" = "mint" ] || exit 0
 
 # The plan digest the human was shown, carried in the question as
 # <qa-plan-digest:HEX>. This is what makes the approval bind to SPECIFIC plan

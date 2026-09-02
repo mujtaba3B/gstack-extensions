@@ -192,7 +192,7 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
    DIGEST=$("$STAMP" digest <path-to-the-PR-body-or-plan-file>)   # or pipe the body on stdin
    ```
 
-   Then the question text ends with `<qa-plan-digest:$DIGEST>`. The marker does not render visibly. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
+   Then the question text ends with `<qa-plan-digest:$DIGEST>`. It DOES render in the modal, so put it last, on its own, and treat it as a visible fingerprint of the plan being approved rather than hidden metadata. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
 
    An earlier version told you to run `shasum` over your own slice of the section. That produced a digest of RAW text while the gate hashed NORMALIZED text, so one stray trailing newline created a stamp whose digest could never match and a `gh pr create` that blocked forever with no way to satisfy it. Use the `digest` verb.
 
