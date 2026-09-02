@@ -172,6 +172,13 @@ qpg_is_bookkeeping() {
       .keep|.gitkeep) ;;
       # vcs / meta / ignore-list dotfiles (inert)
       .gitignore|.gitattributes|.editorconfig|.dockerignore|.npmignore|.prettierignore|.eslintignore|.gcloudignore) ;;
+      # RETIRED gate markers. Gating moved to the tracked ~/dev/gate-policy.json on
+      # 2026-09-02 and these files are now read by nothing, so removing a leftover
+      # one is as inert as editing .gitignore. Listed so the sweep that deletes the
+      # dead copies does not demand a QA plan per repo for a no-op diff. Note this
+      # is DELETION-of-dead-config territory: if a future gate ever reads these
+      # names again, take them back out of this list first.
+      .ship-gate.json|.qa-plan-gate.json|.merge-clearance.json|.deploy-gate.json) ;;
       # legal / governance (LICENSE.txt / LICENSE.md ride the doc-extension arms)
       LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS) ;;
       *) echo "no"; return 1 ;;

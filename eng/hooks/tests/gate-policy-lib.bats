@@ -5,6 +5,7 @@
 setup() {
   LIB="${BATS_TEST_DIRNAME}/../scripts/gate-policy-lib.sh"
   ROOT="$(mktemp -d)"
+  export GATE_POLICY_TEST=1   # env overrides are honored only in test mode
   export GATE_POLICY_FILE="$ROOT/policy.json"
   export GATE_LOCAL_FILE="$ROOT/local.json"
   export GATE_POLICY_LOG="$ROOT/policy.log"
@@ -223,4 +224,24 @@ JSON
   [ "$status" -ne 0 ]
   run gp_gate_config "$d" merge-clearance
   [ "$status" -eq 0 ]
+}
+
+@test "GATE_POLICY_FILE is IGNORED without GATE_POLICY_TEST, and the ignore is logged" {
+  # The override used to be a one-variable way to disarm every gate. It is test
+  # plumbing, so it now requires an explicit second flag and says so in the log.
+  real="$HOME/dev/gate-policy.json"
+  GATE_POLICY_TEST="" run gp_policy_file
+  [ "$output" = "$real" ]
+  GATE_POLICY_TEST="" gp_policy_file >/dev/null
+  grep -q "IGNORED GATE_POLICY_FILE" "$GATE_POLICY_LOG"
+}
+
+@test "GATE_POLICY_FILE is honored when GATE_POLICY_TEST=1" {
+  run gp_policy_file
+  [ "$output" = "$GATE_POLICY_FILE" ]
+}
+
+@test "GATE_LOCAL_FILE is ignored without test mode too" {
+  GATE_POLICY_TEST="" run gp_local_file
+  [ "$output" = "$HOME/dev/.gates/local.json" ]
 }

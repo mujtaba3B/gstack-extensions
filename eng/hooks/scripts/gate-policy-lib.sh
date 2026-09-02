@@ -41,8 +41,30 @@
 #                    CENTRAL and keyed by repo identity rather than one file per
 #                    repo, which is what stops the worktree hazard reappearing in
 #                    the opt-out layer itself.
-gp_policy_file() { printf '%s' "${GATE_POLICY_FILE:-$HOME/dev/gate-policy.json}"; }
-gp_local_file()  { printf '%s' "${GATE_LOCAL_FILE:-$HOME/dev/.gates/local.json}"; }
+# The env overrides are TEST PLUMBING and are honored only alongside an explicit
+# GATE_POLICY_TEST=1. Without that second flag a bare `GATE_POLICY_FILE=/nowhere`
+# used to disarm every gate in one move, which is a far easier reach than the file
+# deletion it replaced. This does not make the gates adversary-proof (nothing here
+# does; the agent has a shell), but it removes the one-variable accident and makes
+# any attempt self-documenting: the override is named TEST, and an ignored one is
+# logged.
+gp_policy_file() {
+  if [ -n "${GATE_POLICY_FILE:-}" ] && [ "${GATE_POLICY_TEST:-}" != "1" ]; then
+    gp_log "IGNORED GATE_POLICY_FILE=$GATE_POLICY_FILE (set GATE_POLICY_TEST=1 for test runs); using the real policy"
+  fi
+  if [ "${GATE_POLICY_TEST:-}" = "1" ] && [ -n "${GATE_POLICY_FILE:-}" ]; then
+    printf '%s' "$GATE_POLICY_FILE"
+  else
+    printf '%s' "$HOME/dev/gate-policy.json"
+  fi
+}
+gp_local_file() {
+  if [ "${GATE_POLICY_TEST:-}" = "1" ] && [ -n "${GATE_LOCAL_FILE:-}" ]; then
+    printf '%s' "$GATE_LOCAL_FILE"
+  else
+    printf '%s' "$HOME/dev/.gates/local.json"
+  fi
+}
 
 # gp_log <msg>
 #   Best-effort, never fatal. Anything that turns an UNKNOWN into an ALLOW is
