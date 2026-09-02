@@ -64,26 +64,30 @@ if [ -z "$BRANCH" ]; then
 fi
 
 # The required checks: the repo's CI context name(s) plus the clearance context.
-# The .merge-clearance.json marker is machine-local and git-ignored (2026-06-11),
-# so read it from the LOCAL checkout when cwd is a clone of the target repo; the
-# API contents fallback only helps for repos that still track a marker. Without
-# a readable marker, default to ["ci"], and warn: requiring a check context the
-# repo never produces would deadlock merges.
+# Default when the policy cannot be resolved. Requiring a context the repo never
+# produces would deadlock every merge, so this stays conservative and is warned about.
 REQUIRED='["ci","local-review/merge-clearance"]'
+# required_checks come from the tracked ~/dev/gate-policy.json, which is keyed by
+# repo identity, so any checkout or worktree of the repo resolves the same answer.
+# (Per-repo .merge-clearance.json markers were dropped on 2026-09-02; they were
+# machine-local and git-ignored, so this used to be unreadable from the wrong
+# checkout and fell back to a phantom "ci" context.)
 marker=""
 LOCAL_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
-if [ -n "$LOCAL_TOP" ] && [ -f "$LOCAL_TOP/.merge-clearance.json" ]; then
-  LOCAL_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
-  [ "$LOCAL_REPO" = "$REPO" ] && marker=$(cat "$LOCAL_TOP/.merge-clearance.json")
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+if [ -n "$LOCAL_TOP" ] && [ -f "$GPLIB" ]; then
+  # shellcheck source=/dev/null
+  . "$GPLIB"
+  LOCAL_REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#^[^:]+://[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##')
+  if [ "$(printf '%s' "$LOCAL_REPO" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+    marker=$(gp_gate_config "$LOCAL_TOP" merge-clearance 2>/dev/null || true)
+  fi
 fi
-# Fetch the raw file (raw media type) rather than the base64 `.content` field, so
-# we avoid `base64 -d` (GNU) vs `-D` (BSD/macOS) portability gotchas entirely.
-[ -z "$marker" ] && marker=$(gh api "repos/$REPO/contents/.merge-clearance.json" -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
 if [ -n "$marker" ]; then
   checks=$(printf '%s' "$marker" | jq -c '(.required_checks // ["ci"]) + ["local-review/merge-clearance"] | unique' 2>/dev/null || true)
   [ -n "$checks" ] && REQUIRED="$checks"
 else
-  echo "WARNING: no readable .merge-clearance.json for $REPO (markers are machine-local; run from a checkout). Defaulting to required checks $REQUIRED; verify the repo actually produces a 'ci' check or merges will deadlock." >&2
+  echo "WARNING: could not resolve required_checks for $REPO from the gate policy (run from a checkout of it). Defaulting to required checks $REQUIRED; verify the repo actually produces those checks or merges will deadlock." >&2
 fi
 
 PAYLOAD=$(jq -nc --argjson contexts "$REQUIRED" --argjson ea "$ENFORCE_ADMINS" '{

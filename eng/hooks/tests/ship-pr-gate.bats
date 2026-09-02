@@ -5,6 +5,13 @@
 # teardown.
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   LIB="$BATS_TEST_DIRNAME/../scripts/ship-pr-gate-lib.sh"
   GATE="$BATS_TEST_DIRNAME/../scripts/ship-pr-gate.sh"
   SENTINEL_HOOK="$BATS_TEST_DIRNAME/../scripts/ship-gate-sentinel.sh"
@@ -32,7 +39,19 @@ sentinel() {
 }
 write_sentinel() { sentinel "$@" > "$GITDIR/ship-pr-clearance"; }
 bash_payload()   { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
-opt_in()         { echo '{"base_branches":["main"]}' > "$REPO/.ship-gate.json"; }
+
+# Arming is now a POLICY write, not a marker file. Markers were dropped entirely on
+# 2026-09-02: a machine-local, git-ignored file that arms enforcement is what
+# produced the worktree hole. `opt_in` keeps its meaning (this repo is governed);
+# only the mechanism changed, so every test below reads the same.
+# With no policy written, nothing is governed, which preserves the "allow" cases.
+gp_write_policy() {  # <gate> <config-json>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$HOME/dev" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
 
 # ========================================================================
 # Pure validator: sg_sentinel_valid <json> <now> <default_ttl>
@@ -105,7 +124,7 @@ opt_in()         { echo '{"base_branches":["main"]}' > "$REPO/.ship-gate.json"; 
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
 
-@test "gate allow: ~/dev repo without the opt-in marker" {
+@test "gate allow: ~/dev repo not covered by any gate policy" {
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
@@ -139,13 +158,17 @@ opt_in()         { echo '{"base_branches":["main"]}' > "$REPO/.ship-gate.json"; 
   echo "$output" | grep -q '"decision":"block"'
 }
 
-@test "gate block: corrupt .ship-gate.json with --base gates (not silent allow)" {
-  # An unparseable marker in an already-opted-in repo must fall CLOSED onto gating,
-  # not silently disable the gate. No sentinel -> block.
-  printf '{ this is not valid json' > "$REPO/.ship-gate.json"
+@test "gate allow: an unparseable gate policy fails OPEN and is logged" {
+  # Contract change (2026-09-02): config moved from a per-repo marker to ONE tracked
+  # policy file. A corrupt marker could fail closed because it only affected that
+  # repo; a corrupt policy affects every repo at once, so failing closed would wedge
+  # all work everywhere. It fails open and the session-start drift check announces it.
+  opt_in
+  printf '{ this is not valid json' > "$GATE_POLICY_FILE"
+  export GATE_POLICY_LOG="$BATS_TEST_TMPDIR/policy.log"
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
-  [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"decision":"block"'
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+  grep -q "FAIL-OPEN policy file unparseable" "$GATE_POLICY_LOG"
 }
 
 @test "gate allow: trigger phrase inside a quoted string is not command position" {

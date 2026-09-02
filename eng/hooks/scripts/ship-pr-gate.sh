@@ -27,9 +27,10 @@
 # could forge the sentinel or lift the marker. The point is to funnel the agent's
 # "I'll just open the PR" reflex through /ship, not to defeat deliberate evasion.
 #
-# Deliberate human one-off (no agent-facing override by design): temporarily
-# remove or rename the repo's .ship-gate.json marker, create the PR, then restore
-# it. That is an out-of-band human act, not a lever the agent is handed.
+# Deliberate human one-off (no agent-facing override by design): set this repo's
+# `overrides."<owner>/<name>".ship` to false in ~/dev/gate-policy.json, create the
+# PR, then revert it. That is a tracked, reviewable edit rather than a lever the
+# agent is handed. (Per-repo marker files were dropped on 2026-09-02.)
 
 set -u
 
@@ -96,9 +97,15 @@ fi
 TOP=${RESOLVED%%$'\t'*}
 GITDIR=${RESOLVED#*$'\t'}
 
-# Opt-in marker. No marker -> this repo has not opted in -> allow (untouched).
-MARKER="$TOP/.ship-gate.json"
-[ -f "$MARKER" ] || exit 0
+# Effective gate config, resolved from the tracked ~/dev/gate-policy.json. Every
+# repo under the policy root is gated by DEFAULT; there are no per-repo marker
+# files any more, so a fresh worktree is gated exactly like its main checkout.
+# Non-zero return means genuinely out of scope -> allow. See gate-policy-lib.sh.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" ship) || exit 0
 
 # Cross-repo guard (mirrors pr-merge-gate.sh). If the command explicitly targets a
 # DIFFERENT repo (`--repo` / `-R` / a `GH_REPO=` env prefix), the marker + sentinel
@@ -148,9 +155,9 @@ if [ -n "$CMDBASE" ]; then
   # gate: the repo is already confirmed opted-in above, so a corrupt config falls
   # CLOSED onto gating (and is logged) rather than allowing. Only a successfully
   # parsed, genuinely out-of-scope base allows.
-  BASES=$(jq -r '(.base_branches // ["main"]) | .[]' "$MARKER" 2>/dev/null)
+  BASES=$(printf '%s' "$MARKER" | jq -r '(.base_branches // ["main"]) | .[]' 2>/dev/null)
   if [ -z "$BASES" ]; then
-    sg_log "FAIL-CLOSED .ship-gate.json unparseable in $TOP; gating regardless of --base=$CMDBASE"
+    sg_log "FAIL-CLOSED ship config unresolvable in $TOP; gating regardless of --base=$CMDBASE"
   else
     printf '%s\n' "$BASES" | grep -qxF "$CMDBASE" || exit 0   # base in scope check; out of scope -> allow
   fi
@@ -170,7 +177,7 @@ LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-pr-gate-lib.sh"
 # ttl_seconds (written from the same marker), which wins inside the validator;
 # this is only the fallback for a sentinel without one.
 DEFAULT_TTL=1200
-mttl=$(jq -r '.ttl_seconds // empty' "$MARKER" 2>/dev/null)
+mttl=$(printf '%s' "$MARKER" | jq -r '.ttl_seconds // empty' 2>/dev/null)
 case "$mttl" in ''|*[!0-9]*) : ;; *) [ "$mttl" -gt 0 ] && DEFAULT_TTL="$mttl" ;; esac
 
 SENTINEL=$(cat "$GITDIR/ship-pr-clearance" 2>/dev/null || echo "")
@@ -192,14 +199,15 @@ VERDICT=$(sg_sentinel_valid "$SENTINEL" "$NOW" "$DEFAULT_TTL")
 # recorded-skip escape - it does NOT silently pass as "n/a". Every such decision
 # is logged so a rotted/degraded gate is visible, never silent.
 if [ "$VERDICT" = "valid" ]; then
-  MARKERJSON=$(cat "$MARKER" 2>/dev/null || echo "{}")
+  MARKERJSON="$MARKER"
+  [ -n "$MARKERJSON" ] || MARKERJSON='{}'
   # An UNPARSEABLE marker must not silently disable enforcement: an opted-in repo
   # whose marker later corrupted would lose the completion gate with no trace.
   # Log the fail-open (then allow, consistent with the sentinel already having
   # validated). A VALID marker with no completion block is the common
   # not-opted-in case and stays silent at zero cost.
   if ! printf '%s' "$MARKERJSON" | jq -e . >/dev/null 2>&1; then
-    sg_log "FAIL-OPEN .ship-gate.json unparseable in $TOP; completion layer skipped"
+    sg_log "FAIL-OPEN ship config unparseable in $TOP; completion layer skipped"
     exit 0
   fi
   if [ "$(printf '%s' "$MARKERJSON" | jq -r 'if .completion then "yes" else "no" end' 2>/dev/null)" != "yes" ]; then
@@ -358,13 +366,13 @@ if [ "$VERDICT" = "valid" ]; then
   _blocklist=$(printf '%s' "$BLOCK" | tr '\n' ' ' | sed 's/ *$//')
   _basenote=""
   [ -z "$BREF" ] && _basenote=" NOTE: the base branch could not be resolved locally (cmdbase='${CMDBASE:-}'), so changelog/version/base_merged could not be evaluated and are treated as unmet; fetch the base (e.g. \`git fetch origin\`) or record a skip."
-  REASON="Ship gate (completion): this create is missing footprint evidence that /ship's checklist ran for: ${_blocklist}. A fresh /ship sentinel is present (so /ship was invoked), but these steps left no trace - the signature of a partial or hand-driven ship (mutwo PR #189). Fix each, or record an honest skip: for a dim you legitimately skipped, write a reason with \`echo 'reason=<why> policy=<ref>' > $GITDIR/ship-skip-<dim>\` and retry (the skip is honored only for this /ship run). Per dim: review -> run /eng:cr on this branch (it stamps review-skill-head); changelog -> add a CHANGELOG.md entry; version -> bump package.json .version; base_merged -> merge ${BREF:-the base} into this branch.${_basenote} Intentional and repo-opted-in via .ship-gate.json completion.require."
+  REASON="Ship gate (completion): this create is missing footprint evidence that /ship's checklist ran for: ${_blocklist}. A fresh /ship sentinel is present (so /ship was invoked), but these steps left no trace - the signature of a partial or hand-driven ship (mutwo PR #189). Fix each, or record an honest skip: for a dim you legitimately skipped, write a reason with \`echo 'reason=<why> policy=<ref>' > $GITDIR/ship-skip-<dim>\` and retry (the skip is honored only for this /ship run). Per dim: review -> run /eng:cr on this branch (it stamps review-skill-head); changelog -> add a CHANGELOG.md entry; version -> bump package.json .version; base_merged -> merge ${BREF:-the base} into this branch.${_basenote} Intentional and configured per-repo via the \`ship.completion.require\` override in ~/dev/gate-policy.json."
   sg_log "BLOCK ship-completion in $TOP missing=[$_blocklist]"
   jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
   exit 0
 fi
 
-REASON="Ship gate: open PRs in this repo via /ship, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. /ship reconciles the base branch, runs tests/review, bumps VERSION, and opens the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, temporarily remove this repo's .ship-gate.json marker, create the PR, then restore it."
+REASON="Ship gate: open PRs in this repo via /ship, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. /ship reconciles the base branch, runs tests/review, bumps VERSION, and opens the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, set this repo's overrides entry for \`ship\` to false in ~/dev/gate-policy.json, create the PR, then revert it."
 sg_log "BLOCK gh pr create in $TOP [sentinel: $VERDICT]"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

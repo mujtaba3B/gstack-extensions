@@ -99,29 +99,39 @@ sg_repo_from_flags() {
 }
 
 # sg_dev_checkout_for_repo <owner/name>
-#   Find a gated ~/dev checkout whose origin remote is <owner/name> and echo
-#   "<toplevel><TAB><absolute-git-dir>" (return 0), else return 1. Only repos carrying
-#   a .ship-gate.json marker are considered, so the scan is bounded to the handful of
-#   opted-in repos (unmarked repos would be allowed anyway). This binds an explicit
-#   `--repo`/`GH_REPO` target to its LOCAL checkout so a `gh pr create` run from a cwd
-#   OUTSIDE ~/dev (e.g. a session anchored in a Google Drive folder) is still gated for
-#   the repo it names, instead of falling through as "out of scope".
+#   Find a governed ~/dev checkout whose origin remote is <owner/name> and echo
+#   "<toplevel><TAB><absolute-git-dir>" (return 0), else return 1. This binds an
+#   explicit `--repo`/`GH_REPO` target to its LOCAL checkout, so a `gh pr create`
+#   run from a cwd OUTSIDE ~/dev (a session anchored in a Google Drive folder, say)
+#   is still gated for the repo it names instead of falling through as out of scope.
+#
+#   This used to enumerate `.ship-gate.json` marker files, which was both the bound
+#   on the scan and the definition of "gated". Markers were dropped on 2026-09-02,
+#   so it now enumerates git checkouts and asks the policy. The scan is wider, but
+#   it only runs on the rare path where the cwd is outside ~/dev AND the command
+#   names an explicit repo, and it stops at the first match.
 sg_dev_checkout_for_repo() {
-  local target top url gitdir marker
+  local target top url gitdir gitmarker
   command -v git >/dev/null 2>&1 || return 1
   target=$(sg_norm_repo "$1")
   [ -n "$target" ] || return 1
-  while IFS= read -r marker; do
-    [ -n "$marker" ] || continue
-    top=$(git -C "$(dirname -- "$marker")" rev-parse --show-toplevel 2>/dev/null) || continue
+  while IFS= read -r gitmarker; do
+    [ -n "$gitmarker" ] || continue
+    top=$(dirname -- "$gitmarker")
     case "$top" in "$HOME/dev"|"$HOME/dev/"*) ;; *) continue ;; esac
     url=$(git -C "$top" remote get-url origin 2>/dev/null) || continue
     [ "$(sg_norm_repo "$url")" = "$target" ] || continue
+    # Governed? Ask the policy, the single source of truth. Absent the helper
+    # (flat deployment without the lib), fall back to "found it" so the caller
+    # still binds rather than silently skipping a real checkout.
+    if command -v gp_gate_config >/dev/null 2>&1; then
+      gp_gate_config "$top" ship >/dev/null 2>&1 || continue
+    fi
     gitdir=$(git -C "$top" rev-parse --absolute-git-dir 2>/dev/null) || continue
     printf '%s\t%s' "$top" "$gitdir"
     return 0
   done <<EOF
-$(find "$HOME/dev" -maxdepth 5 -name .ship-gate.json -not -path '*/node_modules/*' 2>/dev/null)
+$(find "$HOME/dev" -maxdepth 5 -name .git -not -path '*/node_modules/*' 2>/dev/null)
 EOF
   return 1
 }

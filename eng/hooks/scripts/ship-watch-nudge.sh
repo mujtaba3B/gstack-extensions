@@ -35,7 +35,7 @@
 # fire.
 #
 # Opt-in: the same per-repo opt-in as the ship-PR gate - the presence of
-# .ship-gate.json. No new marker or flag (a repo that ships via /ship wants its PRs
+# the ship gate's policy scope. No new switch or flag (a repo that ships via /ship wants its PRs
 # watched). Genuine-/ship gating: a fresh valid ship-pr-clearance sentinel (the same
 # signal the ship-PR gate just cleared this create on), so a bare non-ship
 # `gh pr create` never nudges.
@@ -106,16 +106,20 @@ RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0   # not a ~/dev repo -> no n
 TOP=${RESOLVED%%$'\t'*}
 GITDIR=${RESOLVED#*$'\t'}
 
-# Opt-in: same marker as the ship-PR gate. No marker -> repo has not opted in.
-MARKER="$TOP/.ship-gate.json"
-[ -f "$MARKER" ] || exit 0
+# Same scope as the ship-PR gate, resolved the same way, so the nudge fires for
+# exactly the creates that gate governs (worktrees included).
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" ship) || exit 0
 
 # Genuine /ship: a fresh valid ship-pr-clearance sentinel (the signal the ship-PR
 # gate itself cleared this create on). A bare non-ship create has none -> no nudge.
 # The marker may tune the freshness window; else 1200s (the sentinel's own
 # ttl_seconds wins inside the validator when present).
 DEFAULT_TTL=1200
-mttl=$(jq -r '.ttl_seconds // empty' "$MARKER" 2>/dev/null)
+mttl=$(printf '%s' "$MARKER" | jq -r '.ttl_seconds // empty' 2>/dev/null)
 case "$mttl" in ''|*[!0-9]*) : ;; *) [ "$mttl" -gt 0 ] && DEFAULT_TTL="$mttl" ;; esac
 SENTINEL=$(cat "$GITDIR/ship-pr-clearance" 2>/dev/null || echo "")
 NOW=$(date +%s)

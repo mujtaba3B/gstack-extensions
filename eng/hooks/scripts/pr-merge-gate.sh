@@ -63,9 +63,14 @@ RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0
 TOP=${RESOLVED%%$'\t'*}
 GITDIR=${RESOLVED#*$'\t'}
 
-# Opt-in marker. No marker -> this repo has not opted in -> allow (untouched).
-MARKER="$TOP/.merge-clearance.json"
-[ -f "$MARKER" ] || exit 0
+# Effective gate config. Gated by DEFAULT for every repo under the policy root;
+# the .merge-clearance.json marker only TUNES this gate now (and resolves through
+# the main worktree when a linked one lacks it). Non-zero -> out of scope -> allow.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" merge-clearance) || exit 0
 
 # Cross-repo guard. If the command explicitly targets a DIFFERENT repo (--repo,
 # -R, or a GH_REPO= env prefix), the marker + stamp here belong to WORKDIR's repo,
@@ -103,7 +108,7 @@ fi
 # branches (default ["main"]). When we could resolve the base, only gate if it is
 # in scope; an unresolved base falls through to gating (fail closed on the scope
 # check, since the rest of the gate still fails open on its own errors).
-BASES=$(jq -r '(.base_branches // ["main"]) | .[]' "$MARKER" 2>/dev/null)
+BASES=$(printf '%s' "$MARKER" | jq -r '(.base_branches // ["main"]) | .[]' 2>/dev/null)
 if [ -n "$PRBASE" ]; then
   printf '%s\n' "$BASES" | grep -qxF "$PRBASE" || exit 0   # base not in scope -> allow
 fi
