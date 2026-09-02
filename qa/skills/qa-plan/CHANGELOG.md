@@ -57,8 +57,10 @@ The approval stamp now requires a real human approval (gstack-extensions#71).
   created and blocks when it differs from the approved one, so a plan edited
   after approval must be re-approved. Tick state is normalized out, so a QA
   driver marking rows done does not invalidate the approval.
-- Step 6 of the skill documents the enforced contract, and `--digest` is now
-  effectively required (omitting it disables the drift check).
+- Step 6 of the skill documents the enforced contract. `write` takes NO options:
+  the plan digest reaches the stamp through the token, carried as a
+  `<qa-plan-digest:HEX>` marker in the approval question and computed by the new
+  `qa-plan-stamp.sh digest` verb, never by a hand-rolled hash.
 
 ## v2.2.0
 

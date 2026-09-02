@@ -84,18 +84,13 @@ STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 [ "$VERDICT" = "valid" ] && exit 0
 
-# A stamp predating the approval-token fix is honored here; see
-# qpg_unattested_disposition for the two conditions and why they are what they
-# are. A field-less stamp written AFTER the fix is not a migration case and is
-# refused. Logged rather than silent, so the shrinking migration population is
-# visible in the gate log instead of looking like the stamp was fine all along.
+# An unattested stamp (no `approval_source`) is refused. The mtime-bounded
+# migration window that used to live here was removed on PR #76: mtime is
+# mutable by the same shell that writes the stamp. See
+# qpg_unattested_disposition. Logged so the refusal is visible in the gate log.
 if [ "$VERDICT" = "unattested" ]; then
-  _mtime=$(qpt_stamp_mtime "$GITDIR/qa-plan-approved" || echo "")
-  if [ "$(qpg_unattested_disposition build "$(qpt_unattested_in_window "$_mtime")")" = "allow" ]; then
-    printf '%s build-gate ALLOW(unattested-prefix-stamp) branch=%s file=%s mtime=%s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "${_mtime:-?}" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
-    exit 0
-  fi
+  printf '%s build-gate BLOCK(unattested) branch=%s file=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
 fi
 
 # Blocked: record for visibility (a rotted/bypassed gate should be auditable).

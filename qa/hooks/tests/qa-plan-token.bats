@@ -17,6 +17,10 @@ setup() {
   . "$TLIB"
   # shellcheck source=/dev/null
   . "$GLIB"
+  # The gates are ~/dev-scoped, so the scratch repo must live there. Create the
+  # parent first: a clean CI runner has no ~/dev, and mktemp would fail in setup,
+  # taking the whole suite down before a single test ran (CodeRabbit, PR #76).
+  mkdir -p "$HOME/dev"
   REPO=$(mktemp -d "$HOME/dev/.qptest.XXXXXX")
   git -C "$REPO" init -q
   git -C "$REPO" config user.name "Real Human"
@@ -372,19 +376,6 @@ mint_approval() { ask_payload "QA plan" "Approve the plan? <qa-plan-digest:$DIGE
   [ -z "$output" ]
 }
 
-@test "unattested_in_window: only stamps predating the fix are grandfathered" {
-  run qpt_unattested_in_window 1788220800     # 2026-09-01
-  [ "$output" = "in" ]; [ "$status" -eq 0 ]
-  run qpt_unattested_in_window 1900000000     # well after
-  [ "$output" = "out" ]; [ "$status" -eq 1 ]
-  run qpt_unattested_in_window ""             # undatable fails closed
-  [ "$output" = "out" ]; [ "$status" -eq 1 ]
-}
-
-# ========================================================================
-# The canonical digest verb (one code path shared with the gates)
-# ========================================================================
-
 @test "digest verb: agrees with the gate's own computation" {
   printf 'intro\n\n## QA\n\n| [ ] | claude | do it |\n\n## Next\nx\n' > "$BATS_TEST_TMPDIR/body.md"
   run bash "$STAMP" digest "$BATS_TEST_TMPDIR/body.md"
@@ -412,29 +403,6 @@ mint_approval() { ask_payload "QA plan" "Approve the plan? <qa-plan-digest:$DIGE
 # ========================================================================
 # Second review round: portable mtime, header reuse, multi-line questions
 # ========================================================================
-
-@test "stamp_mtime: reads a real file's mtime on this host" {
-  touch "$BATS_TEST_TMPDIR/f"
-  run qpt_stamp_mtime "$BATS_TEST_TMPDIR/f"
-  [ "$status" -eq 0 ]
-  case "$output" in ''|*[!0-9]*) false ;; *) true ;; esac
-}
-
-@test "stamp_mtime: a missing file yields nothing and fails" {
-  run qpt_stamp_mtime "$BATS_TEST_TMPDIR/nope"
-  [ "$status" -ne 0 ]; [ -z "$output" ]
-}
-
-@test "stamp_mtime: the result is always numeric, never a stat error blob" {
-  # GNU stat spells -f as --file-system, so `stat -f %m` prints a six-line
-  # filesystem block to STDOUT and exits 1. A BSD-first chain captured that blob,
-  # appended the real epoch, and produced a non-numeric string, which killed the
-  # migration carve-out on every Linux host and turned CI red.
-  touch "$BATS_TEST_TMPDIR/g"
-  m=$(qpt_stamp_mtime "$BATS_TEST_TMPDIR/g")
-  run qpt_unattested_in_window "$m" 9999999999
-  [ "$output" = "in" ]
-}
 
 @test "mint: duplicate question text does not select another question's header" {
   # The header is reused from the matched question, not re-derived by text with
@@ -465,4 +433,29 @@ Second line of context. <qa-plan-digest:$DIGEST_A>"
   jq -nc --arg cwd "$REPO" '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
       tool_input:{questions:[]}, tool_response:{answers:{}}}' | bash "$MINT"
   [ ! -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "is_approve: every markdown emphasis shape still mints" {
+  # Emphasis can wrap the whole label or just the word. An end-anchored strip
+  # fixes one and breaks the other, which is exactly what the first fix for this
+  # did (CodeRabbit, PR #76). Both shapes, and the plain one, must agree.
+  for l in "Approve" "**Approve** (recommended)" "**Approve (recommended)**" "*Approve (default)*" "__Approve__"; do
+    run qpt_is_approve "$l"
+    [ "$output" = "approve" ]
+  done
+}
+
+@test "is_approve: emphasis does not rescue a QUALIFIED approve" {
+  for l in "**Approve (skip Prod QA)**" "*Approve without QA*"; do
+    run qpt_is_approve "$l"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "stamp_mtime is gone as an authorization input" {
+  # The function may still exist for diagnostics, but nothing may treat a
+  # backdated mtime as approval. qpg_unattested_disposition covers the verdict.
+  . "$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"
+  run qpg_unattested_disposition pr
+  [ "$output" = "block" ]
 }

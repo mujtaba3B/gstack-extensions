@@ -141,21 +141,8 @@ VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH" "$CURRENT_DIGEST")
 # qpg_unattested_disposition for why blocking it produced an unsatisfiable gate.
 # Logged, never silent, so the remaining population stays visible.
 if [ "$VERDICT" = "unattested" ]; then
-  _mtime=$(qpt_stamp_mtime "$GITDIR/qa-plan-approved" || echo "")
-  _win=$(qpt_unattested_in_window "$_mtime")
-  # A legacy stamp is honored at PR time only if it carries a REAL digest. Without
-  # one the drift check has nothing to compare and skips, so a digest-less stamp
-  # would be a permanent, drift-immune standing approval: strictly LESS checked
-  # than a forged token, which at least yields a digest that does get compared.
-  # A genuine pre-fix stamp written through the old --digest path has one. The
-  # build gate stays lenient, so this costs a re-approval at ship time only.
-  _sdig=$(printf '%s' "$STAMP" | jq -r '.criteria_digest // empty' 2>/dev/null || echo "")
-  { [ -n "$_sdig" ] && [ "$_sdig" != "none" ]; } || _win="out"
-  if [ "$(qpg_unattested_disposition pr "$_win")" = "allow" ]; then
-    printf '%s pr-gate ALLOW(unattested-prefix-stamp) branch=%s mtime=%s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "${_mtime:-?}" >> "$LOG" 2>/dev/null || true
-    exit 0
-  fi
+  printf '%s pr-gate BLOCK(unattested) branch=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" >> "$LOG" 2>/dev/null || true
 fi
 
 printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
@@ -170,7 +157,7 @@ case "$VERDICT" in
     REASON="QA-plan gate: the QA plan changed after it was approved. Branch \`$BRANCH\` has a valid approval stamp, but the \`## QA\` section in the PR body you are about to create does not match the plan the human approved (the stamp's criteria_digest differs from the digest of the body's plan). An approval covers the plan it was given for, not whatever the plan later became. Re-run \`/qa:plan\` so the current plan is presented and approved on its own terms, then retry. If the only difference is tick state, that is normalized out and would not have triggered this, so the plan text itself really did change."
     ;;
   unattested)
-    REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no \`approval_source\`), and the stamp file is NOT old enough to be a genuine pre-fix approval. Stamps written before the approval-token fix are honored; one written after it was either hand-written or produced by a writer that should no longer exist, so it is refused. Run \`/qa:plan\` and approve the plan; that mints the token the stamp writer requires."
+    REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no \`approval_source\`). Such a stamp was either hand-written or produced by a writer that predates the approval-token fix, and there is no way to tell those apart, so it is refused. The migration window that used to honor pre-fix stamps was removed because it keyed on file mtime, which the same shell that writes the stamp can rewrite. Run \`/qa:plan\` and approve the plan; that mints the token the stamp writer requires."
     ;;
   *)
     REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."

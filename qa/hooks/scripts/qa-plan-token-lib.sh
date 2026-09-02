@@ -78,11 +78,20 @@ QPT_TTL=1800
 qpt_normalize_label() {
   local s="$1"
   s=$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]')
+  # Emphasis markers are deleted WHEREVER they sit, not stripped from the ends,
+  # because markdown emphasis can wrap the whole label ("**Approve
+  # (recommended)**") or just the word ("**Approve** (recommended)"). Any
+  # end-anchored strip fixes one shape and breaks the other: the parenthetical
+  # strip is anchored at end-of-string, so leftover markers between the word and
+  # the paren, or after it, defeat the match either way. A human clicking a
+  # perfectly ordinary bolded option would then mint nothing and the writer would
+  # blame an unregistered hook. `*` and `_` carry no meaning in an option label,
+  # so deleting them is lossless here. Found by CodeRabbit on PR #76, whose first
+  # fix reordered the strips and traded one broken shape for the other.
+  s=$(printf '%s' "$s" | tr -d '*_')
   s=$(printf '%s' "$s" | sed -e 's/[[:space:]]*(recommended)[[:space:]]*$//' \
                              -e 's/[[:space:]]*(default)[[:space:]]*$//')
   s=$(printf '%s' "$s" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-  # Markdown emphasis around the label ("**Approve**") is presentation, not meaning.
-  s=$(printf '%s' "$s" | sed -e 's/^\*\{1,2\}//' -e 's/\*\{1,2\}$//')
   printf '%s' "$s"
 }
 
@@ -196,55 +205,27 @@ qpt_digest_from_question() {
   printf '%s' "$1" | sed -nE 's/.*<qa-plan-digest:([0-9a-fA-F]{16,128})>.*/\1/p' | head -1
 }
 
-# qpt_unattested_cutoff
-#   Epoch before which a stamp lacking `approval_source` is honored as a genuine
-#   pre-fix approval. Stamps FILE-MODIFIED at or after this instant are not
-#   migration cases: the fix was live by then, so a field-less stamp written
-#   after it was either hand-written or produced by a writer that should no
-#   longer exist. 2026-09-02T00:00:00Z, the day the approval-token fix shipped.
+# The migration carve-out that used to live here (qpt_unattested_cutoff /
+# qpt_unattested_in_window) is GONE, removed on PR #76 after CodeRabbit pointed
+# out it was authorized by a MUTABLE attribute. Two commands defeated it:
 #
-#   This bound is the whole point. Keying the carve-out on SHAPE alone made a
-#   forged stamp strictly EASIER to produce than a real one: two JSON fields and
-#   both gates opened, permanently, for anyone. A migration allowance must never
-#   be cheaper than the thing it is migrating from.
-QPT_UNATTESTED_CUTOFF=1788307200
-
-# qpt_stamp_mtime <path>
-#   Echo a file's mtime as an epoch, or nothing. GNU form FIRST, then BSD.
+#   printf '{"branch":"<b>","criteria_digest":"<current>"}' > .git/qa-plan-approved
+#   touch -t 202601010000 .git/qa-plan-approved
 #
-#   The order is load-bearing and the reverse of what reads naturally on a Mac.
-#   GNU coreutils spells `-f` as --file-system, so `stat -f %m <file>` treats %m
-#   as a FILE operand: it fails on %m (exit 1) but STILL SUCCEEDS on the real
-#   file and prints a six-line filesystem block to STDOUT. A
-#   `stat -f %m || stat -c %Y` chain therefore captures that block, appends the
-#   real epoch, and yields a non-numeric string, which fails the window check and
-#   kills the migration carve-out on every Linux host. BSD stat has no such
-#   ambiguity: `stat -c` is simply an invalid option, exit 1 with EMPTY stdout,
-#   so GNU-first degrades cleanly in both directions. CI runs ubuntu-latest, so
-#   the wrong order is also a red required check.
+# and both gates opened, with the digest set to whatever the body being shipped
+# happened to hash to. A carve-out keyed on file mtime is keyed on something the
+# same shell that writes the file can rewrite, so it was never a bound at all.
 #
-#   Lives here rather than inline in the two gates because it was duplicated
-#   byte-for-byte in both, which is exactly the shape this repo's lib rule
-#   exists to prevent, and it now has its own truth table.
-qpt_stamp_mtime() {
-  local f="$1" m
-  [ -e "$f" ] || return 1
-  m=$(stat -c %Y "$f" 2>/dev/null) || m=""
-  case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$f" 2>/dev/null) || m="" ;; esac
-  case "$m" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s' "$m"
-}
-
-# qpt_unattested_in_window <stamp_mtime_epoch> [cutoff]
-#   Echo "in" / "out"; return 0 when the stamp predates the cutoff and may
-#   therefore be honored as a pre-fix approval. A missing or non-numeric mtime is
-#   "out" (fails closed): if we cannot date the stamp, we do not grandfather it.
-qpt_unattested_in_window() {
-  local mtime="$1" cutoff="${2:-$QPT_UNATTESTED_CUTOFF}"
-  case "$mtime" in ''|*[!0-9]*) echo "out"; return 1 ;; esac
-  [ "$mtime" -lt "$cutoff" ] && { echo "in"; return 0; }
-  echo "out"; return 1
-}
+# It was only ever there because a pre-fix branch had NO WAY to obtain a token:
+# the minting hook was not yet registered, so blocking those stamps produced an
+# unsatisfiable gate (that outage is why the carve-out was introduced mid-build).
+# That condition is gone. The hook ships in this PR and registers on the next
+# session start, so the remedy for a pre-fix stamp is now simply to run /qa:plan
+# and approve, which takes one click. Keeping a forgeable bypass alive to spare a
+# population of roughly zero branches one modal is a bad trade.
+#
+# An unattested stamp is therefore refused at BOTH gates now. See
+# qpg_unattested_disposition in qa-plan-gate-lib.sh.
 
 # qpt_token_approver <token_json>
 #   The identity to record in the stamp's `approver` field. Echoes the token's

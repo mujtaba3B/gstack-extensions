@@ -19,6 +19,10 @@ setup() {
   STAMP="$BATS_TEST_DIRNAME/../scripts/qa-plan-stamp.sh"
   # shellcheck source=/dev/null
   . "$LIB"
+  # The gates are ~/dev-scoped, so the scratch repo must live there. Create the
+  # parent first: a clean CI runner has no ~/dev, and mktemp would fail in setup,
+  # taking the whole suite down before a single test ran (CodeRabbit, PR #76).
+  mkdir -p "$HOME/dev"
   REPO=$(mktemp -d "$HOME/dev/.qpgtest.XXXXXX")
   git -C "$REPO" init -q
   git -C "$REPO" config user.name "Test User"
@@ -563,28 +567,24 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
-@test "unattested_disposition: honored only INSIDE the migration window" {
-  # Two conditions, and the second is what stops the carve-out being a wider hole
-  # than the bug: keying on shape alone let a two-field stamp open both gates
-  # forever, for anyone, with no token and no click.
-  run qpg_unattested_disposition build in
-  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
-  run qpg_unattested_disposition pr in
-  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
-  run qpg_unattested_disposition pr out
-  [ "$output" = "block" ]; [ "$status" -eq 1 ]
-  run qpg_unattested_disposition build out
-  [ "$output" = "block" ]; [ "$status" -eq 1 ]
+@test "unattested_disposition: an unattested stamp is refused everywhere" {
+  # The mtime-bounded migration window was removed on PR #76: mtime is mutable by
+  # the same shell that writes the stamp, so `touch -t` defeated it in one extra
+  # command. It existed only because a pre-fix branch could not obtain a token;
+  # the minting hook ships now, so the remedy is one /qa:plan approval.
+  for g in build pr deploy something-new; do
+    run qpg_unattested_disposition "$g"
+    [ "$output" = "block" ]; [ "$status" -eq 1 ]
+  done
 }
 
-@test "unattested_disposition: an omitted window fails closed" {
-  run qpg_unattested_disposition pr
-  [ "$output" = "block" ]; [ "$status" -eq 1 ]
-}
-
-@test "unattested_disposition: an unknown gate inherits the strict side" {
-  run qpg_unattested_disposition something-new in
-  [ "$output" = "block" ]; [ "$status" -eq 1 ]
+@test "stamp_valid: approval_source must be the exact literal, not merely non-empty" {
+  run qpg_stamp_valid '{"branch":"b","approval_source":"AskUserQuestion"}' b
+  [ "$output" = "valid" ]
+  run qpg_stamp_valid '{"branch":"b","approval_source":"yes"}' b
+  [ "$output" = "unattested" ]
+  run qpg_stamp_valid '{"branch":"b","approval_source":true}' b
+  [ "$output" = "unattested" ]
 }
 
 @test "normalize: ticking a box does not change the plan digest" {
@@ -640,11 +640,13 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "\$PR_BODY_FILE" ]
 }
 
-@test "build gate: a pre-fix stamp still lets you BUILD (the migration is not a cliff)" {
+@test "build gate: a backdated forged stamp no longer buys a build" {
+  # `printf {...} > qa-plan-approved` + `touch -t <past>` used to pass both gates.
   opt_in
   legacy_stamp_for "feat/thing"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
-  [ "$status" -eq 0 ]; [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
 }
 
 @test "pr gate: a FRESH unattested stamp is refused (the carve-out is bounded)" {
@@ -670,14 +672,12 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   echo "$output" | grep -q "changed after it was approved"
 }
 
-@test "pr gate: a pre-fix stamp is honored, not blocked" {
-  # The migration must never strand a branch that was approved under the old
-  # flow: re-approving those was scope this fix invented for itself, and the
-  # human never asked for it.
+@test "pr gate: a backdated forged stamp no longer ships" {
   opt_in
   legacy_stamp_for "feat/thing"
   run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
-  [ "$status" -eq 0 ]; [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
 }
 
 @test "pr gate: a MISSING stamp still blocks (the pre-fix carve-out is narrow)" {
@@ -767,12 +767,13 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   echo "$output" | grep -q '"decision":"block"'
 }
 
-@test "build gate: that same digest-less pre-fix stamp still lets you BUILD" {
+@test "build gate: no mtime makes an unattested stamp acceptable" {
   opt_in
   printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
-  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  touch -t 202001010000 "$GITDIR/qa-plan-approved"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
-  [ "$status" -eq 0 ]; [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
 }
 
 @test "extract: a trailing attribution footer after a --- does NOT join the plan" {

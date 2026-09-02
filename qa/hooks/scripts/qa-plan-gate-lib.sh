@@ -92,44 +92,34 @@ qpg_stamp_valid() {
     fi
   fi
 
+  # The source must be the EXACT literal the minter writes, not merely non-empty.
+  # Accepting any truthy string gave a forged stamp a free choice of value and
+  # cost nothing to tighten (CodeRabbit, PR #76). This does not make a written
+  # file unforgeable, which is impossible for any agent with shell access and is
+  # documented honestly in qa-plan-token-lib.sh; it removes a degree of freedom.
   local s_source
   s_source=$(printf '%s' "$stamp" | jq -r '.approval_source // empty' 2>/dev/null) || s_source=""
-  [ -n "$s_source" ] || { echo "unattested"; return 1; }
+  [ "$s_source" = "AskUserQuestion" ] || { echo "unattested"; return 1; }
 
   echo "valid"; return 0
 }
 
-# qpg_unattested_disposition <gate> <in_window>
-#   What a gate does with an "unattested" stamp: one written before approval
-#   tokens existed, which carries no proof a human ever approved it. <in_window>
-#   is "in" when the stamp FILE predates the fix (qpt_unattested_in_window).
-#   Echoes "allow" / "block"; return code 0 for allow.
+# qpg_unattested_disposition <gate>
+#   What a gate does with an "unattested" stamp: one carrying no proof a human
+#   approved it. Echoes "block" for everything. Kept as a function rather than
+#   inlined so the truth table stays enumerated in bats and a future carve-out
+#   has one obvious place to be argued for.
 #
-#   TWO CONDITIONS, and the second one is the whole point. The first cut keyed the
-#   carve-out on SHAPE alone, which made a forged stamp strictly EASIER to produce
-#   than a real one: `printf '{"branch":"x"}' > .git/qa-plan-approved` opened both
-#   gates, permanently, for anyone, with no token and no click. That is a wider
-#   hole than the bug being fixed, and the test suite had pinned it as intended
-#   behavior. A migration allowance must never be cheaper than the thing it is
-#   migrating from, so it is now bounded by the stamp file's own mtime: only
-#   stamps that already existed when this shipped are honored.
-#
-#   Why the gates still ALLOW rather than block inside that window: blocking was
-#   tried this morning and backed out. This gate runs from the working tree the
-#   moment a file is saved, while the minting hook needs a session restart to
-#   register, so there was a window with no path to any valid stamp and every
-#   gated repo lost `gh pr create`. A gate nobody can satisfy reliably produces an
-#   override habit that outlives the outage. The forward guarantee is untouched:
-#   every NEW stamp needs a human click, because qa-plan-stamp.sh cannot write one
-#   without a token.
-#
-#   Out of the window, or an undatable stamp, blocks. An unknown gate name blocks,
-#   so anything added later inherits the strict side.
+#   It used to allow such a stamp inside a migration window bounded by the stamp
+#   FILE'S MTIME. CodeRabbit killed that on PR #76 and was right: mtime is
+#   mutable by the same shell that writes the file, so `touch -t` past the cutoff
+#   defeated it in one extra command. The window existed only because a pre-fix
+#   branch could not obtain a token at all (the minting hook was unregistered,
+#   and blocking those stamps caused a machine-wide outage mid-build). With the
+#   hook shipping here, the remedy is one /qa:plan approval, so the carve-out
+#   costs a forgeable bypass to save a click.
 qpg_unattested_disposition() {
-  local gate="$1" in_window="${2:-out}"
-  [ "$in_window" = "in" ] || { echo "block"; return 1; }
-  case "$gate" in
-    build|pr) echo "allow"; return 0 ;;
+  case "$1" in
     *) echo "block"; return 1 ;;
   esac
 }

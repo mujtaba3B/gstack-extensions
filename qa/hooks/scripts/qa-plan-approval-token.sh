@@ -101,8 +101,19 @@ ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
   .tool_response.answers[$q] // empty
 ' 2>/dev/null) || exit 0
 
-# THE decision, in one pure call whose truth table is enumerated in bats.
-[ "$(qpt_should_mint "$TOOL" "$HEADER" "$ANSWER" "$BRANCH")" = "mint" ] || exit 0
+# THE decision, in one pure call whose truth table is enumerated in bats. The
+# refusal REASON is logged rather than discarded: a silent no-mint is this hook's
+# worst failure mode, because the stamp writer then tells the operator the hook is
+# "probably not registered" and sends them to restart for something a restart
+# cannot fix. Twice during this feature's own development a no-mint was diagnosed
+# that way. One line in the gate log turns "nothing happened" into "wrong-header".
+_MINT=$(qpt_should_mint "$TOOL" "$HEADER" "$ANSWER" "$BRANCH")
+if [ "$_MINT" != "mint" ]; then
+  printf '%s approval-token no-mint(%s) branch=%s header=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_MINT" "${BRANCH:-?}" "${HEADER:-?}" \
+    >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+  exit 0
+fi
 
 # The plan digest the human was shown, carried in the question as
 # <qa-plan-digest:HEX>. This is what makes the approval bind to SPECIFIC plan
