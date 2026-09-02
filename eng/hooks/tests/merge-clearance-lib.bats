@@ -1143,3 +1143,105 @@ disp() {
   run mc_cr_reviewed_head "$revs" abc123 success 'Review rate limited'
   [ "$output" = "no" ]
 }
+
+# --- mc_collapse_checkruns ---------------------------------------------------
+# A check fixed by a re-run must clear; a matrix leg that failed must not.
+
+@test "collapse: a check that failed then passed on a re-run reports the pass" {
+  # The real Healthcare-Super-Connector/hesco#92 shape: three suites, one name.
+  run mc_collapse_checkruns '[
+    {"name":"qa-status","state":"failure","suite":91270235077,"started":"2026-09-02T20:18:45Z"},
+    {"name":"qa-status","state":"failure","suite":91270390339,"started":"2026-09-02T20:19:17Z"},
+    {"name":"qa-status","state":"success","suite":91271781743,"started":"2026-09-02T20:30:14Z"},
+    {"name":"test","state":"success","suite":91270234171,"started":"2026-09-02T20:18:44Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|select(.name=="qa-status")|.state]|join(",")')" = "success" ]
+  [ "$(echo "$output" | jq -r '[.[]|select(.name=="test")|.state]|join(",")')" = "success" ]
+}
+
+@test "collapse: a matrix leg that failed inside the newest suite still fails" {
+  # Several runs share one name INSIDE one suite. All must survive so the
+  # caller's any-failure-wins fold can see the failing leg.
+  run mc_collapse_checkruns '[
+    {"name":"test","state":"success","suite":200,"started":"2026-09-02T21:00:00Z"},
+    {"name":"test","state":"failure","suite":200,"started":"2026-09-02T21:00:01Z"},
+    {"name":"test","state":"success","suite":200,"started":"2026-09-02T21:00:02Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq 'length')" -eq 3 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|index("failure")')" != "null" ]
+}
+
+@test "collapse: an older suite's pass cannot mask the newest suite's failure" {
+  # The inverse of the re-run case. Recency must not become permissiveness.
+  run mc_collapse_checkruns '[
+    {"name":"build","state":"success","suite":100,"started":"2026-09-02T20:00:00Z"},
+    {"name":"build","state":"failure","suite":300,"started":"2026-09-02T20:30:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|join(",")')" = "failure" ]
+}
+
+@test "collapse: a check that has only ever failed still fails" {
+  run mc_collapse_checkruns '[
+    {"name":"lint","state":"failure","suite":10,"started":"2026-09-02T20:00:00Z"},
+    {"name":"lint","state":"failure","suite":20,"started":"2026-09-02T20:05:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|join(",")')" = "failure" ]
+}
+
+@test "collapse: a pending run in the newest suite is not reported as success" {
+  run mc_collapse_checkruns '[
+    {"name":"deploy","state":"failure","suite":10,"started":"2026-09-02T20:00:00Z"},
+    {"name":"deploy","state":"in_progress","suite":20,"started":"2026-09-02T20:05:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|join(",")')" = "in_progress" ]
+}
+
+@test "collapse: independent names are collapsed independently" {
+  run mc_collapse_checkruns '[
+    {"name":"a","state":"failure","suite":1,"started":"2026-09-02T20:00:00Z"},
+    {"name":"a","state":"success","suite":2,"started":"2026-09-02T20:10:00Z"},
+    {"name":"b","state":"failure","suite":2,"started":"2026-09-02T20:10:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|select(.name=="a")|.state]|join(",")')" = "success" ]
+  [ "$(echo "$output" | jq -r '[.[]|select(.name=="b")|.state]|join(",")')" = "failure" ]
+}
+
+@test "collapse: missing started_at falls back to suite id for recency" {
+  run mc_collapse_checkruns '[
+    {"name":"c","state":"failure","suite":1,"started":null},
+    {"name":"c","state":"success","suite":2,"started":null}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|join(",")')" = "success" ]
+}
+
+@test "collapse: unparseable or non-array input fails closed to []" {
+  run mc_collapse_checkruns 'not json'
+  [ "$status" -eq 0 ]
+  [ "$output" = "[]" ]
+  run mc_collapse_checkruns '{"name":"x"}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "[]" ]
+  run mc_collapse_checkruns ''
+  [ "$status" -eq 0 ]
+  [ "$output" = "[]" ]
+}
+
+@test "collapse: a missing suite id fails CLOSED, never dropping a real failure" {
+  # Adversarial find: collapsing on a null suite kept only the null-suite runs and
+  # dropped the real ones, so a dropped failure read as success. An incomplete
+  # group must stay uncollapsed so any-failure-wins still sees the failure.
+  run mc_collapse_checkruns '[
+    {"name":"test","state":"failure","suite":100,"started":"2026-09-02T20:00:00Z"},
+    {"name":"test","state":"success","suite":null,"started":"2026-09-02T21:00:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq 'length')" -eq 2 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|index("failure")')" != "null" ]
+}
