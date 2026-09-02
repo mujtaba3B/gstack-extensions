@@ -43,7 +43,7 @@ This repo lives outside `~/.claude/skills/gstack/`, so `gstack-upgrade` never to
 Each skill checks on invocation whether this clone's `main` is behind `origin/main` (a TTL-gated `git fetch`, so it does not hammer the remote) and, if so, offers to upgrade. Accepting runs:
 
 ```bash
-~/dev/gstack-extensions/bin/gstack-extensions-upgrade
+~/dev/tooling/gstack-extensions/bin/gstack-extensions-upgrade
 ```
 
 which fast-forwards `main` and refreshes the installed plugins from the pulled source (uninstall+install, since `claude plugin update` no-ops while a plugin's version is unchanged). It refuses safely (and tells you why) if the clone is not on a clean `main`, so it never disrupts in-progress feature-branch work. Restart the session afterwards to load the refreshed skills. To upgrade by hand at any time:

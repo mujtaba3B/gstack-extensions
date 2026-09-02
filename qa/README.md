@@ -43,5 +43,5 @@ See `shared/core.md` for the full identity. Quick facts:
 
 ## See also
 
-- `~/dev/gstack-extensions/pm/` (PM Penny: writes the issues QA Quincey verifies against, and receives `/pm:bug` handoffs).
+- `~/dev/tooling/gstack-extensions/pm/` (PM Penny: writes the issues QA Quincey verifies against, and receives `/pm:bug` handoffs).
 - The `design` plugin's `design/references/wireframes-cross-tool.md` (Designer Denise's cross-tool canvas conventions; left-to-right is the flow order QA Quincey reads).
