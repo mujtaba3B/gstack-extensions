@@ -7,8 +7,8 @@ Skills are organized into **persona plugins**: each persona is a Claude Code plu
 ## Install
 
 ```bash
-git clone <this-repo> ~/dev/gstack-extensions
-cd ~/dev/gstack-extensions
+git clone <this-repo> ~/dev/tooling/gstack-extensions
+cd ~/dev/tooling/gstack-extensions
 ./bin/install
 ```
 
@@ -49,7 +49,7 @@ Each skill checks on invocation whether this clone's `main` is behind `origin/ma
 which fast-forwards `main` and refreshes the installed plugins from the pulled source (uninstall+install, since `claude plugin update` no-ops while a plugin's version is unchanged). It refuses safely (and tells you why) if the clone is not on a clean `main`, so it never disrupts in-progress feature-branch work. Restart the session afterwards to load the refreshed skills. To upgrade by hand at any time:
 
 ```bash
-cd ~/dev/gstack-extensions
+cd ~/dev/tooling/gstack-extensions
 git pull --ff-only   # must be on a clean main
 ./bin/install        # idempotent; refreshes the installed plugins
 ```

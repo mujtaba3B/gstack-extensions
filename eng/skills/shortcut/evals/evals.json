@@ -27,7 +27,7 @@
     },
     {
       "id": 3,
-      "prompt": "bridge my expensify-forward automation into the menu bar. the command is `cd ~/dev/email-hero && .venv/bin/python -m email_hero.cli run expensify-forward --dry-run`. call the shortcut EmailHeroRunPipeline",
+      "prompt": "bridge my expensify-forward automation into the menu bar. the command is `cd ~/dev/apps/email-hero && .venv/bin/python -m email_hero.cli run expensify-forward --dry-run`. call the shortcut EmailHeroRunPipeline",
       "expected_output": "Recognizes a Run Shell Script bridge, reads references/RUN_SHELL_SCRIPT.md, builds a runshellscript action with the stdin/arg-tolerant pattern and absolute paths, and detects that a shortcut named EmailHeroRunPipeline may already exist (warning about the 'Name 2' duplicate on re-import).",
       "files": [],
       "assertions": [

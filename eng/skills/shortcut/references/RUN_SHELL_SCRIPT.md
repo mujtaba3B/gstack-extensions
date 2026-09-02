@@ -117,7 +117,7 @@ A working, manually-built equivalent lives in `~/dev/apps/email-hero/userscript/
 argument) whose script is:
 
 ```sh
-cd ~/dev/email-hero && .venv/bin/python -m email_hero.cli run "$1" --dry-run 2>&1 | tail -20
+cd ~/dev/apps/email-hero && .venv/bin/python -m email_hero.cli run "$1" --dry-run 2>&1 | tail -20
 ```
 
 A Gmail userscript opens `shortcuts://run-shortcut?name=EmailHeroRunPipeline&input=expensify-forward`,
