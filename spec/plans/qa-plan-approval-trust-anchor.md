@@ -1,0 +1,109 @@
+# Trust anchor for the QA-plan approval stamp
+
+**Status:** design, not built. Blocks PR #76 from landing by the maintainer's
+decision (2026-09-02). Follows gstack-extensions#71 and the open CodeRabbit
+thread on #76, "Do not accept a literal `approval_source` as attestation".
+
+## The problem, stated exactly
+
+PR #76 makes the QA-plan approval stamp require a token minted by a PostToolUse
+hook from a real human `AskUserQuestion` answer. That closes the defect in #71:
+running the sanctioned tool at an unsanctioned moment no longer produces a
+stamp, which is what put approval stamps on four pull requests, one of which
+merged.
+
+It does not make the record unforgeable, and the reason is structural:
+
+> **The hook and the agent are the same OS principal on the same machine.**
+
+Any file the hook reads, the agent can write. Any secret the hook can read, the
+agent can read. So a hand-written token with a matching branch, a current epoch
+and `"approval_source":"AskUserQuestion"` still yields a valid stamp. The same
+argument defeats `ship-pr-clearance` and `land-deploy-clearance`, which is why
+those two document themselves as accident-guards rather than sandboxes.
+
+What #76 changed is the COST: forging moved from running the sanctioned tool at
+the wrong moment (invisible, indistinguishable from a real approval, and the
+actual 2026-09-02 failure) to hand-writing JSON into the git dir (a
+recognizably illegitimate act). That is a real improvement and not a solution.
+
+## What was measured on this machine (2026-09-02)
+
+| Candidate | Result | Usable as an anchor |
+|---|---|---|
+| macOS Keychain generic password | A plain shell read the secret back with no prompt | **No.** Default items carry no ACL; an ACL binds to a signed application, and a hook script is not one. |
+| Claude Code transcript | Harness writes `toolUseResult` with `questions` / `answers` / `annotations`, inside a `uuid` + `parentUuid` + `sessionId` chain | **Partially.** A witness, not a lock: it is a file the agent can append to. |
+| `pam_tid` for `sudo` | Not enabled (`/etc/pam.d/sudo_local` carries no `pam_tid`) | Not today. One line would enable it. |
+| Secure Enclave | Apple M4; `LocalAuthentication.framework` present; `swiftc` available | **Yes.** The only measured option a shell genuinely cannot satisfy. |
+
+## Options
+
+### A. Secure Enclave signature (the only true local anchor)
+
+A small signed helper owns a keypair created with `kSecAttrTokenIDSecureEnclave`
+and an access control of `.privateKeyUsage + .userPresence`. The private key
+never leaves the Enclave (non-exportable by construction) and every use requires
+Touch ID. The minting hook asks the helper to SIGN the token payload; the stamp
+writer verifies against the public key.
+
+- **Closes it.** An agent can write any JSON it likes and cannot produce a valid
+  signature.
+- **Costs:** a Swift helper, code signing, key provisioning, and key rotation /
+  recovery when the machine changes.
+- **Friction, stated plainly:** a Touch ID tap on every QA-plan approval, on top
+  of the modal click. Whether that is acceptable is a taste call, not a
+  technical one. It is defensible: a record asserting "a human approved this" is
+  exactly the kind of thing worth a deliberate physical act.
+
+### B. Transcript cross-verification (detection, not prevention)
+
+The stamp records the nonce and session id. A verifier checks that the session
+transcript holds a harness-written `toolUseResult.answers` record whose question
+carries the matching `<qa-plan-digest:HEX>` and whose answer is `Approve`, in a
+consistent `uuid` / `parentUuid` chain.
+
+- **Does not prevent forgery.** The transcript is a file.
+- **Does make forgery expensive and auditable:** the forger must fabricate a
+  self-consistent harness record, and any mismatch is visible after the fact.
+- **Zero friction, no new binaries.** Roughly 80% of the value for ~5% of the
+  cost of A.
+
+### C. Move the hard check off-machine
+
+Make the merge-time claim a GitHub artifact the local agent cannot forge: the
+maintainer's own PR review approval, verified by a required check. GitHub auth
+is outside the agent's reach.
+
+- **Strong and needs no local crypto.**
+- **Changes the UX the maintainer explicitly asked for**, which is the
+  in-terminal modal ("I got a question with options ... that was a block"), so
+  it cannot REPLACE the local flow.
+- **Works well as a second factor at merge time only:** the local modal keeps
+  fast feedback during the build; the GitHub review is the hard anchor at the
+  moment that actually matters.
+
+## Recommendation
+
+**C for the hard guarantee, plus B for cheap local detection. A only if the
+Touch ID tap is wanted.**
+
+Reasoning. The local gates exist to stop an agent from drifting past a step, and
+for that an accident-guard is the right tool and is honest about itself. The
+thing genuinely worth hard enforcement is the MERGE, because that is where a
+false approval escaped and did damage. Anchoring the merge in GitHub gets the
+strong property without asking the maintainer to tap a sensor during ordinary
+build-time work, and without a signed helper to maintain. B then makes a local
+forgery detectable rather than silent, which is what turns the residual from
+"unknown" into "auditable".
+
+A is the only option that makes the LOCAL record unforgeable. Take it if the
+local stamp itself must be trustworthy on its own, and accept a tap per
+approval.
+
+## Non-goals
+
+- Making `ship-pr-clearance` or `land-deploy-clearance` unforgeable. They share
+  this property; whatever lands here should be applied to them deliberately, as
+  its own change, not smuggled in.
+- Any scheme whose secret lives in a file the hook can read. That is the failure
+  this document exists to avoid repeating.
