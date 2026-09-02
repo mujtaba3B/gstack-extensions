@@ -71,15 +71,19 @@ qpg_stamp_valid() {
 
   [ "$s_branch" = "$branch" ] || { echo "wrong-branch"; return 1; }
 
-  local s_source
-  s_source=$(printf '%s' "$stamp" | jq -r '.approval_source // empty' 2>/dev/null) || s_source=""
-  [ -n "$s_source" ] || { echo "unattested"; return 1; }
-
-  # Plan-drift check. Only meaningful when BOTH digests are real: a stamp whose
-  # criteria_digest is "none" (the caller omitted --digest) carries nothing to
-  # compare, and an empty <current_digest> means the caller could not read the
-  # plan. Either way we fall through to valid rather than inventing a mismatch,
-  # so this check can only ever add a block, never remove one.
+  # Plan-drift check, evaluated BEFORE the attestation verdict. Order matters and
+  # the first cut had it backwards: returning "unattested" first meant the LEAST
+  # attested stamps got the FEWEST checks, so a pre-fix stamp was a standing,
+  # drift-immune approval and its `## QA` section could be rewritten to anything.
+  # That left the exact "scoped approval carried forward as standing" hole open on
+  # precisely the branches the migration exists to honor, including the four from
+  # the 2026-09-02 incident. Drift now applies to every stamp that carries a
+  # digest, attested or not.
+  #
+  # Only meaningful when BOTH digests are real: a stamp whose criteria_digest is
+  # "none" carries nothing to compare, and an empty <current_digest> means the
+  # caller could not read the plan. Either way we fall through rather than
+  # inventing a mismatch, so this check can only ever add a block, never remove one.
   if [ -n "$current_digest" ]; then
     local s_digest
     s_digest=$(printf '%s' "$stamp" | jq -r '.criteria_digest // empty' 2>/dev/null) || s_digest=""
@@ -88,45 +92,43 @@ qpg_stamp_valid() {
     fi
   fi
 
+  local s_source
+  s_source=$(printf '%s' "$stamp" | jq -r '.approval_source // empty' 2>/dev/null) || s_source=""
+  [ -n "$s_source" ] || { echo "unattested"; return 1; }
+
   echo "valid"; return 0
 }
 
-# qpg_unattested_disposition <gate>
+# qpg_unattested_disposition <gate> <in_window>
 #   What a gate does with an "unattested" stamp: one written before approval
-#   tokens existed, which carries no proof a human ever approved it. Echoes
-#   "allow" / "block"; return code 0 for allow.
+#   tokens existed, which carries no proof a human ever approved it. <in_window>
+#   is "in" when the stamp FILE predates the fix (qpt_unattested_in_window).
+#   Echoes "allow" / "block"; return code 0 for allow.
 #
-#   BOTH LIVE GATES ALLOW, and that is a deliberate reversal. The first cut of
-#   this fix blocked unattested stamps at the PR gate, on the reasoning that a
-#   stamp which cannot prove a human approved it should not travel with a pull
-#   request. In practice that produced an UNSATISFIABLE gate, and it did so
-#   immediately and machine-wide:
+#   TWO CONDITIONS, and the second one is the whole point. The first cut keyed the
+#   carve-out on SHAPE alone, which made a forged stamp strictly EASIER to produce
+#   than a real one: `printf '{"branch":"x"}' > .git/qa-plan-approved` opened both
+#   gates, permanently, for anyone, with no token and no click. That is a wider
+#   hole than the bug being fixed, and the test suite had pinned it as intended
+#   behavior. A migration allowance must never be cheaper than the thing it is
+#   migrating from, so it is now bounded by the stamp file's own mtime: only
+#   stamps that already existed when this shipped are honored.
 #
-#     - This gate is live the moment the file exists on disk, because it resolves
-#       its lib through BASH_SOURCE. Uncommitted is enough.
-#     - The minting hook is NOT live until a session restart, because hook
-#       REGISTRATION is read at session start.
+#   Why the gates still ALLOW rather than block inside that window: blocking was
+#   tried this morning and backed out. This gate runs from the working tree the
+#   moment a file is saved, while the minting hook needs a session restart to
+#   register, so there was a window with no path to any valid stamp and every
+#   gated repo lost `gh pr create`. A gate nobody can satisfy reliably produces an
+#   override habit that outlives the outage. The forward guarantee is untouched:
+#   every NEW stamp needs a human click, because qa-plan-stamp.sh cannot write one
+#   without a token.
 #
-#   Between those two facts there was no path to a valid stamp at all: the new
-#   writer refused for want of a token, and the old writer's tokenless stamp was
-#   rejected by this gate. Every gated repo lost `gh pr create`, in every session,
-#   including ones with legitimately approved work already finished and pushed.
-#
-#   A gate nobody can satisfy is worse than one scoped slightly narrower, because
-#   the thing it reliably produces is an override, and an override habit outlives
-#   the outage that taught it. So the retroactive half is dropped:
-#
-#     - Going FORWARD the guarantee is intact and total. Every new stamp requires
-#       a human click, because qa-plan-stamp.sh cannot write one without a token.
-#     - Looking BACKWARD, a pre-fix stamp is honored. Those branches were approved
-#       under the old flow, and re-approving them was never something the human
-#       asked for; it was scope this fix invented for itself.
-#
-#   Unattested stamps are LOGGED at both gates, never silently accepted, so the
-#   population is visible and shrinks on its own as branches land. An unknown gate
-#   name still blocks, so anything added later inherits the strict side.
+#   Out of the window, or an undatable stamp, blocks. An unknown gate name blocks,
+#   so anything added later inherits the strict side.
 qpg_unattested_disposition() {
-  case "$1" in
+  local gate="$1" in_window="${2:-out}"
+  [ "$in_window" = "in" ] || { echo "block"; return 1; }
+  case "$gate" in
     build|pr) echo "allow"; return 0 ;;
     *) echo "block"; return 1 ;;
   esac
@@ -327,27 +329,31 @@ EOF
 }
 
 # qpg_body_file_from_cmd <cmd>
-#   Echo the path given to `--body-file` / `-F` in a `gh pr create` command, or
-#   nothing. Surrounding single or double quotes are stripped. Used by the PR gate
-#   to read the PR body it is about to create, so it can compare the plan being
-#   shipped against the plan the human approved.
+#   Echo the path given to the FIRST `--body-file` / `--body-file=` / `-F` in a
+#   `gh pr create` command, or nothing. Surrounding quotes are stripped.
 #
-#   SCOPE, stated honestly: only the FILE forms are parsed. An inline `--body`
-#   carrying a full QA section would be a multi-line shell-quoted string, and
-#   parsing that out of an arbitrary command line reliably is not worth the
-#   failure modes; an unreadable body simply skips the drift check (fail open on
-#   THAT check only, never on the stamp requirement itself). This covers the real
-#   path, because /ship writes the body to a temp file and passes --body-file.
-#   The merge-clearance QA dimension, which reads the PR body from the API after
-#   the PR exists, is the backstop for anything that slips past here.
+#   Tokenized with awk rather than matched with a regex. The regex version took
+#   the LAST match (its leading `.*` was greedy, so a trailing `gh api ... -F
+#   key=val` won and could point the drift check at the wrong document, producing
+#   a FALSE BLOCK) and it also matched a `-F` appearing inside an inline
+#   `--body "see -F notes"`. Walking argv left to right has neither problem.
+#
+#   SCOPE, stated honestly: an unexpanded shell variable cannot be resolved from a
+#   PreToolUse payload, which sees the RAW command string. gstack /ship emits
+#   `--body-file "$PR_BODY_FILE"`, so this returns the literal `$PR_BODY_FILE`,
+#   the file is unreadable, and the drift check does not run. That is why the
+#   authoritative binding is the token's plan_digest (captured at click time),
+#   not this re-derivation: this is a secondary confirmation that the body being
+#   shipped matches, and the PR gate LOGS when it cannot run rather than passing
+#   silently.
 qpg_body_file_from_cmd() {
-  local path
-  path=$(printf '%s' "$1" \
-    | sed -nE 's/.*(^|[[:space:]])(--body-file|-F)[[:space:]=]+([^[:space:];&|]+).*/\3/p' \
-    | head -1)
-  path=${path%\"}; path=${path#\"}
-  path=${path%\'}; path=${path#\'}
-  printf '%s' "$path"
+  printf '%s' "$1" | awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "--body-file" || $i == "-F") { if (i < NF) { print $(i+1); exit } }
+        else if (index($i, "--body-file=") == 1) { print substr($i, 13); exit }
+      }
+    }' | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'
 }
 
 # qpg_marker_gates <marker_json>

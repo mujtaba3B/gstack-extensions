@@ -38,7 +38,8 @@ ask_payload() {  # <header> <question> <answer>
       tool_input:{questions:[{question:$q, header:$h, options:[], multiSelect:false}]},
       tool_response:{answers:{($q):$a}}}'
 }
-mint_approval() { ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$MINT"; }
+DIGEST_A="aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888"
+mint_approval() { ask_payload "QA plan" "Approve the plan? <qa-plan-digest:$DIGEST_A>" "Approve" | bash "$MINT"; }
 
 # ========================================================================
 # Pure: qpt_is_approve / qpt_header_is_qa_plan
@@ -169,26 +170,88 @@ mint_approval() { ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$M
   echo "$output" | grep -q "REFUSING"
 }
 
-@test "stamp: --approver is not a bypass" {
-  # Passing the field by hand must not stand in for the human's click.
-  run bash -c "cd '$REPO' && bash '$STAMP' write --approver 'Real Human'"
+@test "stamp: --approver was removed and is rejected even WITH a token" {
+  # It used to be an override, which let an arbitrary name be recorded under a
+  # genuine approval_source. An agent-supplied identity is not evidence.
+  mint_approval
+  run bash -c "cd '$REPO' && bash '$STAMP' write --approver 'Someone Who Never Clicked'"
   [ "$status" -ne 0 ]
   [ ! -f "$GITDIR/qa-plan-approved" ]
 }
 
-@test "stamp: the refusal never writes the human's git name anywhere" {
-  # The false-audit half of #71: an unauthorized write must not produce an
-  # artifact bearing the human's name.
-  bash -c "cd '$REPO' && bash '$STAMP' write" || true
-  # Scoped to the gate's own artifacts. git's config legitimately holds user.name;
-  # what must never happen is that name reaching a STAMP no human authorized.
-  run bash -c "cat '$GITDIR'/qa-plan-* 2>/dev/null | grep -c 'Real Human'"
+@test "stamp: --digest was removed and is rejected even WITH a token" {
+  # It used to let an agent approve plan A and stamp the digest of plan B,
+  # defeating drift detection entirely.
+  mint_approval
+  run bash -c "cd '$REPO' && bash '$STAMP' write --digest deadbeef"
+  [ "$status" -ne 0 ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+}
+
+@test "stamp: no flag is a bypass" {
+  for f in --force -f --yes --no-verify --skip-token --no-token; do
+    run bash -c "cd '$REPO' && bash '$STAMP' write $f"
+    [ "$status" -ne 0 ]
+    [ ! -f "$GITDIR/qa-plan-approved" ]
+  done
+}
+
+@test "stamp: no environment variable is a bypass" {
+  run bash -c "cd '$REPO' && QA_PLAN_FORCE=1 QA_PLAN_SKIP_TOKEN=1 QA_PLAN_APPROVED=1 \
+    QA_PLAN_TOKEN=1 GATE_POLICY_TEST=1 CLAUDE_QA_PLAN_APPROVER=x bash '$STAMP' write"
+  [ "$status" -ne 0 ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+}
+
+@test "stamp: a token carrying no approver records unknown, never the git name" {
+  # The false-audit half of #71, pinned at the only place git config could still
+  # leak in. The previous version of this test grepped a glob that matched nothing
+  # at that point, so it returned 0 by construction and would have passed for any
+  # reason the write failed. It tested nothing.
+  mint_approval
+  jq 'del(.approver)' "$GITDIR/qa-plan-approval-token" > "$BATS_TEST_TMPDIR/t" \
+    && mv "$BATS_TEST_TMPDIR/t" "$GITDIR/qa-plan-approval-token"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -eq 0 ]
+  run jq -r .approver "$GITDIR/qa-plan-approved"
+  [ "$output" = "unknown" ]
+  run bash -c "grep -c 'Real Human' '$GITDIR/qa-plan-approved'"
   [ "$output" = "0" ]
+}
+
+@test "token_approver: a token with no approver yields unknown" {
+  run qpt_token_approver '{"branch":"x"}'
+  [ "$output" = "unknown" ]
+}
+
+@test "stamp: an EXPIRED token on disk is refused (the TTL is wired, not just pure)" {
+  mint_approval
+  jq '.approved_at_epoch -= 99999' "$GITDIR/qa-plan-approval-token" > "$BATS_TEST_TMPDIR/t" \
+    && mv "$BATS_TEST_TMPDIR/t" "$GITDIR/qa-plan-approval-token"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "expired"
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+}
+
+@test "stamp: a MALFORMED token on disk is refused" {
+  mint_approval
+  printf '{' > "$GITDIR/qa-plan-approval-token"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "malformed"
+}
+
+@test "stamp: criteria_digest comes from the TOKEN, not from the caller" {
+  mint_approval
+  bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
+  run jq -r .criteria_digest "$GITDIR/qa-plan-approved"
+  [ "$output" = "$DIGEST_A" ]
 }
 
 @test "stamp: write SUCCEEDS after a real approval, and records the human" {
   mint_approval
-  run bash -c "cd '$REPO' && bash '$STAMP' write --digest abc123"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
   [ "$status" -eq 0 ]
   [ -f "$GITDIR/qa-plan-approved" ]
   run jq -r .approver "$GITDIR/qa-plan-approved"
@@ -216,7 +279,7 @@ mint_approval() { ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$M
 
 @test "stamp: the stamp it writes carries the proof field the gates require" {
   mint_approval
-  bash -c "cd '$REPO' && bash '$STAMP' write --digest d1 >/dev/null"
+  bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
   run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" "feat/thing"
   [ "$output" = "valid" ]
 }
@@ -236,4 +299,112 @@ mint_approval() { ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$M
   mint_approval
   bash -c "cd '$REPO' && bash '$STAMP' clear >/dev/null"
   [ -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+# ========================================================================
+# Pure: qpt_should_mint (the composed decision, extracted per CLAUDE.md)
+# ========================================================================
+
+@test "should_mint: the one accepting row" {
+  run qpt_should_mint "AskUserQuestion" "QA plan" "Approve" "feat/x"
+  [ "$output" = "mint" ]; [ "$status" -eq 0 ]
+}
+
+@test "should_mint: every refusing row names its reason" {
+  run qpt_should_mint "Bash" "QA plan" "Approve" "feat/x"
+  [ "$output" = "wrong-tool" ]
+  run qpt_should_mint "AskUserQuestion" "Memory writes" "Approve" "feat/x"
+  [ "$output" = "wrong-header" ]
+  run qpt_should_mint "AskUserQuestion" "QA plan" "Rework it" "feat/x"
+  [ "$output" = "not-approve" ]
+  run qpt_should_mint "AskUserQuestion" "QA plan" "Approve" "HEAD"
+  [ "$output" = "no-branch" ]
+  run qpt_should_mint "AskUserQuestion" "QA plan" "Approve" ""
+  [ "$output" = "no-branch" ]
+}
+
+@test "should_mint: a QUALIFIED approve does not mint" {
+  # "Approve (skip Prod QA)" is not an unqualified approval. An earlier cut
+  # stripped any trailing parenthetical and minted a full token for it.
+  run qpt_should_mint "AskUserQuestion" "QA plan" "Approve (skip Prod QA)" "feat/x"
+  [ "$output" = "not-approve" ]; [ "$status" -eq 1 ]
+}
+
+@test "should_mint: the recommendation marker is inert" {
+  run qpt_should_mint "AskUserQuestion" "QA plan" "**Approve** (recommended)" "feat/x"
+  [ "$output" = "mint" ]
+}
+
+@test "mint: a header differing only in case still mints" {
+  # The hook used to pre-filter byte-exact in jq, so "QA Plan" minted nothing
+  # while the writer blamed an unregistered hook: an unsatisfiable gate with a
+  # misleading diagnosis.
+  ask_payload "QA Plan" "Approve? <qa-plan-digest:$DIGEST_A>" "Approve" | bash "$MINT"
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "mint: a header differing only in padding still mints" {
+  ask_payload "  qa plan  " "Approve? <qa-plan-digest:$DIGEST_A>" "Approve" | bash "$MINT"
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "mint: a qualified Approve mints nothing end to end" {
+  ask_payload "QA plan" "Approve?" "Approve (skip Prod QA)" | bash "$MINT"
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "mint: the plan digest travels from the question into the token" {
+  mint_approval
+  run jq -r .plan_digest "$GITDIR/qa-plan-approval-token"
+  [ "$output" = "$DIGEST_A" ]
+}
+
+@test "mint: a question with no digest marker yields an empty plan_digest" {
+  ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$MINT"
+  run jq -r .plan_digest "$GITDIR/qa-plan-approval-token"
+  [ "$output" = "" ]
+}
+
+@test "digest_from_question: extracts the marker, ignores prose" {
+  run qpt_digest_from_question "Approve? <qa-plan-digest:abc123abc123abc1>"
+  [ "$output" = "abc123abc123abc1" ]
+  run qpt_digest_from_question "Approve the plan?"
+  [ -z "$output" ]
+}
+
+@test "unattested_in_window: only stamps predating the fix are grandfathered" {
+  run qpt_unattested_in_window 1788220800     # 2026-09-01
+  [ "$output" = "in" ]; [ "$status" -eq 0 ]
+  run qpt_unattested_in_window 1900000000     # well after
+  [ "$output" = "out" ]; [ "$status" -eq 1 ]
+  run qpt_unattested_in_window ""             # undatable fails closed
+  [ "$output" = "out" ]; [ "$status" -eq 1 ]
+}
+
+# ========================================================================
+# The canonical digest verb (one code path shared with the gates)
+# ========================================================================
+
+@test "digest verb: agrees with the gate's own computation" {
+  printf 'intro\n\n## QA\n\n| [ ] | claude | do it |\n\n## Next\nx\n' > "$BATS_TEST_TMPDIR/body.md"
+  run bash "$STAMP" digest "$BATS_TEST_TMPDIR/body.md"
+  [ "$status" -eq 0 ]
+  a="$output"
+  . "$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"
+  b=$(qpg_plan_digest "$(qpg_extract_qa_section "$(cat "$BATS_TEST_TMPDIR/body.md")")")
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "digest verb: ticking a box does not change it" {
+  printf '## QA\n\n| [ ] | claude | do it |\n' > "$BATS_TEST_TMPDIR/a.md"
+  printf '## QA\n\n| [x] | claude | do it |\n' > "$BATS_TEST_TMPDIR/b.md"
+  run bash "$STAMP" digest "$BATS_TEST_TMPDIR/a.md"; a="$output"
+  run bash "$STAMP" digest "$BATS_TEST_TMPDIR/b.md"; b="$output"
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "digest verb: a body with no QA section fails loudly" {
+  printf 'just prose\n' > "$BATS_TEST_TMPDIR/c.md"
+  run bash "$STAMP" digest "$BATS_TEST_TMPDIR/c.md"
+  [ "$status" -ne 0 ]
 }

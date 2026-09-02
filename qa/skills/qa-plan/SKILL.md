@@ -185,27 +185,35 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
 
    The canonical plan lives in the PR body (Step 4); the chat render is the approval-time copy the human reads. If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
 
-2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree). The stamp script ships inside this plugin at `../../hooks/scripts/qa-plan-stamp.sh` relative to this skill's base directory (named in the preamble); resolve it from there:
+2. **Embed the plan digest in the question.** Before firing the modal, compute the canonical digest of the `## QA` section and put the marker in the question text. Never hand-roll the hash: the stamp script computes it through the same functions the gates use, which is the only way the two can agree.
 
    ```bash
-   "<this skill's base directory>/../../hooks/scripts/qa-plan-stamp.sh" write \
-     --digest "$(printf '%s' "<your QA section text>" | shasum -a 256 | cut -d' ' -f1)"
+   STAMP="<this skill's base directory>/../../hooks/scripts/qa-plan-stamp.sh"
+   DIGEST=$("$STAMP" digest <path-to-the-PR-body-or-plan-file>)   # or pipe the body on stdin
    ```
 
-   **Pass `--digest`.** It is nominally optional, but omitting it disables the plan-drift check: the PR gate re-derives the digest of the `## QA` section in the body being created and blocks when it does not match the stamp, which is what forces a re-approval when the plan changed after you approved it. A stamp written without a digest records `none` and can never drift. Hash the SAME `## QA` section text you wrote into the PR body; tick state is normalized out on both sides, so the QA driver marking rows done later does not invalidate the approval.
+   Then the question text ends with `<qa-plan-digest:$DIGEST>`. The marker does not render visibly. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
 
-   The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+   An earlier version told you to run `shasum` over your own slice of the section. That produced a digest of RAW text while the gate hashed NORMALIZED text, so one stray trailing newline created a stamp whose digest could never match and a `gh pr create` that blocked forever with no way to satisfy it. Use the `digest` verb.
 
-   **Check the exit status, and do not pipe the write.** A refusal exits non-zero and explains itself on stderr, but piping (`... | cat`) replaces the pipeline's status with the pipe's, so a refusal then looks like success and you will report a stamp that does not exist. This has already happened once in a real session. Run it bare, and if you need to be certain, follow with `qa-plan-stamp.sh status`, which prints both the stamp and whether a token is present.
+3. **On Approve, write the stamp.** Run from the repo (or the branch's worktree), with no arguments:
 
-3. **You cannot write the stamp without the human's click, and you should not try.** As of the approval-token fix (gstack-extensions#71) this is ENFORCED, not merely instructed. `qa-plan-stamp.sh write` refuses unless a `PostToolUse` hook has minted an approval token from a real `AskUserQuestion` answer of "Approve" on a question with header `"QA plan"`, and it CONSUMES that token, so one click yields exactly one stamp. There is no environment override and no `--force`; `--approver` sets the recorded name but is not a way in.
+   ```bash
+   "$STAMP" write
+   ```
+
+   `write` takes NO options. The approver name and the plan digest both come from the token; `--approver` and `--digest` were removed because an input the agent controls is not evidence of a human's approval. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+
+   **Check the exit status, and do not pipe the write.** A refusal exits non-zero and explains itself on stderr, but piping (`... | cat`) replaces the pipeline's status with the pipe's, so a refusal then looks like success and you will report a stamp that does not exist. This has already happened once in a real session. Run it bare; `"$STAMP" status` prints both the stamp and whether a token is present.
+
+4. **You cannot write the stamp without the human's click, and you should not try.** As of the approval-token fix (gstack-extensions#71) this is ENFORCED, not merely instructed. `write` refuses unless a `PostToolUse` hook has minted a token from a real `AskUserQuestion` answer of "Approve" on a question whose header matches `"QA plan"`, and it CONSUMES that token, so one click yields exactly one stamp.
 
    What this means for you in practice:
 
-   - **Fire the modal with header exactly `"QA plan"` and an option labelled exactly `"Approve"`.** The minting hook matches both. Rename either and no token is minted, so your own stamp write will then fail.
+   - **Header must match `"QA plan"`** (compared case-insensitively after trimming) and the chosen option must normalize to exactly `Approve`. `Approve (recommended)` is fine; a QUALIFIED label like `Approve (skip Prod QA)` deliberately does NOT mint, because a qualified approval is not an unqualified one.
    - **On Rework it or Skip the gate, nothing is minted.** Re-present, and stamp only after a later Approve.
    - **If `write` refuses right after an approval**, the minting hook is not registered in the running session. Script CONTENT goes live as soon as the file changes (this marketplace is a directory source, so the plugin root is the checkout), but hook REGISTRATION is read at session start, so a newly added hook needs a restart. Say so plainly and stop; do not look for another way to produce the stamp. Existing approvals still work meanwhile: a stamp already on the branch keeps shipping, so this blocks only NEW approvals until the restart.
-   - **A new or changed plan needs its own approval.** The token is single-use and the stamp binds to the plan digest, so carrying a previous Approve forward to a plan the human has not seen does not work and is not something to attempt. Treating a scoped approval as a standing one is exactly the failure this gate exists to prevent: on 2026-09-02 it put approval stamps on four pull requests nobody approved, one of which merged.
+   - **A new or changed plan needs its own approval.** The token is single-use and the stamp's digest is the digest of the plan that was on screen, so carrying a previous Approve forward to a plan the human has not seen does not work and is not something to attempt. Treating a scoped approval as a standing one is exactly the failure this gate exists to prevent: on 2026-09-02 it put approval stamps on four pull requests nobody approved, one of which merged.
 
    A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
 

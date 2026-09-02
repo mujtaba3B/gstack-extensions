@@ -47,34 +47,6 @@ TLIB="$LIBDIR/qa-plan-token-lib.sh"
 . "$TLIB"
 
 TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
-[ "$TOOL" = "AskUserQuestion" ] || exit 0
-
-# Find the QA-plan question and the label the human picked for it.
-#
-# `.tool_response.answers` is keyed by the QUESTION TEXT, not by header, so we
-# first locate the question whose header is the QA-plan one, then look its own
-# text up in the answers map. Doing it in that order is what stops a session that
-# asked several questions at once from having an unrelated "Approve" harvested:
-# the answer has to belong to the QA-plan question specifically.
-QUESTION=$(printf '%s' "$PAYLOAD" | jq -r --arg h "$QPT_HEADER" '
-  [ .tool_input.questions[]? | select((.header // "") == $h) | .question // empty ] | first // empty
-' 2>/dev/null) || exit 0
-[ -n "$QUESTION" ] || exit 0
-
-# Confirm the header really is ours through the pure comparator (trims + lowercases),
-# so a header differing only in case or padding still mints, and nothing else does.
-HEADER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
-  [ .tool_input.questions[]? | select((.question // "") == $q) | .header // empty ] | first // empty
-' 2>/dev/null) || exit 0
-[ "$(qpt_header_is_qa_plan "$HEADER")" = "qa-plan" ] || exit 0
-
-ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
-  .tool_response.answers[$q] // empty
-' 2>/dev/null) || exit 0
-[ -n "$ANSWER" ] || exit 0
-
-# The decision. "Rework it" and "Skip the gate" land here too and must mint nothing.
-[ "$(qpt_is_approve "$ANSWER")" = "approve" ] || exit 0
 
 # Resolve the repo from the session cwd. Unlike the ship/land sentinels there is
 # no `cd <dir> &&` to honor: an AskUserQuestion has no command line, so the
@@ -82,12 +54,46 @@ ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
 # the plan for the repo the session is working in).
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 { [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
-
 GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-# A detached HEAD cannot be stamped (qa-plan-stamp.sh refuses one by design), so
-# minting a token for it would only produce a confusing dead file.
-{ [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ]; } || exit 0
+
+# Find the QA-plan question and the label the human picked for it.
+#
+# The header is matched through the LIB comparator, never in jq. jq emits every
+# (header, question) pair and bash asks qpt_header_is_qa_plan about each, so the
+# hook and the lib cannot disagree about what counts as the QA-plan header. An
+# earlier cut pre-filtered byte-exact in jq, which made the lib's case/whitespace
+# tolerance dead code and left a modal headed "QA Plan" minting nothing while the
+# stamp writer blamed an unregistered hook.
+#
+# `.tool_response.answers` is keyed by QUESTION TEXT, so the answer is looked up
+# by the matched question's own text. That ordering is what stops a modal asking
+# several things at once from having an unrelated "Approve" harvested.
+QUESTION=""
+while IFS=$'\t' read -r _hdr _q; do
+  [ -n "$_q" ] || continue
+  if [ "$(qpt_header_is_qa_plan "$_hdr")" = "qa-plan" ]; then QUESTION="$_q"; break; fi
+done <<EOF
+$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.questions[]? | "\(.header // "")\t\(.question // "")"' 2>/dev/null)
+EOF
+[ -n "$QUESTION" ] || exit 0
+
+ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
+  .tool_response.answers[$q] // empty
+' 2>/dev/null) || exit 0
+
+# THE decision, in one pure call whose truth table is enumerated in bats.
+[ "$(qpt_should_mint "$TOOL" "$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
+  [ .tool_input.questions[]? | select((.question // "") == $q) | .header // empty ] | first // empty
+' 2>/dev/null)" "$ANSWER" "$BRANCH")" = "mint" ] || exit 0
+
+# The plan digest the human was shown, carried in the question as
+# <qa-plan-digest:HEX>. This is what makes the approval bind to SPECIFIC plan
+# text rather than to the mere fact of a click: qa-plan-stamp.sh takes the
+# stamp's criteria_digest from the token and from nowhere else, so an agent
+# cannot approve plan A and stamp the digest of plan B. Empty when the skill did
+# not embed one; the stamp then records "none" and drift checking stays inactive.
+PLAN_DIGEST=$(qpt_digest_from_question "$QUESTION")
 
 HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null || echo "")
 SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
@@ -117,8 +123,10 @@ jq -nc \
   --arg session "$SESSION" \
   --arg question "$QUESTION" \
   --arg nonce "$NONCE" \
+  --arg plandigest "$PLAN_DIGEST" \
   '{branch:$branch, head:$head, approved_at_epoch:$epoch, approver:$approver,
-    session:$session, question:$question, nonce:$nonce, source:"AskUserQuestion"}' \
+    session:$session, question:$question, nonce:$nonce, plan_digest:$plandigest,
+    source:"AskUserQuestion"}' \
   > "$tmp" 2>/dev/null \
   && mv -f "$tmp" "$GITDIR/qa-plan-approval-token" 2>/dev/null \
   || rm -f "$tmp" 2>/dev/null

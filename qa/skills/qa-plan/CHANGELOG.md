@@ -15,15 +15,44 @@ The approval stamp now requires a real human approval (gstack-extensions#71).
   git config nowhere; the name reaches a stamp only through a token. Before
   this, an agent-written stamp was byte-identical to a human approval and
   recorded under the human's name.
+- `write` takes NO arguments. `--approver` and `--digest` were both removed:
+  each was an agent-supplied input to a human-attested record. `--approver` let
+  an arbitrary name be recorded under a genuine `approval_source`, and
+  `--digest` let an agent approve plan A and stamp the digest of plan B, which
+  defeated drift detection entirely.
+- The approval binds to the PLAN, not just to the click. `/qa:plan` embeds
+  `<qa-plan-digest:HEX>` in the approval question, the minting hook copies it
+  into the token, and the stamp's `criteria_digest` comes from the token. A new
+  `qa-plan-stamp.sh digest` verb computes it, so the skill never hand-rolls a
+  hash. The skill used to `shasum` raw text while the gate hashed NORMALIZED
+  text, so one stray newline produced a stamp that could never match and a
+  `gh pr create` blocked forever with no way to satisfy it.
+- The mint decision is one pure `qpt_should_mint` truth table rather than an
+  inline guard chain, per this repo's lib rule. That rule earned itself again:
+  the inline version's header check diverged from the lib (byte-exact in jq,
+  case-insensitive in the comparator), so a modal headed "QA Plan" minted
+  nothing while the writer blamed an unregistered hook.
+- A qualified approval is no longer an unqualified one. Label normalization
+  strips only `(recommended)`/`(default)`, so `Approve (skip Prod QA)` does not
+  mint.
 - Stamps carry `approval_source` and `approval_nonce`. A stamp lacking it (the
-  pre-fix shape) is "unattested" and is HONORED, at both gates, logged rather
-  than silent. Blocking those was tried and backed out the same day: this gate
-  runs from the working tree the moment the file exists, while the minting hook
-  needs a session restart to register, so for that window there was no path to
-  any valid stamp and every gated repo lost `gh pr create` machine-wide. A gate
-  nobody can satisfy just teaches the override habit. The forward guarantee is
-  untouched; only retroactive re-approval was dropped, which was scope this fix
-  invented rather than anything that was asked for.
+  pre-fix shape) is "unattested" and is honored at both gates ONLY when the
+  stamp file predates the fix, and logged either way. Both halves matter.
+  Blocking them outright was tried and backed out the same day: this gate runs
+  from the working tree the moment a file is saved while the minting hook needs
+  a session restart, so there was a window with no path to any valid stamp and
+  every gated repo lost `gh pr create` machine-wide. But keying the carve-out on
+  SHAPE alone was worse: two JSON fields opened both gates permanently, for
+  anyone, making a forged stamp cheaper than a real one. A migration allowance
+  must never be cheaper than the thing it migrates from.
+- Drift is evaluated BEFORE the attestation verdict, so the least-attested
+  stamps no longer get the fewest checks.
+- The PR gate LOGS when the drift check cannot run (`drift-check-skipped`).
+  It could not run on the real `/ship` path at all: `/ship` emits
+  `--body-file "$PR_BODY_FILE"` and a PreToolUse hook sees the raw string, so
+  the file was unreadable and the check silently no-opped while every test
+  passed an already-expanded absolute path. Green suite, dead feature. The
+  token-bound digest is now the authoritative binding; this is confirmation.
 - The PR gate re-derives the digest of the `## QA` section in the body being
   created and blocks when it differs from the approved one, so a plan edited
   after approval must be re-approved. Tick state is normalized out, so a QA

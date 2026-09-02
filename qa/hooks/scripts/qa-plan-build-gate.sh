@@ -44,9 +44,12 @@ TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # ~/dev (a worktree of the ~/dev repo itself has to live outside it).
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
-[ -f "$LIB" ] || exit 0
+TLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-token-lib.sh"
+{ [ -f "$LIB" ] && [ -f "$TLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$LIB"
+# shellcheck source=/dev/null
+. "$TLIB"
 
 # Cheapest discriminator FIRST. This hook fires on every Edit/Write, and most of
 # them are docs, config or tests, which are carved out regardless of policy. The
@@ -81,14 +84,18 @@ STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 [ "$VERDICT" = "valid" ] && exit 0
 
-# A pre-fix stamp (no approval_source) still lets you BUILD but never ship; see
-# qpg_unattested_disposition for why the build and PR gates split here. Logged
-# rather than silent, so the migration is visible in the gate log instead of
-# looking like the stamp was fine all along.
-if [ "$VERDICT" = "unattested" ] && [ "$(qpg_unattested_disposition build)" = "allow" ]; then
-  printf '%s build-gate ALLOW(unattested-prefix-stamp) branch=%s file=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
-  exit 0
+# A stamp predating the approval-token fix is honored here; see
+# qpg_unattested_disposition for the two conditions and why they are what they
+# are. A field-less stamp written AFTER the fix is not a migration case and is
+# refused. Logged rather than silent, so the shrinking migration population is
+# visible in the gate log instead of looking like the stamp was fine all along.
+if [ "$VERDICT" = "unattested" ]; then
+  _mtime=$(stat -f %m "$GITDIR/qa-plan-approved" 2>/dev/null || stat -c %Y "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+  if [ "$(qpg_unattested_disposition build "$(qpt_unattested_in_window "$_mtime")")" = "allow" ]; then
+    printf '%s build-gate ALLOW(unattested-prefix-stamp) branch=%s file=%s mtime=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "${_mtime:-?}" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+    exit 0
+  fi
 fi
 
 # Blocked: record for visibility (a rotted/bypassed gate should be auditable).

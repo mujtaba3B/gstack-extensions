@@ -54,9 +54,12 @@ GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
 MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
-[ -f "$LIB" ] || exit 0
+TLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-token-lib.sh"
+{ [ -f "$LIB" ] && [ -f "$TLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$LIB"
+# shellcheck source=/dev/null
+. "$TLIB"
 
 qpg_gate_enabled "$MARKER" pr || exit 0   # pr gate not enabled -> allow
 
@@ -99,18 +102,37 @@ STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 # --body, an unreadable path, no QA section, no sha256 tool) CURRENT_DIGEST stays
 # empty and qpg_stamp_valid skips the drift check, leaving the stamp requirement
 # itself untouched. This check can only ADD a block, never remove one.
+LOG="$HOME/.claude/qa-plan-gate.log"
 CURRENT_DIGEST=""
+_skipwhy=""
 _bodyfile=$(qpg_body_file_from_cmd "$CMD")
-if [ -n "$_bodyfile" ]; then
+if [ -z "$_bodyfile" ]; then
+  _skipwhy="no-body-file-flag"
+else
   case "$_bodyfile" in
+    \$*) _skipwhy="unexpanded-body-path" ;;   # e.g. /ship's --body-file "$PR_BODY_FILE"
     /*) : ;;
     *) _bodyfile="$WORKDIR/$_bodyfile" ;;
   esac
-  if [ -r "$_bodyfile" ]; then
-    _qasec=$(qpg_extract_qa_section "$(cat "$_bodyfile" 2>/dev/null || echo "")")
-    [ -n "$_qasec" ] && CURRENT_DIGEST=$(qpg_plan_digest "$_qasec")
+  if [ -z "$_skipwhy" ]; then
+    if [ -r "$_bodyfile" ]; then
+      _qasec=$(qpg_extract_qa_section "$(cat "$_bodyfile" 2>/dev/null || echo "")")
+      if [ -n "$_qasec" ]; then
+        CURRENT_DIGEST=$(qpg_plan_digest "$_qasec")
+        [ -n "$CURRENT_DIGEST" ] || _skipwhy="no-sha256-tool"
+      else
+        _skipwhy="no-qa-section-in-body"
+      fi
+    else
+      _skipwhy="unreadable-body-file"
+    fi
   fi
 fi
+# Never let the drift check no-op silently. A green gate that quietly checked
+# nothing is how a dead feature survives a passing test suite: every drift test
+# passed an already-expanded absolute path, a shape /ship never produces.
+[ -n "$_skipwhy" ] && printf '%s pr-gate drift-check-skipped(%s) branch=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_skipwhy" "$BRANCH" >> "$LOG" 2>/dev/null || true
 
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH" "$CURRENT_DIGEST")
 [ "$VERDICT" = "valid" ] && exit 0
@@ -118,10 +140,14 @@ VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH" "$CURRENT_DIGEST")
 # A pre-fix stamp (no approval_source) is honored rather than blocked; see
 # qpg_unattested_disposition for why blocking it produced an unsatisfiable gate.
 # Logged, never silent, so the remaining population stays visible.
-if [ "$VERDICT" = "unattested" ] && [ "$(qpg_unattested_disposition pr)" = "allow" ]; then
-  printf '%s pr-gate ALLOW(unattested-prefix-stamp) branch=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
-  exit 0
+if [ "$VERDICT" = "unattested" ]; then
+  _mtime=$(stat -f %m "$GITDIR/qa-plan-approved" 2>/dev/null || stat -c %Y "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
+  _win=$(qpt_unattested_in_window "$_mtime")
+  if [ "$(qpg_unattested_disposition pr "$_win")" = "allow" ]; then
+    printf '%s pr-gate ALLOW(unattested-prefix-stamp) branch=%s mtime=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "${_mtime:-?}" >> "$LOG" 2>/dev/null || true
+    exit 0
+  fi
 fi
 
 LOG="$HOME/.claude/qa-plan-gate.log"
@@ -135,6 +161,9 @@ printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
 case "$VERDICT" in
   plan-changed)
     REASON="QA-plan gate: the QA plan changed after it was approved. Branch \`$BRANCH\` has a valid approval stamp, but the \`## QA\` section in the PR body you are about to create does not match the plan the human approved (the stamp's criteria_digest differs from the digest of the body's plan). An approval covers the plan it was given for, not whatever the plan later became. Re-run \`/qa:plan\` so the current plan is presented and approved on its own terms, then retry. If the only difference is tick state, that is normalized out and would not have triggered this, so the plan text itself really did change."
+    ;;
+  unattested)
+    REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no \`approval_source\`), and the stamp file is NOT old enough to be a genuine pre-fix approval. Stamps written before the approval-token fix are honored; one written after it was either hand-written or produced by a writer that should no longer exist, so it is refused. Run \`/qa:plan\` and approve the plan; that mints the token the stamp writer requires."
     ;;
   *)
     REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."

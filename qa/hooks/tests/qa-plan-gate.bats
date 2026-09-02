@@ -51,7 +51,17 @@ opt_in()    { gp_write_policy qa-plan "${1:-{\"base_branches\":[\"main\"]}}"; }
 # without it is the pre-fix shape, covered separately below.
 stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","approval_source":"AskUserQuestion","approval_nonce":"n","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
 # The pre-fix shape: no approval_source, so nothing proves a human approved it.
-legacy_stamp_for() { printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# A pre-fix stamp, BACKDATED so its file mtime sits inside the migration window.
+# The window is what stops the carve-out being a permanent forgeable bypass, so
+# tests must exercise it rather than assume shape alone is enough.
+legacy_stamp_for() {
+  printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+}
+# The same shape, written NOW: not a migration case, must never be honored.
+fresh_unattested_stamp_for() {
+  printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"
+}
 # Mint a real approval token the way production does, by feeding the minting hook
 # a payload of the shape the harness sends. There is deliberately no bypass.
 MINT="$BATS_TEST_DIRNAME/../scripts/qa-plan-approval-token.sh"
@@ -481,7 +491,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 
 @test "stamp writer: write then status round-trips the branch" {
   mint_approval
-  run bash -c "cd '$REPO' && bash '$STAMP' write --approver tester --digest abc123"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
   [ "$status" -eq 0 ]
   [ -f "$GITDIR/qa-plan-approved" ]
   run bash -c "cd '$REPO' && bash '$STAMP' status"
@@ -553,19 +563,27 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
-@test "unattested_disposition: both live gates allow a pre-fix stamp" {
-  # Blocking these produced an unsatisfiable gate: this gate goes live from disk
-  # immediately, while the minting hook needs a session restart, so for that
-  # window there was no path to any valid stamp at all. Going forward the
-  # guarantee is untouched; the retroactive half is what was dropped.
-  run qpg_unattested_disposition build
+@test "unattested_disposition: honored only INSIDE the migration window" {
+  # Two conditions, and the second is what stops the carve-out being a wider hole
+  # than the bug: keying on shape alone let a two-field stamp open both gates
+  # forever, for anyone, with no token and no click.
+  run qpg_unattested_disposition build in
   [ "$output" = "allow" ]; [ "$status" -eq 0 ]
+  run qpg_unattested_disposition pr in
+  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
+  run qpg_unattested_disposition pr out
+  [ "$output" = "block" ]; [ "$status" -eq 1 ]
+  run qpg_unattested_disposition build out
+  [ "$output" = "block" ]; [ "$status" -eq 1 ]
+}
+
+@test "unattested_disposition: an omitted window fails closed" {
   run qpg_unattested_disposition pr
-  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
+  [ "$output" = "block" ]; [ "$status" -eq 1 ]
 }
 
 @test "unattested_disposition: an unknown gate inherits the strict side" {
-  run qpg_unattested_disposition something-new
+  run qpg_unattested_disposition something-new in
   [ "$output" = "block" ]; [ "$status" -eq 1 ]
 }
 
@@ -598,13 +616,28 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ -z "$output" ]
 }
 
-@test "body_file_from_cmd: parses --body-file and -F, ignores an inline --body" {
+@test "body_file_from_cmd: parses --body-file, --body-file= and -F" {
   run qpg_body_file_from_cmd "gh pr create --body-file /tmp/b.md --title x"
   [ "$output" = "/tmp/b.md" ]
   run qpg_body_file_from_cmd "cd /r && gh pr create -F './body.md'"
   [ "$output" = "./body.md" ]
-  run qpg_body_file_from_cmd "gh pr create --body 'inline' --title x"
+  run qpg_body_file_from_cmd "gh pr create --body-file=\"/tmp/q.md\""
+  [ "$output" = "/tmp/q.md" ]
+  run qpg_body_file_from_cmd "gh pr create --title x"
   [ -z "$output" ]
+}
+
+@test "body_file_from_cmd: takes the FIRST match, not the last" {
+  # The regex version was greedy and took the last, so a trailing `gh api -F k=v`
+  # pointed the drift check at the wrong document and could FALSE-BLOCK a create.
+  run qpg_body_file_from_cmd "gh pr create --body-file /tmp/a.md && gh api r -F key=val"
+  [ "$output" = "/tmp/a.md" ]
+}
+
+@test "body_file_from_cmd: an unexpanded variable is returned as-is, so the gate can log it" {
+  # /ship emits --body-file "$PR_BODY_FILE"; a PreToolUse hook sees the RAW string.
+  run qpg_body_file_from_cmd "gh pr create --body-file \"\$PR_BODY_FILE\""
+  [ "$output" = "\$PR_BODY_FILE" ]
 }
 
 @test "build gate: a pre-fix stamp still lets you BUILD (the migration is not a cliff)" {
@@ -612,6 +645,29 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   legacy_stamp_for "feat/thing"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate: a FRESH unattested stamp is refused (the carve-out is bounded)" {
+  # printf two JSON fields into the git dir must NOT open the gate. Keying the
+  # carve-out on shape alone made a forged stamp cheaper than a real one.
+  opt_in
+  fresh_unattested_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: an unattested stamp does NOT also buy a pass on plan drift" {
+  # Ordering: the least-attested stamps must not get the fewest checks.
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original |\n')
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  printf '## QA\n\n| [ ] | claude | REWRITTEN |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  echo "$output" | grep -q '"decision":"block"'
+  echo "$output" | grep -q "changed after it was approved"
 }
 
 @test "pr gate: a pre-fix stamp is honored, not blocked" {

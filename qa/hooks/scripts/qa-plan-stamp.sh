@@ -21,13 +21,25 @@
 # and a token exists only because a human clicked.
 #
 # Usage (run from inside the repo / worktree):
-#   qa-plan-stamp.sh write [--approver <who>] [--digest <hex>]
+#   qa-plan-stamp.sh write
 #       Write <git-dir>/qa-plan-approved for the current branch, consuming the
-#       approval token. --digest is the caller's hash of the approved plan text,
-#       which the PR gate re-derives to notice a plan edited after approval; omit
-#       and the field is "none", which leaves that drift check inactive.
-#       --approver overrides the name recorded; it does NOT bypass the token, so
-#       passing it by hand is not a way in.
+#       approval token. Takes NO arguments: both the approver name and the plan
+#       digest come from the token and from nowhere else.
+#
+#       --approver and --digest were removed after review. Each was an
+#       agent-supplied input to a human-attested record, which is the whole defect
+#       class this file exists to close: --approver let an arbitrary name be
+#       recorded under a genuine approval_source, and --digest let an agent
+#       approve plan A and then stamp the digest of plan B, defeating drift
+#       detection entirely. An input an agent controls is not evidence.
+#
+#   qa-plan-stamp.sh digest [<path>]
+#       Print the canonical digest of a PR body's `## QA` section (from <path>, or
+#       stdin). /qa:plan calls this to embed <qa-plan-digest:HEX> in the approval
+#       question. It exists so ONE code path computes the digest: the skill used to
+#       hand-roll `shasum` over raw text while the gate hashed NORMALIZED text, so
+#       a single trailing newline produced a stamp whose digest could never match
+#       and a `gh pr create` that blocked forever with no way to satisfy it.
 #   qa-plan-stamp.sh status
 #       Print the current stamp (or "no stamp") and whether it matches the branch.
 #   qa-plan-stamp.sh clear
@@ -44,25 +56,22 @@ TLIB="$LIBDIR/qa-plan-token-lib.sh"
 # The token lib carries the pure verdicts. Resolve it relative to THIS script so
 # the executing copy binds its own dependency (the scripts are dual-use: the
 # skill, the gates and bats all invoke them without the hook env).
+GLIB="$LIBDIR/qa-plan-gate-lib.sh"
 [ -f "$TLIB" ] || { echo "qa-plan-stamp.sh: missing $TLIB; cannot verify approval" >&2; exit 1; }
+[ -f "$GLIB" ] || { echo "qa-plan-stamp.sh: missing $GLIB; cannot compute a plan digest" >&2; exit 1; }
 # shellcheck source=/dev/null
 . "$TLIB"
+# shellcheck source=/dev/null
+. "$GLIB"
 
 VERB="${1:-status}"; shift || true
 
-APPROVER=""
-DIGEST="none"
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --approver)
-      [ $# -ge 2 ] || { echo "qa-plan-stamp.sh: --approver requires a value" >&2; exit 2; }
-      APPROVER="$2"; shift 2 ;;
-    --digest)
-      [ $# -ge 2 ] || { echo "qa-plan-stamp.sh: --digest requires a value" >&2; exit 2; }
-      DIGEST="$2"; shift 2 ;;
-    *) echo "qa-plan-stamp.sh: unknown arg: $1" >&2; exit 2 ;;
-  esac
-done
+# `digest` takes an optional path; `write` and the rest take no options at all.
+DIGEST_PATH="${1:-}"
+case "$VERB" in
+  write|status|clear)
+    [ $# -eq 0 ] || { echo "qa-plan-stamp.sh: '$VERB' takes no arguments (got: $*). --approver and --digest were removed; both come from the approval token." >&2; exit 2; } ;;
+esac
 
 GITDIR=$(git rev-parse --absolute-git-dir 2>/dev/null) || {
   echo "qa-plan-stamp.sh: not inside a git repo" >&2; exit 1; }
@@ -135,10 +144,13 @@ case "$VERB" in
       exit 1
     fi
 
-    # The approver comes from the token and from nowhere else. `git config` is
-    # deliberately not consulted anywhere in this script.
-    [ -z "$APPROVER" ] && APPROVER=$(qpt_token_approver "$TOKEN_JSON")
+    # Approver AND digest come from the token and from nowhere else. `git config`
+    # is deliberately not consulted anywhere in this script, and neither value is
+    # reachable from an argument.
+    APPROVER=$(qpt_token_approver "$TOKEN_JSON")
     NONCE=$(printf '%s' "$TOKEN_JSON" | jq -r '.nonce // "none"' 2>/dev/null || echo "none")
+    DIGEST=$(printf '%s' "$TOKEN_JSON" | jq -r '.plan_digest // empty' 2>/dev/null || echo "")
+    [ -n "$DIGEST" ] || DIGEST="none"
     HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
     NOW_EPOCH=$(date +%s)
     NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -164,6 +176,21 @@ case "$VERB" in
     echo "$STAMP"
     ;;
 
+  digest)
+    # One canonical digest path, shared with the gates by construction.
+    if [ -n "$DIGEST_PATH" ]; then
+      [ -r "$DIGEST_PATH" ] || { echo "qa-plan-stamp.sh: cannot read $DIGEST_PATH" >&2; exit 1; }
+      _body=$(cat "$DIGEST_PATH")
+    else
+      _body=$(cat)
+    fi
+    _sec=$(qpg_extract_qa_section "$_body")
+    [ -n "$_sec" ] || { echo "qa-plan-stamp.sh: no '## QA' section found" >&2; exit 1; }
+    _d=$(qpg_plan_digest "$_sec")
+    [ -n "$_d" ] || { echo "qa-plan-stamp.sh: no sha256 tool available" >&2; exit 1; }
+    echo "$_d"
+    ;;
+
   *)
-    echo "qa-plan-stamp.sh: unknown verb '$VERB' (write|status|clear)" >&2; exit 2 ;;
+    echo "qa-plan-stamp.sh: unknown verb '$VERB' (write|status|clear|digest)" >&2; exit 2 ;;
 esac
