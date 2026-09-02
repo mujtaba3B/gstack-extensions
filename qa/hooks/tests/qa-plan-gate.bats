@@ -774,3 +774,20 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
+
+@test "extract: a trailing attribution footer after a --- does NOT join the plan" {
+  # /ship appends its footer after a bare thematic break with no heading. Without
+  # the break arm it landed inside the section, changed the digest, and produced a
+  # FALSE plan-changed block on a plan that had not changed. Found on PR #76.
+  plan=$(printf '## QA\n\n| [ ] | claude | check |\n')
+  withfooter=$(printf '## QA\n\n| [ ] | claude | check |\n\n---\n\nGenerated with Claude Code\nhttps://example/session\n')
+  a=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  b=$(qpg_plan_digest "$(qpg_extract_qa_section "$withfooter")")
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "extract: a table separator row does NOT terminate the section" {
+  # The break arm must not fire on |---|---|, which every plan table carries.
+  run qpg_extract_qa_section "$(printf '## QA\n\n| a | b |\n|---|---|\n| [ ] | x |\n')"
+  echo "$output" | grep -q '\[ \]'
+}

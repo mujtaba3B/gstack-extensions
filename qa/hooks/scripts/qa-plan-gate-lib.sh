@@ -180,10 +180,20 @@ qpg_plan_digest() {
 #   `###` subheadings (the Development / Production tables) stay INSIDE, matching
 #   how merge-clearance reads the same section. A body with no `## QA` section
 #   yields empty, which callers treat as "could not read the plan".
+#
+#   A markdown THEMATIC BREAK (`---` alone on a line) also terminates it. gstack
+#   /ship appends its attribution footer after a bare `---` with no heading of its
+#   own, so without this arm the footer is absorbed into the section, changes the
+#   plan's digest, and produces a FALSE "the QA plan changed after it was
+#   approved" block on a body whose plan is byte-identical to the approved one.
+#   Caught on this feature's own PR (#76), which is the shape every future ship
+#   would have hit. Safe to stop on: plan tables use `|---|` separators, which are
+#   not bare, and a thematic break genuinely ends a section.
 qpg_extract_qa_section() {
   printf '%s' "$1" | awk '
     /^##[[:space:]]+QA[[:space:]]*$/ { inq=1; print; next }
     inq && /^##[[:space:]]/ && !/^###/ { inq=0 }
+    inq && /^-{3,}[[:space:]]*$/ { inq=0 }
     inq { print }
   '
 }
