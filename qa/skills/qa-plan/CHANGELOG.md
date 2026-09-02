@@ -1,5 +1,36 @@
 # qa:plan CHANGELOG
 
+## v2.3.0
+
+The approval stamp now requires a real human approval (gstack-extensions#71).
+
+- `qa-plan-stamp.sh write` refuses unless a single-use approval token is
+  present, and consumes it, so one human click yields exactly one stamp. The
+  token is minted only by a new `PostToolUse` hook on AskUserQuestion
+  (`qa-plan-approval-token.sh`) when a question with header "QA plan" is
+  answered "Approve". That answer is filled in by the harness from a real
+  click and cannot be emitted by the model, which is what makes it a root of
+  trust. There is no environment override and no `--force`.
+- `approver` no longer falls back to `git config user.name`. The writer reads
+  git config nowhere; the name reaches a stamp only through a token. Before
+  this, an agent-written stamp was byte-identical to a human approval and
+  recorded under the human's name.
+- Stamps carry `approval_source` and `approval_nonce`. A stamp lacking it (the
+  pre-fix shape) is "unattested" and is HONORED, at both gates, logged rather
+  than silent. Blocking those was tried and backed out the same day: this gate
+  runs from the working tree the moment the file exists, while the minting hook
+  needs a session restart to register, so for that window there was no path to
+  any valid stamp and every gated repo lost `gh pr create` machine-wide. A gate
+  nobody can satisfy just teaches the override habit. The forward guarantee is
+  untouched; only retroactive re-approval was dropped, which was scope this fix
+  invented rather than anything that was asked for.
+- The PR gate re-derives the digest of the `## QA` section in the body being
+  created and blocks when it differs from the approved one, so a plan edited
+  after approval must be re-approved. Tick state is normalized out, so a QA
+  driver marking rows done does not invalidate the approval.
+- Step 6 of the skill documents the enforced contract, and `--digest` is now
+  effectively required (omitting it disables the drift check).
+
 ## v2.2.0
 
 Checkbox-free, skimmable companion artifact.
