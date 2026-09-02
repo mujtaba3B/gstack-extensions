@@ -1,0 +1,126 @@
+#!/bin/bash
+# qa-plan-approval-token.sh - mint the QA-plan APPROVAL token from a real human click.
+#
+# PostToolUse hook on AskUserQuestion. This is the root of trust for the QA-plan
+# approval stamp, and the fix for gstack-extensions#71.
+#
+# WHY A PostToolUse HOOK. The payload of this event carries `.tool_response`,
+# whose `.answers` map is filled in by the HARNESS from the option the human
+# actually clicked. The model cannot write that field: it emits `.tool_input`
+# (the questions), never the response. So "a human answered the QA plan question
+# with Approve" is the one fact in this system an agent cannot fabricate, which
+# makes it the right thing to chain the human-attested stamp to.
+#
+# Contrast with the sibling gates, which is the design this follows:
+#   ship-gate-sentinel.sh   mints on the agent INVOKING /ship.
+#   land-deploy-sentinel.sh mints on the agent INVOKING /land-and-deploy.
+#   this script             mints on the HUMAN ANSWERING a question.
+# The last is strictly stronger than the other two, because invoking a skill is
+# something the agent decides and answering a modal is not.
+#
+# What it writes: <gitdir>/qa-plan-approval-token, a small JSON blob bound to the
+# current branch and stamped with the mint time and a nonce. `qa-plan-stamp.sh
+# write` requires a valid one and DELETES it on success, so one click authorizes
+# exactly one stamp. Keyed to the PER-WORKTREE git dir (`--absolute-git-dir`,
+# never the common dir), matching the stamp it authorizes, so an approval given
+# in one worktree cannot stamp another.
+#
+# This hook NEVER blocks: PostToolUse has no decision to make here, so it always
+# exits 0 with empty stdout. Its only effect is the side-effect write.
+#
+# It fails CLOSED in every direction. Missing jq, missing git, an unreadable
+# payload, a non-"QA plan" header, any answer other than "Approve", or a detached
+# HEAD all mint NOTHING, and no token means no stamp. The cost of failing closed
+# is that /qa:plan cannot stamp until the problem is fixed, which is the safe
+# direction for a privileged act.
+
+set -u
+
+PAYLOAD=$(cat)
+command -v jq >/dev/null 2>&1 || exit 0
+command -v git >/dev/null 2>&1 || exit 0
+
+LIBDIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TLIB="$LIBDIR/qa-plan-token-lib.sh"
+[ -f "$TLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$TLIB"
+
+TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
+[ "$TOOL" = "AskUserQuestion" ] || exit 0
+
+# Find the QA-plan question and the label the human picked for it.
+#
+# `.tool_response.answers` is keyed by the QUESTION TEXT, not by header, so we
+# first locate the question whose header is the QA-plan one, then look its own
+# text up in the answers map. Doing it in that order is what stops a session that
+# asked several questions at once from having an unrelated "Approve" harvested:
+# the answer has to belong to the QA-plan question specifically.
+QUESTION=$(printf '%s' "$PAYLOAD" | jq -r --arg h "$QPT_HEADER" '
+  [ .tool_input.questions[]? | select((.header // "") == $h) | .question // empty ] | first // empty
+' 2>/dev/null) || exit 0
+[ -n "$QUESTION" ] || exit 0
+
+# Confirm the header really is ours through the pure comparator (trims + lowercases),
+# so a header differing only in case or padding still mints, and nothing else does.
+HEADER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
+  [ .tool_input.questions[]? | select((.question // "") == $q) | .header // empty ] | first // empty
+' 2>/dev/null) || exit 0
+[ "$(qpt_header_is_qa_plan "$HEADER")" = "qa-plan" ] || exit 0
+
+ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
+  .tool_response.answers[$q] // empty
+' 2>/dev/null) || exit 0
+[ -n "$ANSWER" ] || exit 0
+
+# The decision. "Rework it" and "Skip the gate" land here too and must mint nothing.
+[ "$(qpt_is_approve "$ANSWER")" = "approve" ] || exit 0
+
+# Resolve the repo from the session cwd. Unlike the ship/land sentinels there is
+# no `cd <dir> &&` to honor: an AskUserQuestion has no command line, so the
+# session cwd is the only signal, and it is the right one (the human is approving
+# the plan for the repo the session is working in).
+CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
+{ [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
+
+GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# A detached HEAD cannot be stamped (qa-plan-stamp.sh refuses one by design), so
+# minting a token for it would only produce a confusing dead file.
+{ [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ]; } || exit 0
+
+HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null || echo "")
+SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
+NOW=$(date +%s)
+
+# The human's identity. Read here, at mint time, and ONLY here: this is the one
+# moment we know a real person acted, so it is the only place entitled to attach
+# their name to anything. qa-plan-stamp.sh reads `git config` nowhere at all now,
+# which is what stops a forged stamp from wearing the human's name (#71).
+APPROVER=$(git -C "$CWD" config user.name 2>/dev/null || true)
+[ -n "$APPROVER" ] && APPROVER="$APPROVER (via AskUserQuestion)"
+[ -n "$APPROVER" ] || APPROVER="human (via AskUserQuestion)"
+
+# A nonce ties the resulting stamp back to this specific click in an audit, and
+# makes two stamps minted from one approval impossible to confuse.
+NONCE=$( { head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n'; } || echo "" )
+[ -n "$NONCE" ] || NONCE="$NOW-$$"
+
+# Atomic write (temp in the same dir, then mv) so a concurrent stamp read never
+# sees a half-written token.
+tmp=$(mktemp "$GITDIR/.qa-plan-approval-token.XXXXXX" 2>/dev/null) || exit 0
+jq -nc \
+  --arg branch "$BRANCH" \
+  --arg head "$HEAD_SHA" \
+  --argjson epoch "$NOW" \
+  --arg approver "$APPROVER" \
+  --arg session "$SESSION" \
+  --arg question "$QUESTION" \
+  --arg nonce "$NONCE" \
+  '{branch:$branch, head:$head, approved_at_epoch:$epoch, approver:$approver,
+    session:$session, question:$question, nonce:$nonce, source:"AskUserQuestion"}' \
+  > "$tmp" 2>/dev/null \
+  && mv -f "$tmp" "$GITDIR/qa-plan-approval-token" 2>/dev/null \
+  || rm -f "$tmp" 2>/dev/null
+
+exit 0
