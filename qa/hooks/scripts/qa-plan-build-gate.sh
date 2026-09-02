@@ -81,6 +81,16 @@ STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 [ "$VERDICT" = "valid" ] && exit 0
 
+# A pre-fix stamp (no approval_source) still lets you BUILD but never ship; see
+# qpg_unattested_disposition for why the build and PR gates split here. Logged
+# rather than silent, so the migration is visible in the gate log instead of
+# looking like the stamp was fine all along.
+if [ "$VERDICT" = "unattested" ] && [ "$(qpg_unattested_disposition build)" = "allow" ]; then
+  printf '%s build-gate ALLOW(unattested-prefix-stamp) branch=%s file=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+  exit 0
+fi
+
 # Blocked: record for visibility (a rotted/bypassed gate should be auditable).
 LOG="$HOME/.claude/qa-plan-gate.log"
 printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
