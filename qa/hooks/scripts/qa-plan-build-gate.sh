@@ -44,18 +44,27 @@ case "$TOP" in
   *) exit 0 ;;
 esac
 
+LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
+[ -f "$LIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$LIB"
+
+# Cheapest discriminator FIRST. This hook fires on every Edit/Write, and most of
+# them are docs, config or tests, which are carved out regardless of policy. The
+# classifier is pure string matching; resolving the gate config costs a git call
+# and a couple of jq calls, so doing it first would tax every markdown edit for an
+# answer that never changes. (Order did not matter when the opt-in check was a
+# single stat; it does now.)
+REL="${FILE#"$TOP"/}"
+qpg_path_needs_plan "$REL" >/dev/null || exit 0
+
 # Effective gate config; see qa-plan-pr-gate.sh and gate-policy-lib.sh. Inherited
-# by default, so a fresh worktree with no marker is gated like its main checkout.
+# by default, so a fresh worktree with no marker file is gated like its main checkout.
 GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
 [ -f "$GPLIB" ] || exit 0
 # shellcheck source=/dev/null
 . "$GPLIB"
 MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
-
-LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
-[ -f "$LIB" ] || exit 0
-# shellcheck source=/dev/null
-. "$LIB"
 
 qpg_gate_enabled "$MARKER" build || exit 0   # build gate not enabled -> allow
 
@@ -67,10 +76,6 @@ if [ "$(qpg_base_in_scope "$MARKER" "$BRANCH")" = "in" ]; then exit 0; fi
 
 # Spike escape hatch.
 if qpg_is_spike "$BRANCH" >/dev/null; then exit 0; fi
-
-# Only application source needs an approved plan; carved-out files pass.
-REL="${FILE#"$TOP"/}"
-qpg_path_needs_plan "$REL" >/dev/null || exit 0
 
 GITDIR=$(git -C "$DIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")

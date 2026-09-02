@@ -106,24 +106,58 @@ gp_main_worktree() {
 #   Identity rather than path is what makes every clone and every worktree of a repo
 #   resolve to the same policy entry, so registration can no longer drift by path.
 #   Returns 1 when there is no origin remote (nothing stable to key on).
+#   Memoized per <top> for the life of the process: it shells out to git, and the
+#   resolve path asks for the identity more than once (scope check, then override
+#   and opt-out lookup). On the qa-plan build gate, which runs on EVERY Edit/Write,
+#   that duplication was pure latency.
 gp_repo_identity() {
   local top="$1" url id
+  if [ "${GP_ID_TOP:-}" = "$top" ]; then
+    [ -n "${GP_ID_VAL:-}" ] || return 1
+    printf '%s' "$GP_ID_VAL"; return 0
+  fi
+  GP_ID_TOP="$top"; GP_ID_VAL=""
   command -v git >/dev/null 2>&1 || return 1
   url=$(git -C "$top" remote get-url origin 2>/dev/null) || return 1
   [ -n "$url" ] || return 1
   id=$(gp_norm_repo "$url")
-  case "$id" in */*) printf '%s' "$id" ;; *) return 1 ;; esac
+  case "$id" in
+    */*) GP_ID_VAL="$id"; printf '%s' "$id" ;;
+    *) return 1 ;;
+  esac
+}
+
+# _gp_load_scope
+#   Read the ENTIRE scope block plus a parse check in ONE jq call, memoized for the
+#   life of the process. This is a hot path: qa-plan-build-gate.sh runs on every
+#   Edit/Write, so the naive version (a jq per field) cost ~70ms per keystroke-ish
+#   action. Sets GP_OK / GP_ROOT / GP_OWNERS / GP_PREFIXES / GP_NESTED.
+_gp_load_scope() {
+  [ -n "${GP_SCOPE_LOADED:-}" ] && return 0
+  local pf raw
+  pf=$(gp_policy_file)
+  GP_SCOPE_LOADED=1; GP_OK=0
+  [ -f "$pf" ] || return 0
+  # \x1f-separated so a value can never be confused with the delimiter.
+  raw=$(jq -r '
+      [ (.scope.root // "~/dev"),
+        ((.scope.owners // []) | map(ascii_downcase) | join("\n")),
+        ((.scope.exclude_path_prefixes // []) | join("\n")),
+        (if (.scope.exclude_nested // true) == false then "0" else "1" end)
+      ] | join("\u001f")' "$pf" 2>/dev/null) || return 0
+  [ -n "$raw" ] || return 0
+  GP_ROOT=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
+  GP_OWNERS=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
+  GP_PREFIXES=${raw%%$'\x1f'*}; GP_NESTED=${raw##*$'\x1f'}
+  case "$GP_ROOT" in "~") GP_ROOT="$HOME" ;; "~/"*) GP_ROOT="$HOME/${GP_ROOT:2}" ;; esac
+  GP_OK=1
 }
 
 # gp_policy_root
 #   The directory tree the policy governs. Everything under it is gated by default.
 gp_policy_root() {
-  local pf root
-  pf=$(gp_policy_file)
-  root=$(jq -r '.scope.root // empty' "$pf" 2>/dev/null)
-  [ -n "$root" ] || root="~/dev"
-  case "$root" in "~") root="$HOME" ;; "~/"*) root="$HOME/${root:2}" ;; esac
-  printf '%s' "$root"
+  _gp_load_scope
+  printf '%s' "${GP_ROOT:-$HOME/dev}"
 }
 
 # gp_nested_in_other_repo <top> <root>
@@ -170,10 +204,14 @@ gp_nested_in_other_repo() {
 gp_repo_in_scope() {
   local top="$1" root rel id owner owners excl pf scope_top
   pf=$(gp_policy_file)
+  # Load the scope block DIRECTLY, not through a command substitution: `$( )` runs
+  # in a subshell, so the globals _gp_load_scope sets there never reach this frame
+  # and every owner/prefix check silently sees an empty list (i.e. allows).
+  _gp_load_scope
   # Physical form on BOTH sides of every containment test: gp_main_worktree answers
   # in physical paths, and on macOS /var vs /private/var would otherwise make a
   # perfectly in-root worktree read as outside-root (and so ungated).
-  root=$(gp_realpath "$(gp_policy_root)")
+  root=$(gp_realpath "${GP_ROOT:-$HOME/dev}")
   top=$(gp_realpath "$top")
 
   # Containment is judged on the MAIN worktree, not on <top>. A linked worktree can
@@ -193,7 +231,7 @@ gp_repo_in_scope() {
   esac
 
   rel="${scope_top#"$root"}"; rel="${rel#/}"
-  excl=$(jq -r '(.scope.exclude_path_prefixes // []) | .[]' "$pf" 2>/dev/null)
+  excl="$GP_PREFIXES"
   if [ -n "$excl" ]; then
     while IFS= read -r p; do
       [ -n "$p" ] || continue
@@ -211,7 +249,7 @@ EOF
     echo "in"; return 0
   fi
   owner="${id%%/*}"
-  owners=$(jq -r '(.scope.owners // []) | .[] | ascii_downcase' "$pf" 2>/dev/null)
+  owners="$GP_OWNERS"
   if [ -n "$owners" ]; then
     local found=1
     while IFS= read -r o; do
@@ -222,7 +260,7 @@ EOF
     [ "$found" -eq 0 ] || { echo "foreign-owner"; return 1; }
   fi
 
-  if [ "$(jq -r '.scope.exclude_nested // true' "$pf" 2>/dev/null)" != "false" ]; then
+  if [ "$GP_NESTED" != "0" ]; then
     gp_nested_in_other_repo "$scope_top" "$root" && { echo "nested"; return 1; }
   fi
 
@@ -244,19 +282,18 @@ gp_known_gate() {
 #   wins over an "owner/*" wildcard, so one wildcard entry covers a whole org (the
 #   8 Unbound repos are one line) while a single repo can still be special-cased.
 gp_local_entry() {
-  local id="$1" lf owner exact wild
+  local id="$1" lf owner exact
   lf=$(gp_local_file)
   [ -f "$lf" ] || return 1
   owner="${id%%/*}"
   # Keys are folded to lowercase on read so a policy written "DxAngels/alim" still
   # matches the normalized identity. A key that silently fails to match would be
   # invisible, which is the failure mode this whole change exists to remove.
-  exact=$(jq -c --arg k "$id" \
-    '(.repos // {} | with_entries(.key |= ascii_downcase))[$k] // empty' "$lf" 2>/dev/null)
+  # Exact and wildcard resolved in ONE jq call (hot path); exact still wins.
+  exact=$(jq -c --arg k "$id" --arg w "$owner/*" \
+    '(.repos // {} | with_entries(.key |= ascii_downcase)) as $r
+     | ($r[$k] // $r[$w] // empty)' "$lf" 2>/dev/null)
   [ -n "$exact" ] && { printf '%s' "$exact"; return 0; }
-  wild=$(jq -c --arg k "$owner/*" \
-    '(.repos // {} | with_entries(.key |= ascii_downcase))[$k] // empty' "$lf" 2>/dev/null)
-  [ -n "$wild" ] && { printf '%s' "$wild"; return 0; }
   return 1
 }
 
@@ -335,7 +372,10 @@ gp_gate_config() {
     gp_log "FAIL-OPEN policy file missing: $pf (every gate is allowing)"
     return 1
   fi
-  if ! jq -e . "$pf" >/dev/null 2>&1; then
+  # _gp_load_scope doubles as the parse check: it only sets GP_OK on a policy jq
+  # could read, so this costs nothing extra on the hot path.
+  _gp_load_scope
+  if [ "${GP_OK:-0}" != "1" ]; then
     gp_log "FAIL-OPEN policy file unparseable: $pf (every gate is allowing; fix it)"
     return 1
   fi
@@ -350,14 +390,15 @@ gp_gate_config() {
     return 1
   }
 
-  defaults=$(jq -c --arg g "$gate" '.defaults[$g] // {}' "$pf" 2>/dev/null)
-  # Override keys folded to lowercase for the same reason as gp_local_entry.
-  over=$(jq -c --arg k "${id:-__none__}" --arg g "$gate" \
-    '((.overrides // {} | with_entries(.key |= ascii_downcase))[$k] // {})[$g] // {}' \
-    "$pf" 2>/dev/null)
-  [ "$over" = "false" ] && return 1
-
-  merged=$(printf '%s\n%s\n' "${defaults:-{\}}" "${over:-{\}}" \
-    | jq -sc '.[0] * .[1]' 2>/dev/null) || return 1
+  # Defaults, override lookup and the merge in ONE jq call (hot path). Override
+  # keys are folded to lowercase for the same reason as gp_local_entry. An override
+  # of literal false switches the gate off for that repo, so it is checked before
+  # the merge collapses it into an object.
+  merged=$(jq -c --arg k "${id:-__none__}" --arg g "$gate" '
+      (.defaults[$g] // {}) as $d
+      | (((.overrides // {} | with_entries(.key |= ascii_downcase))[$k] // {})[$g]) as $o
+      | if $o == false then "OFF" else $d * ($o // {}) end' "$pf" 2>/dev/null) || return 1
+  [ "$merged" = '"OFF"' ] && return 1
+  [ -n "$merged" ] || return 1
   printf '%s' "$merged"
 }
