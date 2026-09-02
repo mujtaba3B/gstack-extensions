@@ -1232,3 +1232,16 @@ disp() {
   [ "$status" -eq 0 ]
   [ "$output" = "[]" ]
 }
+
+@test "collapse: a missing suite id fails CLOSED, never dropping a real failure" {
+  # Adversarial find: collapsing on a null suite kept only the null-suite runs and
+  # dropped the real ones, so a dropped failure read as success. An incomplete
+  # group must stay uncollapsed so any-failure-wins still sees the failure.
+  run mc_collapse_checkruns '[
+    {"name":"test","state":"failure","suite":100,"started":"2026-09-02T20:00:00Z"},
+    {"name":"test","state":"success","suite":null,"started":"2026-09-02T21:00:00Z"}
+  ]'
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq 'length')" -eq 2 ]
+  [ "$(echo "$output" | jq -r '[.[]|.state]|index("failure")')" != "null" ]
+}

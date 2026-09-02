@@ -719,8 +719,17 @@ mc_collapse_checkruns() {
     else
       group_by(.name)
       | map(
-          ( max_by([(.started // ""), (.suite // 0)]) | (.suite // null) ) as $newest
-          | map(select((.suite // null) == $newest) | {name: .name, state: .state})
+          # Fail closed when ANY run of this name lacks a suite id. Collapsing on a
+          # null suite would keep only the null-suite runs and DROP real ones, so a
+          # dropped failure would read as success. Ambiguity must never become
+          # permissiveness in a gate, so an incomplete group is left uncollapsed and
+          # the any-failure-wins fold downstream still sees every run.
+          if any(.[]; (.suite == null)) then
+            map({name: .name, state: .state})
+          else
+            ( max_by([(.started // ""), .suite]) | .suite ) as $newest
+            | map(select(.suite == $newest) | {name: .name, state: .state})
+          end
         )
       | add // []
     end
