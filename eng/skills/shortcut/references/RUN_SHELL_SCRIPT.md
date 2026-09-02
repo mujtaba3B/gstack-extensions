@@ -112,12 +112,12 @@ looks identical to a wiring bug, so always pass `--input-path -` when verifying 
 
 ## Real-world reference
 
-A working, manually-built equivalent lives in `~/dev/email-hero/userscript/README.md`: the
+A working, manually-built equivalent lives in `~/dev/apps/email-hero/userscript/README.md`: the
 `EmailHeroRunPipeline` Shortcut is a Run Shell Script bridge (Shell `zsh`, input passed as an
 argument) whose script is:
 
 ```sh
-cd ~/dev/email-hero && .venv/bin/python -m email_hero.cli run "$1" --dry-run 2>&1 | tail -20
+cd ~/dev/apps/email-hero && .venv/bin/python -m email_hero.cli run "$1" --dry-run 2>&1 | tail -20
 ```
 
 A Gmail userscript opens `shortcuts://run-shortcut?name=EmailHeroRunPipeline&input=expensify-forward`,
