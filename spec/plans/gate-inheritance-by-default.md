@@ -36,11 +36,12 @@ Invert it. Presence of a marker stops being the switch.
   marker to be missing, so no worktree, clone, or new repo can be silently
   un-gated again. A worktree inherits because it is under `~/dev`, like anything
   else, not because a file got copied into it.
-- **Markers become an override layer.** A marker present at a repo root still
-  tunes that repo (`required_checks`, `ttl_seconds`, `base_branches`,
-  `completion`). Absent now means "inherited defaults", not "un-gated". A marker
-  is also resolved through the main worktree when absent in a linked one, so
-  per-repo tuning survives a worktree even though it no longer has to.
+- **Markers are dropped entirely.** Not demoted to "tuning only": a
+  machine-local, git-ignored file that changes enforcement is the whole problem,
+  and one that vanishes in a worktree still changes behavior there even if it can
+  no longer arm anything. Per-repo tuning (`required_checks`, `ttl_seconds`,
+  `base_branches`, `completion`) moves into the tracked policy's `overrides`
+  block, keyed by repo identity, so it is the same answer from every checkout.
 - **Exclusions are derived, never curated.** A hand-maintained exclusion list is
   the same drift problem wearing a different hat.
   - origin owner not in the policy's `owners` list (excludes `third-party/`:

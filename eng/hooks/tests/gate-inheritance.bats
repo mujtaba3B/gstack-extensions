@@ -11,6 +11,7 @@
 setup() {
   SCRIPTS="${BATS_TEST_DIRNAME}/../scripts"
   QASCRIPTS="${BATS_TEST_DIRNAME}/../../../qa/hooks/scripts"
+  mkdir -p "$HOME/dev"   # hermetic on a clean runner: the gates scope to ~/dev
   ROOT=$(mktemp -d "$HOME/dev/.gitest.XXXXXX")
   export GATE_POLICY_FILE="$ROOT/policy.json"
   export GATE_LOCAL_FILE="$ROOT/local.json"

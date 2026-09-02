@@ -68,6 +68,17 @@ RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ship-gate-repo-lib.sh"
 # shellcheck source=/dev/null
 . "$RLIB"
 
+# The policy lib is sourced HERE, before any resolution, not just before the gate
+# decision below. sg_dev_checkout_for_repo asks the policy whether a candidate
+# checkout is governed, and it degrades to "accept the first same-origin checkout"
+# when gp_gate_config is undefined. Sourcing this after that call meant the degraded
+# path always ran, so an EXCLUDED checkout could be bound while a governed one sat
+# later in the scan, and the gate would then allow the create.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+
 # Resolve the repo the command targets. Hooks run from the session cwd, not the
 # cwd a leading `cd <dir>` switched into, so a worktree or cross-repo create would
 # otherwise be evaluated against the wrong repo. sg_workdir_from_cmd honors a
@@ -97,14 +108,10 @@ fi
 TOP=${RESOLVED%%$'\t'*}
 GITDIR=${RESOLVED#*$'\t'}
 
-# Effective gate config, resolved from the tracked ~/dev/gate-policy.json. Every
-# repo under the policy root is gated by DEFAULT; there are no per-repo marker
-# files any more, so a fresh worktree is gated exactly like its main checkout.
-# Non-zero return means genuinely out of scope -> allow. See gate-policy-lib.sh.
-GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
-[ -f "$GPLIB" ] || exit 0
-# shellcheck source=/dev/null
-. "$GPLIB"
+# Effective gate config, resolved from the tracked ~/dev/gate-policy.json (the lib
+# was sourced above, before checkout discovery). Every repo under the policy root is
+# gated by DEFAULT; there are no per-repo marker files any more, so a fresh worktree
+# is gated exactly like its main checkout. Non-zero return means out of scope -> allow.
 MARKER=$(gp_gate_config "$TOP" ship) || exit 0
 
 # Cross-repo guard (mirrors pr-merge-gate.sh). If the command explicitly targets a

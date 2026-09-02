@@ -156,7 +156,9 @@ if [ "$VERB" = "enable" ]; then
   # Write the repo's entry into the TRACKED policy, keyed by identity. Per-repo
   # marker files were dropped on 2026-09-02; every repo under the root is governed
   # by default, so "enable" now only records this repo's CI contexts and base.
-  POLICY="${GATE_POLICY_FILE:-$HOME/dev/gate-policy.json}"
+  # Resolved through the lib, not re-derived: two copies of the default path drift,
+  # and `enable` would then write to a file the gates do not read.
+  POLICY=$(gp_policy_file)
   [ -f "$POLICY" ] || die "gate policy not found at $POLICY"
   IDENT=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
   tmp=$(mktemp "${POLICY}.XXXXXX") || die "could not write next to $POLICY"
@@ -265,7 +267,10 @@ fi
 # The marker lists which check contexts must be green. We deliberately do NOT
 # include the clearance context itself (that would be circular: this script is
 # what produces it). Default to ["ci"] when the marker is silent.
-REQUIRED_CHECKS='["ci"]'
+# Empty, not ["ci"]. A hardcoded default here is exactly the phantom `ci=missing`
+# this change exists to remove: when the policy cannot be read we know NOTHING about
+# this repo's checks, and inventing a context it never runs reports broken CI.
+REQUIRED_CHECKS='[]'
 REQUIRE_QA_PLAN=0
 # Globs whose files CodeRabbit does not review (gitignore / minimatch style).
 # When a HEAD's only change is files matching these (or git-binary blobs), CR
@@ -306,16 +311,15 @@ fi
 # ("incomplete") or whose plan is absent ("missing") blocks, so only an all-boxes-
 # checked ("complete") plan clears the merge. The build/PR halves of the same
 # policy live in qa-plan-build-gate.sh / qa-plan-pr-gate.sh.
-QPG_MARKER_FILE=""
+QPG_GATE_ACTIVE=""
 QPG_MARKER_JSON=""
 if [ -n "$TOPLEVEL" ] && command -v gp_gate_config >/dev/null 2>&1; then
   QPG_MARKER_JSON=$(gp_gate_config "$TOPLEVEL" qa-plan 2>/dev/null) || QPG_MARKER_JSON=""
-  # Sentinel value only: downstream branches on "is the qa-plan gate active here",
-  # and the config now travels in QPG_MARKER_JSON rather than being re-read from a
-  # file that a worktree would not have.
-  [ -n "$QPG_MARKER_JSON" ] && QPG_MARKER_FILE="policy"
+  # A sentinel, not a path: the only consumer tests it for non-emptiness. The
+  # config itself travels in QPG_MARKER_JSON.
+  [ -n "$QPG_MARKER_JSON" ] && QPG_GATE_ACTIVE="policy"
 fi
-if [ -n "$QPG_MARKER_FILE" ]; then
+if [ -n "$QPG_GATE_ACTIVE" ]; then
   # qa-plan-gate-lib.sh ships in the qa plugin, not this (eng) one. Try the
   # sibling first (flat deployments), then the HIGHEST-VERSION installed qa
   # plugin copy (sort -V on the version dirs; deterministic, unlike mtime,

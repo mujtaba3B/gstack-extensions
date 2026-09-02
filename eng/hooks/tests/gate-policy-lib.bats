@@ -198,3 +198,29 @@ mkrepo() {
   run gp_repo_in_scope "$d"
   [ "$output" = "outside-root" ]
 }
+
+@test "a gates_off entry in the local file disarms one gate entirely" {
+  # Disarming is the dangerous direction in this design, so both full-OFF paths are
+  # pinned. This one is the machine-local file.
+  cat > "$GATE_LOCAL_FILE" <<'JSON'
+{ "repos": { "mujtaba3b/offrepo": { "gates_off": ["ship"], "reason": "test" } } }
+JSON
+  d=$(mkrepo offrepo https://github.com/mujtaba3B/offrepo.git)
+  run gp_gate_config "$d" ship
+  [ "$status" -ne 0 ]
+  run gp_gate_config "$d" merge-clearance   # only the named gate is off
+  [ "$status" -eq 0 ]
+  grep -q "LOCAL-OFF gate=ship" "$GATE_POLICY_LOG"
+}
+
+@test "an override of literal false disarms one gate entirely" {
+  # The other full-OFF path. It depends on jq evaluating `$o == false` BEFORE the
+  # `*` merge, which would collapse false into an object and silently re-arm.
+  jq '.overrides["mujtaba3b/offpolicy"] = {"ship": false}' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo offpolicy https://github.com/mujtaba3B/offpolicy.git)
+  run gp_gate_config "$d" ship
+  [ "$status" -ne 0 ]
+  run gp_gate_config "$d" merge-clearance
+  [ "$status" -eq 0 ]
+}

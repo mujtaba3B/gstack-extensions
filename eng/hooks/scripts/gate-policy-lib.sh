@@ -245,7 +245,13 @@ EOF
   # only thing identity gates, and "we cannot tell whose it is" is not evidence
   # that it is someone else's.
   if ! id=$(gp_repo_identity "$top"); then
-    gp_log "NO-IDENTITY $top has no origin remote; gating with defaults (no overrides or opt-outs apply)"
+    # Once per process, not once per action: the build gate calls this on every
+    # Edit/Write, and gp_log only appends, so an unguarded line here grows the log
+    # without bound for any repo that has no remote.
+    if [ "${GP_LOGGED_NO_ID:-}" != "$top" ]; then
+      GP_LOGGED_NO_ID="$top"
+      gp_log "NO-IDENTITY $top has no origin remote; gating with defaults (no overrides or opt-outs apply)"
+    fi
     echo "in"; return 0
   fi
   owner="${id%%/*}"
@@ -364,7 +370,13 @@ gp_gate_applicable() {
 #   degraded state is announced rather than silent.
 gp_gate_config() {
   local top="$1" gate="$2" pf id scope defaults over merged
-  command -v jq >/dev/null 2>&1 || return 1
+  # jq absent disarms every gate, and it was the one ALLOW path here that wrote
+  # nothing. The header invariant is that anything turning an UNKNOWN into an ALLOW
+  # is logged, and gp_log does not need jq.
+  command -v jq >/dev/null 2>&1 || {
+    gp_log "FAIL-OPEN jq not found (every gate is allowing)"
+    return 1
+  }
   gp_known_gate "$gate" || return 1
   pf=$(gp_policy_file)
 
