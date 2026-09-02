@@ -43,9 +43,16 @@ case "$TOP" in
   *) exit 0 ;;
 esac
 
-MARKER_FILE="$TOP/.qa-plan-gate.json"
-[ -f "$MARKER_FILE" ] || exit 0
-MARKER=$(cat "$MARKER_FILE" 2>/dev/null)
+# Effective gate config. Every repo under the policy root is gated by DEFAULT; a
+# .qa-plan-gate.json marker no longer switches this gate on, it only tunes it (and
+# is resolved through the main worktree when a linked one lacks it). Returns
+# non-zero only when the repo is genuinely out of scope, in which case we allow
+# exactly as an unmarked repo did before. See gate-policy-lib.sh for why.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
 [ -f "$LIB" ] || exit 0

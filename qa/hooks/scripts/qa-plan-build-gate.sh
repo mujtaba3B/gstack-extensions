@@ -44,9 +44,13 @@ case "$TOP" in
   *) exit 0 ;;
 esac
 
-MARKER_FILE="$TOP/.qa-plan-gate.json"
-[ -f "$MARKER_FILE" ] || exit 0
-MARKER=$(cat "$MARKER_FILE" 2>/dev/null)
+# Effective gate config; see qa-plan-pr-gate.sh and gate-policy-lib.sh. Inherited
+# by default, so a fresh worktree with no marker is gated like its main checkout.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
 [ -f "$LIB" ] || exit 0
