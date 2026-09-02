@@ -13,6 +13,7 @@ setup() {
   QASCRIPTS="${BATS_TEST_DIRNAME}/../../../qa/hooks/scripts"
   mkdir -p "$HOME/dev"   # hermetic on a clean runner: the gates scope to ~/dev
   ROOT=$(mktemp -d "$HOME/dev/.gitest.XXXXXX")
+  export GATE_POLICY_TEST=1   # env overrides are honored only in test mode
   export GATE_POLICY_FILE="$ROOT/policy.json"
   export GATE_LOCAL_FILE="$ROOT/local.json"
   export GATE_POLICY_LOG="$ROOT/policy.log"

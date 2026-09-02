@@ -10,6 +10,7 @@ setup() {
   # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
   # machine happens to carry. Inheritance-by-default is covered end-to-end in
   # gate-inheritance.bats.
+  export GATE_POLICY_TEST=1   # env overrides are honored only in test mode
   export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
   export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   LIB="$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"

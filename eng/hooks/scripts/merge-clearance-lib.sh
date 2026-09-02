@@ -178,6 +178,13 @@ mc_is_bookkeeping() {
       .keep|.gitkeep) ;;
       # vcs / meta / ignore-list dotfiles (inert)
       .gitignore|.gitattributes|.editorconfig|.dockerignore|.npmignore|.prettierignore|.eslintignore|.gcloudignore) ;;
+      # RETIRED gate markers. Gating moved to the tracked ~/dev/gate-policy.json on
+      # 2026-09-02 and these files are now read by nothing, so removing a leftover
+      # one is as inert as editing .gitignore. Listed so the sweep that deletes the
+      # dead copies does not demand a QA plan per repo for a no-op diff. Note this
+      # is DELETION-of-dead-config territory: if a future gate ever reads these
+      # names again, take them back out of this list first.
+      .ship-gate.json|.qa-plan-gate.json|.merge-clearance.json|.deploy-gate.json) ;;
       # legal / governance (LICENSE.txt / LICENSE.md ride the doc-extension arms)
       LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS) ;;
       *) echo "no"; return 1 ;;
@@ -307,12 +314,21 @@ mc_cr_verdict() {
 #   A "no" is advisory - the live "CodeRabbit" commit-status context is the
 #   stronger in-progress signal the CLI also checks.
 mc_cr_reviewed_head() {
-  local reviews="$1" head="$2" cr_status="${3:-}"
+  local reviews="$1" head="$2" cr_status="${3:-}" cr_desc="${4:-}"
+  # Proof 1 first: a review OBJECT on this exact HEAD is unambiguous.
   # Proof 2: green-but-quiet. A success commit status on the exact HEAD sha means
   # CR evaluated HEAD even when it posted no review object (clean incremental
   # commit). state_of already keyed this to the per-commit statuses API for HEAD,
   # so it cannot be inherited or stale from an ancestor commit.
-  if [ "$cr_status" = "success" ]; then echo "yes"; return 0; fi
+  #
+  # EXCEPT when the status says it was rate limited. CodeRabbit publishes
+  # state=success with description "Review rate limited" when it never got to the
+  # code at all, so accepting the bare state here cleared PRs CR had not read: the
+  # gate that exists to be strictly stronger than `gh pr checks` was reproducing
+  # that check list'"'"'s exact lie. Observed on mujtaba3B/dev#92, which reached a full
+  # CLEAR verdict with zero CR reviews on the head and a rate-limit notice posted.
+  # Callers pass the description; empty means "not known to be rate limited", which
+  # preserves the old behavior for every non-rate-limited success.
   local hit
   hit=$(printf '%s' "$reviews" | jq -r --arg h "$head" '
     [ .[]
@@ -320,7 +336,24 @@ mc_cr_reviewed_head() {
       | select( (.commit.oid // "") == $h )
     ] | length
   ' 2>/dev/null) || hit=0
-  if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; else echo "no"; fi
+  if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; return 0; fi
+  if [ "$cr_status" = "success" ] && [ "$(mc_status_rate_limited "$cr_desc")" != "yes" ]; then
+    echo "yes"; return 0
+  fi
+  echo "no"; return 1
+}
+
+# mc_status_rate_limited <cr_status_description>
+#   "yes" when a CodeRabbit commit-status description reports a rate limit, in any
+#   state. Matched case-insensitively on "rate limit" so both the observed
+#   "Review rate limited" and any future phrasing around the same words are caught;
+#   an empty or unreadable description is "no", which fails toward the previous
+#   behavior rather than toward blocking every green PR.
+mc_status_rate_limited() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    *"rate limit"*) echo "yes" ;;
+    *) echo "no" ;;
+  esac
 }
 
 # mc_cr_rate_limited <comments_json>
