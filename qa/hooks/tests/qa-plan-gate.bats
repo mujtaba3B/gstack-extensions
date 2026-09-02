@@ -767,7 +767,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   echo "$output" | grep -q '"decision":"block"'
 }
 
-@test "build gate: no mtime makes an unattested stamp acceptable" {
+@test "build gate: an unattested stamp is BLOCKED no matter how old its file is" {
   opt_in
   printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
   touch -t 202001010000 "$GITDIR/qa-plan-approved"

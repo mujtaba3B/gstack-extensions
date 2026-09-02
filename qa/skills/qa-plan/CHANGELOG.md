@@ -35,16 +35,15 @@ The approval stamp now requires a real human approval (gstack-extensions#71).
 - A qualified approval is no longer an unqualified one. Label normalization
   strips only `(recommended)`/`(default)`, so `Approve (skip Prod QA)` does not
   mint.
-- Stamps carry `approval_source` and `approval_nonce`. A stamp lacking it (the
-  pre-fix shape) is "unattested" and is honored at both gates ONLY when the
-  stamp file predates the fix, and logged either way. Both halves matter.
-  Blocking them outright was tried and backed out the same day: this gate runs
-  from the working tree the moment a file is saved while the minting hook needs
-  a session restart, so there was a window with no path to any valid stamp and
-  every gated repo lost `gh pr create` machine-wide. But keying the carve-out on
-  SHAPE alone was worse: two JSON fields opened both gates permanently, for
-  anyone, making a forged stamp cheaper than a real one. A migration allowance
-  must never be cheaper than the thing it migrates from.
+- Stamps carry `approval_source` and `approval_nonce`, and the gates require
+  `approval_source` to equal the exact literal `AskUserQuestion`. A stamp
+  lacking it ("unattested") is REFUSED at both the build and PR gates, with no
+  migration allowance. An earlier cut honored such a stamp when its file
+  predated the fix; that bound was keyed on mtime, which the same shell that
+  writes the stamp can rewrite, so `touch -t` defeated it in one extra command.
+  It only ever existed because a pre-fix branch could not obtain a token while
+  the minting hook was unregistered. A branch still carrying a pre-fix stamp
+  runs `/qa:plan` and approves once; that is the whole migration.
 - Drift is evaluated BEFORE the attestation verdict, so the least-attested
   stamps no longer get the fewest checks.
 - The PR gate LOGS when the drift check cannot run (`drift-check-skipped`).
