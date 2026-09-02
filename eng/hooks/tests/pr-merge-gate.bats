@@ -5,6 +5,13 @@
 # scoped to that tree; they are removed in teardown.
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   GATE="$BATS_TEST_DIRNAME/../scripts/pr-merge-gate.sh"
   mkdir -p "$HOME/dev"   # hermetic on clean runners: the gate scopes to ~/dev
   REPO=$(mktemp -d "$HOME/dev/.mctest.XXXXXX")
@@ -21,7 +28,19 @@ teardown() { rm -rf "$REPO" "${REPO2:-/nonexistent}"; }
 
 # emit a PreToolUse payload for a Bash command
 payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
-opt_in()  { echo '{"base_branches":["main"]}' > "$REPO/.merge-clearance.json"; }
+
+# Arming is now a POLICY write, not a marker file. Markers were dropped entirely on
+# 2026-09-02: a machine-local, git-ignored file that arms enforcement is what
+# produced the worktree hole. `opt_in` keeps its meaning (this repo is governed);
+# only the mechanism changed, so every test below reads the same.
+# With no policy written, nothing is governed, which preserves the "allow" cases.
+gp_write_policy() {  # <gate> <config-json>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$HOME/dev" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+opt_in()  { gp_write_policy merge-clearance '{"base_branches":["main"]}'; }
 stamp()   { printf '{"head":"%s","checked_at_epoch":%s,"ttl_seconds":600,"tool":"land-and-deploy"}' "$1" "$2" > "$GITDIR/merge-clearance-head"; }
 # ld_sentinel <head> <epoch>: the /land-and-deploy sentinel. repo/pr left as the
 # test repo has no remote (gate resolves target_repo="" -> repo match skipped) and
@@ -38,7 +57,7 @@ ld_sentinel() { printf '{"set_at_epoch":%s,"ttl_seconds":1800,"repo":"owner/name
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
 
-@test "allow: ~/dev repo without the opt-in marker" {
+@test "allow: ~/dev repo not covered by any gate policy" {
   run bash -c "printf '%s' '$(payload "cd $REPO && gh pr merge")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }

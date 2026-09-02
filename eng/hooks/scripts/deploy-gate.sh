@@ -141,16 +141,22 @@ if deploy_armed_fresh; then
   exit 0
 fi
 
-# Opt-in marker. Absent -> this repo is not gated -> allow.
-MARKER="$TOP/.deploy-gate.json"
-[ -f "$MARKER" ] || exit 0
+# Effective gate config. Armed by DEFAULT for any in-scope repo that HAS a
+# deploy.json (derived, not registered), which is what closes the apps/sms-hero
+# gap: a repo that deploys, carrying no marker. Non-zero -> not applicable or out
+# of scope -> allow.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" deploy) || exit 0
 
 # ---- Tier 1: the repo's declared deploy entrypoint --------------------------
 # Basenames come from the marker's `deploy_commands` when set, else are derived
 # from deploy.json's `.deploy.command` (the same field `devops lad-config` reads)
 # plus the conventional scripts/deploy*.sh family. Deriving rather than hardcoding
 # keeps the gate correct for repos whose entrypoint is named something else.
-NAMES=$(jq -r '(.deploy_commands // []) | .[]' "$MARKER" 2>/dev/null)
+NAMES=$(printf '%s' "$MARKER" | jq -r '(.deploy_commands // []) | .[]' 2>/dev/null)
 if [ -z "$NAMES" ]; then
   NAMES=$(jq -r '.deploy.command // "scripts/deploy.sh"' "$TOP/deploy.json" 2>/dev/null || echo "scripts/deploy.sh")
 fi
@@ -182,7 +188,7 @@ RO_RE='(^|[[:space:]])(check|--status|--dry-run)([[:space:]]|$)'
 # read-only diagnostics over the same ssh stay allowed. Hosts are listed
 # explicitly rather than derived: deploy.json carries a where-things-run host id
 # ("mac-mini"), not the ssh hostname ("mutwos-mac-mini").
-HOSTS=$(jq -r '(.hosts // []) | .[]' "$MARKER" 2>/dev/null)
+HOSTS=$(printf '%s' "$MARKER" | jq -r '(.hosts // []) | .[]' 2>/dev/null)
 HOST_ALT=""
 while IFS= read -r h; do
   [ -n "$h" ] || continue

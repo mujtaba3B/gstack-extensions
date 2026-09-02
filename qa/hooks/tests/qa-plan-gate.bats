@@ -5,6 +5,13 @@
 # live under ~/dev because the gates are scoped to that tree; removed in teardown.
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   LIB="$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"
   BUILD_GATE="$BATS_TEST_DIRNAME/../scripts/qa-plan-build-gate.sh"
   PR_GATE="$BATS_TEST_DIRNAME/../scripts/qa-plan-pr-gate.sh"
@@ -25,7 +32,19 @@ teardown() { rm -rf "$REPO"; }
 
 # ---- helpers ----------------------------------------------------------------
 
-opt_in()    { printf '%s' "${1:-{\"base_branches\":[\"main\"]}}" > "$REPO/.qa-plan-gate.json"; }
+
+# Arming is now a POLICY write, not a marker file. Markers were dropped entirely on
+# 2026-09-02: a machine-local, git-ignored file that arms enforcement is what
+# produced the worktree hole. `opt_in` keeps its meaning (this repo is governed);
+# only the mechanism changed, so every test below reads the same.
+# With no policy written, nothing is governed, which preserves the "allow" cases.
+gp_write_policy() {  # <gate> <config-json>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$HOME/dev" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+opt_in()    { gp_write_policy qa-plan "${1:-{\"base_branches\":[\"main\"]}}"; }
 stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
 edit_payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$REPO"; }
 create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }

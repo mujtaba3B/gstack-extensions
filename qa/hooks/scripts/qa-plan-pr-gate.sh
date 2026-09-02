@@ -38,14 +38,20 @@ case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/
 { [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
 
 TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-case "$TOP" in
-  "$HOME/dev"|"$HOME/dev/"*) ;;
-  *) exit 0 ;;
-esac
+# No path pre-filter here: gp_gate_config below makes the whole scope decision,
+# and a duplicate path-only test would wrongly exempt a worktree parked outside
+# ~/dev (a worktree of the ~/dev repo itself has to live outside it).
 
-MARKER_FILE="$TOP/.qa-plan-gate.json"
-[ -f "$MARKER_FILE" ] || exit 0
-MARKER=$(cat "$MARKER_FILE" 2>/dev/null)
+# Effective gate config. Every repo under the policy root is gated by DEFAULT,
+# resolved from the tracked ~/dev/gate-policy.json; per-repo tuning lives in that
+# file's `overrides` block, keyed by repo identity. There are no marker files.
+# Returns non-zero only when the repo is genuinely out of scope, in which case we
+# allow. See gate-policy-lib.sh for why.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+[ -f "$GPLIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$GPLIB"
+MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
 [ -f "$LIB" ] || exit 0

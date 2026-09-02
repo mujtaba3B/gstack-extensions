@@ -9,6 +9,13 @@
 # 16h46m. If that test ever goes green-by-allowing, the gate has lost its point.
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   GATE="$BATS_TEST_DIRNAME/../scripts/deploy-gate.sh"
   mkdir -p "$HOME/dev"   # hermetic on clean runners: the gate scopes to ~/dev
   REPO=$(mktemp -d "$HOME/dev/.dgtest.XXXXXX")
@@ -46,8 +53,20 @@ prompt_payload() {
 }
 
 # --- fixtures ---------------------------------------------------------------
-opt_in()        { printf '{"hosts":["mutwos-mac-mini","mini"]}' > "$REPO/.deploy-gate.json"; }
-opt_in_nohost() { printf '{"hosts":[]}' > "$REPO/.deploy-gate.json"; }
+
+# Arming is now a POLICY write, not a marker file. Markers were dropped entirely on
+# 2026-09-02: a machine-local, git-ignored file that arms enforcement is what
+# produced the worktree hole. `opt_in` keeps its meaning (this repo is governed);
+# only the mechanism changed, so every test below reads the same.
+# With no policy written, nothing is governed, which preserves the "allow" cases.
+gp_write_policy() {  # <gate> <config-json>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$HOME/dev" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+opt_in()        { gp_write_policy deploy '{"hosts":["mutwos-mac-mini","mini"]}'; }
+opt_in_nohost() { gp_write_policy deploy '{"hosts":[]}'; }
 deploy_json()   { printf '{"deploy":{"command":"scripts/deploy.sh"}}' > "$REPO/deploy.json"; }
 
 # Pipe from a file so no shell quoting layer sits between the payload and the hook.
@@ -69,7 +88,7 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
   assert_allow
 }
 
-@test "allow: ~/dev repo without the opt-in marker (fails open)" {
+@test "allow: ~/dev repo not covered by any gate policy (fails open)" {
   deploy_json
   run_gate "$(bash_payload "scripts/deploy.sh")"
   assert_allow
@@ -171,11 +190,15 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
 # not a missing dependency: it must still gate, or a corrupt marker would
 # silently disarm the repo.
 
-@test "block: a malformed marker still gates (falls back to deploy.json)" {
-  printf 'NOT JSON AT ALL' > "$REPO/.deploy-gate.json"
-  deploy_json
-  run_gate "$(bash_payload "scripts/deploy.sh")"
-  assert_block
+@test "block: a repo with only scripts/deploy.sh and no deploy.json still gates" {
+  # Applicability is derived. A repo that deploys WITHOUT a deploy.json is exactly
+  # the ungated-deployer shape of the 2026-07-24 incident, so the conventional
+  # script name counts on its own.
+  opt_in
+  rm -f "$REPO/deploy.json"
+  mkdir -p "$REPO/scripts" && : > "$REPO/scripts/deploy.sh"
+  feed "$(bash_payload 'scripts/deploy.sh')" "$GATE"
+  printf '%s' "$output" | grep -q '"block"'
 }
 
 @test "block: no deploy.json still gates (falls back to scripts/deploy.sh)" {

@@ -54,11 +54,15 @@ tuples() {
 }
 
 @test "every event-shaped gate script in hooks/scripts is wired (no orphans)" {
-  # Utilities and sourced libs are exempt: they are not event hooks.
-  exempt="qa-plan-stamp.sh qa-plan-gate-lib.sh qa-status-gate-lib.sh"
+  # Utilities and sourced libs are exempt: they are not event hooks. Libs are
+  # matched by the *-lib.sh SUFFIX rather than listed by name, so adding one
+  # does not require editing this test (gate-policy-lib.sh broke it that way).
+  # Only non-lib utilities still need naming.
+  exempt="qa-plan-stamp.sh"
   wired=$(jq -r '.hooks[][].hooks[].command | split("/") | last' "$HOOKS_JSON")
   for f in "$HOOKS_DIR"/scripts/*.sh; do
     base=$(basename "$f")
+    case "$base" in *-lib.sh) continue ;; esac
     case " $exempt " in *" $base "*) continue ;; esac
     grep -qx "$base" <<< "$wired"
   done

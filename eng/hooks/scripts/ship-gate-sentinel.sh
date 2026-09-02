@@ -37,7 +37,7 @@
 # the side-effect write). It is not a gate; it is the gate's input.
 #
 # Scope: only ~/dev git repos. Writing a sentinel in a repo that has not opted in
-# is harmless (the gate ignores repos with no .ship-gate.json marker), but we
+# is harmless (the gate ignores repos the policy does not govern), but we
 # still scope to ~/dev to avoid scattering files in unrelated repos.
 
 set -u
@@ -53,11 +53,17 @@ command -v git >/dev/null 2>&1 || exit 0
 LIBDIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RLIB="$LIBDIR/ship-gate-repo-lib.sh"
 ALIB="$LIBDIR/ship-gate-arm-lib.sh"
-{ [ -f "$RLIB" ] && [ -f "$ALIB" ]; } || exit 0
+# The policy lib resolves which gates apply and with what config. The minter MUST
+# read it through the same function the gate does, or the two can disagree about a
+# repo and the gate becomes unclearable.
+GPLIB="$LIBDIR/gate-policy-lib.sh"
+{ [ -f "$RLIB" ] && [ -f "$ALIB" ] && [ -f "$GPLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$RLIB"
 # shellcheck source=/dev/null
 . "$ALIB"
+# shellcheck source=/dev/null
+. "$GPLIB"
 
 EVENT=$(printf '%s' "$PAYLOAD" | jq -r '.hook_event_name // empty')
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
@@ -94,9 +100,13 @@ session_armed_fresh() { ga_armed_fresh "ship" "$SESSION" "$ARM_DIR" "$(date +%s)
 # mint <gitdir> <top> <trigger> : write the freshness sentinel for one repo.
 mint() {
   local gitdir="$1" top="$2" trigger="$3" ttl=1200 marker now sentinel tmp
-  marker="$top/.ship-gate.json"
-  if [ -f "$marker" ]; then
-    local mttl; mttl=$(jq -r '.ttl_seconds // empty' "$marker" 2>/dev/null)
+  # Resolve the ttl through the SAME policy the gate reads. This must stay in
+  # lockstep with ship-pr-gate.sh: arming the gate for worktrees while the minter
+  # still keyed off a literal marker file would leave every worktree gated but
+  # unclearable, turning a silent bypass into a hard deadlock.
+  marker=$(gp_gate_config "$top" ship 2>/dev/null) || marker=""
+  if [ -n "$marker" ]; then
+    local mttl; mttl=$(printf '%s' "$marker" | jq -r '.ttl_seconds // empty' 2>/dev/null)
     case "$mttl" in ''|*[!0-9]*) : ;; *) [ "$mttl" -gt 0 ] && ttl="$mttl" ;; esac
   fi
   now=$(date +%s)

@@ -51,6 +51,12 @@ set -uo pipefail
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/merge-clearance-lib.sh"
 # shellcheck source=/dev/null
 . "$LIB"
+# Gate policy: which gates apply to this checkout and with what config. Read
+# through the same helper the gate hooks use, so `status` can never report a
+# different posture from the one pr-merge-gate.sh will enforce.
+GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+# shellcheck source=/dev/null
+[ -f "$GPLIB" ] && . "$GPLIB"
 
 DEFAULT_TTL=600
 CLEARANCE_CONTEXT="local-review/merge-clearance"
@@ -115,10 +121,10 @@ done
 need gh; need jq; need git
 
 # ---- enable: scaffold a repo's opt-in marker (and optionally protection) -----
-# Porting the gate to a new repo is just dropping a .merge-clearance.json marker
-# at its root and (for the GitHub-enforced half) flipping branch protection. This
-# subcommand does both, auto-detecting the CI check context names so the marker is
-# correct without hand-editing.
+# Every repo under the policy root is governed by default, so "porting" is now only
+# recording the repo's real CI contexts (and, for the GitHub-enforced half, flipping
+# branch protection). This subcommand does both, auto-detecting the check context
+# names so the entry is correct without hand-editing.
 if [ "$VERB" = "enable" ]; then
   TOP=$(git rev-parse --show-toplevel 2>/dev/null) \
     || die "enable must run inside a checkout of the target repo (so it can write the marker)"
@@ -147,12 +153,19 @@ if [ "$VERB" = "enable" ]; then
     err "merge-clearance enable: required CI checks = $CHECKS (verify; override with --checks)"
   fi
 
-  MARKERFILE="$TOP/.merge-clearance.json"
-  jq -nc --arg base "$BASE" --argjson checks "$CHECKS" \
-    '{_comment:"Opt-in marker for the merge-clearance gate. Presence activates the eng plugin pr-merge-gate hook on the listed base branches and tells apply-merge-clearance-protection.sh which CI checks to require. Cleared via /land-and-deploy.",
-      base_branches:[$base], required_checks:$checks}' \
-    | jq . > "$MARKERFILE"
-  err "merge-clearance enable: wrote $MARKERFILE"
+  # Write the repo's entry into the TRACKED policy, keyed by identity. Per-repo
+  # marker files were dropped on 2026-09-02; every repo under the root is governed
+  # by default, so "enable" now only records this repo's CI contexts and base.
+  # Resolved through the lib, not re-derived: two copies of the default path drift,
+  # and `enable` would then write to a file the gates do not read.
+  POLICY=$(gp_policy_file)
+  [ -f "$POLICY" ] || die "gate policy not found at $POLICY"
+  IDENT=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
+  tmp=$(mktemp "${POLICY}.XXXXXX") || die "could not write next to $POLICY"
+  jq --arg k "$IDENT" --arg base "$BASE" --argjson checks "$CHECKS" \
+    '.overrides[$k]["merge-clearance"] = {base_branches:[$base], required_checks:$checks}' \
+    "$POLICY" > "$tmp" && mv -f "$tmp" "$POLICY" || { rm -f "$tmp"; die "failed to update $POLICY"; }
+  err "merge-clearance enable: recorded overrides[\"$IDENT\"][\"merge-clearance\"] in $POLICY"
 
   if [ "$APPLY_PROTECTION" -eq 1 ]; then
     proto="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/apply-merge-clearance-protection.sh"
@@ -167,8 +180,8 @@ if [ "$VERB" = "enable" ]; then
   cat >&2 <<EOF
 
 Next steps to finish opting $REPO into the gate:
-  1. Keep .merge-clearance.json LOCAL (it is git-ignored by convention; the marker
-     is a machine-local policy switch, recreated per clone at bootstrap).
+  1. Commit the gate-policy.json change (it is tracked, and is what makes the
+     setting survive every clone and worktree).
   2. Ensure the repo has CodeRabbit installed and a CI check named in required_checks.
 $([ "$APPLY_PROTECTION" -eq 1 ] || echo "  3. Flip branch protection: $0 enable --repo $REPO --base $BASE --apply-protection (or run apply-merge-clearance-protection.sh).")
   $([ "$APPLY_PROTECTION" -eq 1 ] && echo "3." || echo "4.") From now on, land PRs via /land-and-deploy (it posts the clearance).
@@ -254,7 +267,10 @@ fi
 # The marker lists which check contexts must be green. We deliberately do NOT
 # include the clearance context itself (that would be circular: this script is
 # what produces it). Default to ["ci"] when the marker is silent.
-REQUIRED_CHECKS='["ci"]'
+# Empty, not ["ci"]. A hardcoded default here is exactly the phantom `ci=missing`
+# this change exists to remove: when the policy cannot be read we know NOTHING about
+# this repo's checks, and inventing a context it never runs reports broken CI.
+REQUIRED_CHECKS='[]'
 REQUIRE_QA_PLAN=0
 # Globs whose files CodeRabbit does not review (gitignore / minimatch style).
 # When a HEAD's only change is files matching these (or git-binary blobs), CR
@@ -264,20 +280,27 @@ REQUIRE_QA_PLAN=0
 # them - so the common case needs no per-repo config. A marker may override the
 # list (extend it, or set [] to require CR on every file type).
 CR_UNREVIEWABLE_GLOBS='["*.pen"]'
+# Policy-resolved config, NOT a raw marker file. This is what fixes the phantom
+# `ci=missing`: in a fresh worktree there is no marker (git-ignored files are not
+# carried into one), so required_checks used to fall back to a context literally
+# named "ci" and the verdict read as broken CI. The policy carries the repo's real
+# required_checks regardless of which checkout you are standing in.
 MARKER=""
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null || true)
-[ -n "$TOPLEVEL" ] && [ -f "$TOPLEVEL/.merge-clearance.json" ] && MARKER="$TOPLEVEL/.merge-clearance.json"
+if [ -n "$TOPLEVEL" ] && command -v gp_gate_config >/dev/null 2>&1; then
+  MARKER=$(gp_gate_config "$TOPLEVEL" merge-clearance 2>/dev/null) || MARKER=""
+fi
 if [ -n "$MARKER" ]; then
-  mk=$(jq -c '.required_checks // empty' "$MARKER" 2>/dev/null || true)
+  mk=$(printf '%s' "$MARKER" | jq -c '.required_checks // empty' 2>/dev/null || true)
   [ -n "$mk" ] && REQUIRED_CHECKS="$mk"
   # Opt-in: when require_qa_plan is true, a PR with no Dev QA checklist blocks
   # (run /qa:plan). Default false preserves prior behavior (no checklist -> n/a).
-  case "$(jq -r '.require_qa_plan // false' "$MARKER" 2>/dev/null)" in true|1) REQUIRE_QA_PLAN=1 ;; esac
+  case "$(printf '%s' "$MARKER" | jq -r '.require_qa_plan // false' 2>/dev/null)" in true|1) REQUIRE_QA_PLAN=1 ;; esac
   # An explicit array (incl. []) wins over the default; an absent OR null key
   # leaves the default in place. "// empty" yields no output for both absent and
   # null (so $ug stays empty and the default holds), but emits [] for an explicit
   # empty array (so a marker can disable the default by setting []).
-  ug=$(jq -c '.cr_unreviewable_globs // empty' "$MARKER" 2>/dev/null || true)
+  ug=$(printf '%s' "$MARKER" | jq -c '.cr_unreviewable_globs // empty' 2>/dev/null || true)
   [ -n "$ug" ] && CR_UNREVIEWABLE_GLOBS="$ug"
 fi
 
@@ -288,9 +311,15 @@ fi
 # ("incomplete") or whose plan is absent ("missing") blocks, so only an all-boxes-
 # checked ("complete") plan clears the merge. The build/PR halves of the same
 # policy live in qa-plan-build-gate.sh / qa-plan-pr-gate.sh.
-QPG_MARKER_FILE=""
-[ -n "$TOPLEVEL" ] && [ -f "$TOPLEVEL/.qa-plan-gate.json" ] && QPG_MARKER_FILE="$TOPLEVEL/.qa-plan-gate.json"
-if [ -n "$QPG_MARKER_FILE" ]; then
+QPG_GATE_ACTIVE=""
+QPG_MARKER_JSON=""
+if [ -n "$TOPLEVEL" ] && command -v gp_gate_config >/dev/null 2>&1; then
+  QPG_MARKER_JSON=$(gp_gate_config "$TOPLEVEL" qa-plan 2>/dev/null) || QPG_MARKER_JSON=""
+  # A sentinel, not a path: the only consumer tests it for non-emptiness. The
+  # config itself travels in QPG_MARKER_JSON.
+  [ -n "$QPG_MARKER_JSON" ] && QPG_GATE_ACTIVE="policy"
+fi
+if [ -n "$QPG_GATE_ACTIVE" ]; then
   # qa-plan-gate-lib.sh ships in the qa plugin, not this (eng) one. Try the
   # sibling first (flat deployments), then the HIGHEST-VERSION installed qa
   # plugin copy (sort -V on the version dirs; deterministic, unlike mtime,
@@ -310,7 +339,6 @@ if [ -n "$QPG_MARKER_FILE" ]; then
     . "$QPG_LIB"
     # Only enforce when the deploy gate is on AND this PR's base is in the
     # marker's scope (default ["main"]), mirroring qa-plan-build/pr-gate.sh.
-    QPG_MARKER_JSON="$(cat "$QPG_MARKER_FILE" 2>/dev/null)"
     if qpg_gate_enabled "$QPG_MARKER_JSON" deploy \
        && [ "$(qpg_base_in_scope "$QPG_MARKER_JSON" "$BASE")" = "in" ]; then
       REQUIRE_QA_PLAN=1
@@ -546,6 +574,38 @@ CR_FAILURE_OVERRIDDEN=no
 [ "$CR_FAILURE_DISPOSITION" = "override-inert" ] \
   && err "merge-clearance: --override-cr-failure ignored (CodeRabbit status is ${CR_STATUS_STATE}, not failure)"
 
+# ---- machine-local CodeRabbit opt-out ---------------------------------------
+# merge-clearance treats CodeRabbit as a machine-HARD dimension: no auto-satisfy
+# beyond the rate-limit and unreviewable-globs escapes. That is correct where CR is
+# installed, and a permanent deadlock where it is not (probed 2026-09-02: the
+# Unbound-Clinicians org has no CR on any recent PR). Under gate inheritance every
+# such repo would otherwise become unmergeable with no override.
+#
+# So the opt-out is explicit, machine-local (~/dev/.gates/local.json, git-ignored,
+# never committed) and keyed by repo IDENTITY, so one "owner/*" entry covers every
+# repo, clone and worktree in an org. Deleting the entry re-arms the dimension with
+# no other change.
+#
+# It NEUTRALIZES the CR inputs rather than suppressing the blockers, so there is
+# exactly one place the skip takes effect, and the dimension is still RENDERED, as
+# SKIPPED plus its reason. A bypass that does not appear in the output is precisely
+# the class of bug this whole change exists to remove, so it must never go silent.
+CR_SKIPPED=no
+CR_SKIP_REASON=""
+if [ -n "$TOPLEVEL" ] && command -v gp_skip_dimension >/dev/null 2>&1; then
+  _mc_id=$(gp_repo_identity "$TOPLEVEL" 2>/dev/null || true)
+  if [ -n "$_mc_id" ] && gp_skip_dimension "$_mc_id" coderabbit; then
+    CR_SKIPPED=yes
+    CR_SKIP_REASON=$(gp_skip_reason "$_mc_id" 2>/dev/null || echo "no reason recorded")
+    CR_RC=0
+    CR_VERDICT="skipped"
+    CR_INPROGRESS=0
+    CR_REVIEWED_HEAD="skipped"
+    CR_FAILURE_DISPOSITION="n/a"
+    err "merge-clearance: CodeRabbit dimension SKIPPED for ${_mc_id} - ${CR_SKIP_REASON}"
+  fi
+fi
+
 BLOCKERS=()
 # CR_BLOCKED is set alongside EVERY CodeRabbit-dimension blocker below, and is the
 # ONLY input to the CodeRabbit checklist mark. The mark used to re-derive the same
@@ -659,7 +719,12 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
     cleared-rate-limited) cr_status_note="status=failure (auto-satisfied: rate-limited, current local /eng:cr review backstops)" ;;
     cleared-override)     cr_status_note="status=failure (OPERATOR OVERRIDE --override-cr-failure; current local /eng:cr review backstops)" ;;
   esac
-  echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) ${cr_verdict_note}, ${cr_status_note}, ${cr_head_note}"
+  if [ "$CR_SKIPPED" = "yes" ]; then
+    # Rendered, never omitted: an invisible bypass is the bug, not the feature.
+    echo "- [x] **CodeRabbit** - $(mark warn) SKIPPED (machine-local opt-out: ${CR_SKIP_REASON})"
+  else
+    echo "- [$([ $cr_mark = ok ] && echo x || echo ' ')] **CodeRabbit** - $(mark $cr_mark) ${cr_verdict_note}, ${cr_status_note}, ${cr_head_note}"
+  fi
   echo "- [$([ $rev_mark = ok ] && echo x || echo ' ')] **Local /review** - $(mark $rev_mark) ${REVIEW_STATE}$([ $SKIP_REVIEW = 1 ] && echo ' (skipped)')"
   echo "- [$([ $qa_mark = ok ] && echo x || echo ' ')] **QA checklist** - $(mark $qa_mark) ${QA_STATE}$([ $SKIP_QA = 1 ] && echo ' (skipped)')"
   [ "$IS_BOOKKEEPING" = "yes" ] && echo "- ⚡ **Bookkeeping fast-lane** - diff is docs/inventory only; /review + QA auto-waived (CI + CodeRabbit still enforced)"

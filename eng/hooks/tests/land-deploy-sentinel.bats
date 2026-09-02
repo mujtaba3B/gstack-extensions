@@ -6,6 +6,13 @@
 # Temp repos live under ~/dev because the hook scopes to that tree.
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   WRITER="$BATS_TEST_DIRNAME/../scripts/land-deploy-sentinel.sh"
   mkdir -p "$HOME/dev"
   REPO=$(mktemp -d "$HOME/dev/.ldtest.XXXXXX")

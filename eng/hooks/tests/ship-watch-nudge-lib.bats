@@ -8,6 +8,13 @@
 # agree on the rate-limit signal (same mc_cr_rate_limited marker).
 
 setup() {
+  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
+  # tests exercise the MARKER-FALLBACK contract (a machine with no gate policy)
+  # deterministically, instead of inheriting whatever ~/dev/gate-policy.json this
+  # machine happens to carry. Inheritance-by-default is covered end-to-end in
+  # gate-inheritance.bats.
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
   LIB="$BATS_TEST_DIRNAME/../scripts/ship-watch-nudge-lib.sh"
   # shellcheck source=/dev/null
   . "$LIB"

@@ -29,7 +29,7 @@
 SC_KNOWN_DIMS="review changelog version base_merged"
 
 # sc_mode <marker_json>
-#   Echo the completion enforcement mode from a .ship-gate.json marker.
+#   Echo the completion enforcement mode from the resolved ship gate config.
 #   "record" (default: snapshot only, never blocks) or "require" (named dims
 #   hard-block). An absent completion block, an unparseable marker, or any value
 #   other than "require" -> "record" (the non-blocking, backward-compatible

@@ -58,11 +58,17 @@ command -v git >/dev/null 2>&1 || exit 0
 LIBDIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RLIB="$LIBDIR/ship-gate-repo-lib.sh"
 ALIB="$LIBDIR/ship-gate-arm-lib.sh"
-{ [ -f "$RLIB" ] && [ -f "$ALIB" ]; } || exit 0
+# The policy lib resolves which gates apply and with what config. The minter MUST
+# read it through the same function the gate does, or the two can disagree about a
+# repo and the gate becomes unclearable.
+GPLIB="$LIBDIR/gate-policy-lib.sh"
+{ [ -f "$RLIB" ] && [ -f "$ALIB" ] && [ -f "$GPLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$RLIB"
 # shellcheck source=/dev/null
 . "$ALIB"
+# shellcheck source=/dev/null
+. "$GPLIB"
 
 EVENT=$(printf '%s' "$PAYLOAD" | jq -r '.hook_event_name // empty')
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
@@ -103,9 +109,11 @@ mint() {
   remote=$(git -C "$workdir" remote get-url origin 2>/dev/null || echo "")
   repo=$(printf '%s' "$remote" | sed -E 's#^[^:]+://[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##')
   ttl=1800
-  marker="$top/.merge-clearance.json"
-  if [ -f "$marker" ]; then
-    local mttl; mttl=$(jq -r '.ld_sentinel_ttl_seconds // empty' "$marker" 2>/dev/null)
+  # Policy-resolved, in lockstep with pr-merge-gate.sh (see ship-gate-sentinel.sh
+  # for why the minter must never read the marker differently from the gate).
+  marker=$(gp_gate_config "$top" merge-clearance 2>/dev/null) || marker=""
+  if [ -n "$marker" ]; then
+    local mttl; mttl=$(printf '%s' "$marker" | jq -r '.ld_sentinel_ttl_seconds // empty' 2>/dev/null)
     case "$mttl" in ''|*[!0-9]*) : ;; *) [ "$mttl" -gt 0 ] && ttl="$mttl" ;; esac
   fi
   now=$(date +%s)
