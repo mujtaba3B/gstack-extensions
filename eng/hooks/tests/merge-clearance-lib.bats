@@ -1105,3 +1105,41 @@ disp() {
   [ "$output" = "block-genuine" ]
   [ "$status" -eq 1 ]
 }
+
+# --- CodeRabbit "success but rate limited" -----------------------------------
+# CR publishes state=success with description "Review rate limited" when it never
+# read the code. Accepting the bare state cleared PRs CR had not reviewed, which
+# made merge-clearance reproduce the exact lie it exists to catch in `gh pr checks`.
+# Observed on mujtaba3B/dev#92: full CLEAR verdict, zero reviews, rate-limit notice.
+
+@test "mc_status_rate_limited detects the rate-limit description, case-insensitively" {
+  [ "$(mc_status_rate_limited 'Review rate limited')" = "yes" ]
+  [ "$(mc_status_rate_limited 'REVIEW RATE LIMITED')" = "yes" ]
+  [ "$(mc_status_rate_limited 'Review completed')" = "no" ]
+  [ "$(mc_status_rate_limited '')" = "no" ]
+}
+
+@test "a success status that is RATE LIMITED is not proof CR reviewed the head" {
+  run mc_cr_reviewed_head '[]' abc123 success 'Review rate limited'
+  [ "$output" = "no" ]
+}
+
+@test "a success status that is NOT rate limited still proves review (green-but-quiet)" {
+  run mc_cr_reviewed_head '[]' abc123 success 'Review completed'
+  [ "$output" = "yes" ]
+  run mc_cr_reviewed_head '[]' abc123 success ''
+  [ "$output" = "yes" ]   # unreadable description keeps the prior behavior
+}
+
+@test "a real review object on HEAD wins even when the status says rate limited" {
+  # CR reviewed this head, then hit the limit later. That is still a review.
+  revs='[{"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"abc123"}}]'
+  run mc_cr_reviewed_head "$revs" abc123 success 'Review rate limited'
+  [ "$output" = "yes" ]
+}
+
+@test "a review object on a DIFFERENT head does not count" {
+  revs='[{"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"other"}}]'
+  run mc_cr_reviewed_head "$revs" abc123 success 'Review rate limited'
+  [ "$output" = "no" ]
+}

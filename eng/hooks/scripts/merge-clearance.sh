@@ -454,7 +454,16 @@ CR_STATUS_STATE=$(state_of "CodeRabbit")          # CR's own commit status conte
 # even when it posted no new review object (clean incremental commit). The status
 # API is per-commit, so success here means HEAD, not an inherited ancestor.
 CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS" "$CR_STATUS_STATE"); CR_RC=$?
-CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD" "$CR_STATUS_STATE")
+# A "success" CodeRabbit status is not self-evidently a review: CR publishes
+# state=success with description "Review rate limited" when it never read the code.
+# Fetch the description for the success case so reviewed-head can tell the two
+# apart. This costs one extra API call on the green path, which the old comment on
+# cr_status_description said it was avoiding; correctness wins, because without it
+# a rate-limited PR reaches a full CLEAR verdict (mujtaba3B/dev#92).
+CR_STATUS_DESC=""
+[ "$CR_STATUS_STATE" = "success" ] && CR_STATUS_DESC=$(cr_status_description)
+CR_STATUS_RL=$(mc_status_rate_limited "$CR_STATUS_DESC")
+CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD" "$CR_STATUS_STATE" "$CR_STATUS_DESC")
 CR_INPROGRESS=0
 [ "$CR_STATUS_STATE" = "pending" ] && CR_INPROGRESS=1
 
@@ -468,7 +477,8 @@ CR_INPROGRESS=0
 CR_HEAD_UNREVIEWABLE=no
 CR_RATE_LIMITED=no
 CR_FAILURE_RATE_LIMITED=no
-if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$CR_STATUS_STATE" = "missing" ]; then
+if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
+   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ]; }; then
   CR_HEAD_UNREVIEWABLE=$(mc_head_cr_unreviewable "$(head_changed_files "$HEAD")" "$CR_UNREVIEWABLE_GLOBS")
   # Second auto-satisfy path for the same "CR silent on HEAD" gap: CodeRabbit
   # itself posted its rate-limit notice (mc_cr_rate_limited finds the stable
@@ -654,7 +664,8 @@ case "$CR_FAILURE_DISPOSITION" in
     BLOCKERS+=("CodeRabbit status is failure on this head (genuine CR failure: fix it, or pass --override-cr-failure with a current /eng:cr review)")
     CR_BLOCKED=1 ;;
 esac
-if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && [ "$CR_STATUS_STATE" = "missing" ] \
+if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
+   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ]; } \
    && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ]; then
   if [ "$CR_RATE_LIMITED" = "yes" ]; then
     # Rate-limited but no current local review to backstop it: tell the operator
@@ -715,6 +726,7 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   # The status cell states WHICH of the two failure escapes applied, so a cleared
   # failure is never indistinguishable from a green one in the rendered checklist.
   cr_status_note="status=${CR_STATUS_STATE}"
+  [ "$CR_STATUS_RL" = "yes" ] && cr_status_note="status=success but RATE LIMITED (CR published green without reviewing)"
   case "$CR_FAILURE_DISPOSITION" in
     cleared-rate-limited) cr_status_note="status=failure (auto-satisfied: rate-limited, current local /eng:cr review backstops)" ;;
     cleared-override)     cr_status_note="status=failure (OPERATOR OVERRIDE --override-cr-failure; current local /eng:cr review backstops)" ;;
