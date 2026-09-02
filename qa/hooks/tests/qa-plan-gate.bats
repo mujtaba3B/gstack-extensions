@@ -46,7 +46,20 @@ gp_write_policy() {  # <gate> <config-json>
       defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
 }
 opt_in()    { gp_write_policy qa-plan "${1:-{\"base_branches\":[\"main\"]}}"; }
-stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# An ATTESTED stamp, i.e. the shape qa-plan-stamp.sh now writes after a real
+# human approval. `approval_source` is the proof field the gates require; a stamp
+# without it is the pre-fix shape, covered separately below.
+stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","approval_source":"AskUserQuestion","approval_nonce":"n","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# The pre-fix shape: no approval_source, so nothing proves a human approved it.
+legacy_stamp_for() { printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# Mint a real approval token the way production does, by feeding the minting hook
+# a payload of the shape the harness sends. There is deliberately no bypass.
+MINT="$BATS_TEST_DIRNAME/../scripts/qa-plan-approval-token.sh"
+mint_approval() {
+  jq -nc --arg cwd "$REPO" '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+    tool_input:{questions:[{question:"Approve?",header:"QA plan"}]},
+    tool_response:{answers:{"Approve?":"Approve"}}}' | bash "$MINT"
+}
 edit_payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$REPO"; }
 create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
 
@@ -55,7 +68,9 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 # ========================================================================
 
 @test "stamp_valid: matching branch -> valid" {
-  run qpg_stamp_valid '{"branch":"feat/x"}' "feat/x"
+  # Carries approval_source because a stamp without it is now "unattested"
+  # regardless of branch; that case has its own test below.
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion"}' "feat/x"
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
@@ -465,6 +480,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 # ========================================================================
 
 @test "stamp writer: write then status round-trips the branch" {
+  mint_approval
   run bash -c "cd '$REPO' && bash '$STAMP' write --approver tester --digest abc123"
   [ "$status" -eq 0 ]
   [ -f "$GITDIR/qa-plan-approved" ]
@@ -475,6 +491,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 
 @test "stamp writer: the gate accepts a stamp the writer produced" {
   opt_in
+  mint_approval
   bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
@@ -482,6 +499,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 
 @test "stamp writer: clear removes the stamp and the gate blocks again" {
   opt_in
+  mint_approval
   bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
   bash -c "cd '$REPO' && bash '$STAMP' clear >/dev/null"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
@@ -504,4 +522,139 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   run bash -c "cd '$REPO' && printf '%s' '$(create_payload "FOO= gh pr create")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
+}
+
+# ========================================================================
+# gstack-extensions#71: proof field, plan drift, and the per-gate split
+# ========================================================================
+
+@test "stamp_valid: a pre-fix stamp with no approval_source -> unattested" {
+  run qpg_stamp_valid '{"branch":"feat/x","criteria_digest":"d"}' "feat/x"
+  [ "$output" = "unattested" ]; [ "$status" -eq 1 ]
+}
+
+@test "stamp_valid: matching plan digest -> valid" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" "D1"
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "stamp_valid: a plan edited after approval -> plan-changed" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" "D2"
+  [ "$output" = "plan-changed" ]; [ "$status" -eq 1 ]
+}
+
+@test "stamp_valid: an unreadable plan (empty digest) skips the drift check" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" ""
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "stamp_valid: a stamp written without --digest carries none and cannot drift" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"none"}' "feat/x" "D2"
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "unattested_disposition: both live gates allow a pre-fix stamp" {
+  # Blocking these produced an unsatisfiable gate: this gate goes live from disk
+  # immediately, while the minting hook needs a session restart, so for that
+  # window there was no path to any valid stamp at all. Going forward the
+  # guarantee is untouched; the retroactive half is what was dropped.
+  run qpg_unattested_disposition build
+  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
+  run qpg_unattested_disposition pr
+  [ "$output" = "allow" ]; [ "$status" -eq 0 ]
+}
+
+@test "unattested_disposition: an unknown gate inherits the strict side" {
+  run qpg_unattested_disposition something-new
+  [ "$output" = "block" ]; [ "$status" -eq 1 ]
+}
+
+@test "normalize: ticking a box does not change the plan digest" {
+  a=$(qpg_plan_digest '| [ ] | claude | run it |')
+  b=$(qpg_plan_digest '| [x] | claude | run it |')
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "normalize: rewording a check DOES change the plan digest" {
+  a=$(qpg_plan_digest '| [ ] | claude | run it |')
+  b=$(qpg_plan_digest '| [ ] | claude | run something else |')
+  [ "$a" != "$b" ]
+}
+
+@test "normalize: trailing whitespace does not change the digest" {
+  a=$(qpg_plan_digest 'row one')
+  b=$(qpg_plan_digest 'row one   ')
+  [ "$a" = "$b" ]
+}
+
+@test "extract: the QA section stops at the next top-level heading" {
+  run qpg_extract_qa_section "$(printf '## QA\n\n### Dev\n\nrow\n\n## Notes\n\nnot qa\n')"
+  echo "$output" | grep -q "### Dev"
+  ! echo "$output" | grep -q "not qa"
+}
+
+@test "extract: a body with no QA section yields nothing" {
+  run qpg_extract_qa_section "just prose"
+  [ -z "$output" ]
+}
+
+@test "body_file_from_cmd: parses --body-file and -F, ignores an inline --body" {
+  run qpg_body_file_from_cmd "gh pr create --body-file /tmp/b.md --title x"
+  [ "$output" = "/tmp/b.md" ]
+  run qpg_body_file_from_cmd "cd /r && gh pr create -F './body.md'"
+  [ "$output" = "./body.md" ]
+  run qpg_body_file_from_cmd "gh pr create --body 'inline' --title x"
+  [ -z "$output" ]
+}
+
+@test "build gate: a pre-fix stamp still lets you BUILD (the migration is not a cliff)" {
+  opt_in
+  legacy_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate: a pre-fix stamp is honored, not blocked" {
+  # The migration must never strand a branch that was approved under the old
+  # flow: re-approving those was scope this fix invented for itself, and the
+  # human never asked for it.
+  opt_in
+  legacy_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate: a MISSING stamp still blocks (the pre-fix carve-out is narrow)" {
+  # The carve-out is for stamps that exist without proof, never for no stamp.
+  opt_in
+  rm -f "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: a plan edited after approval blocks the create" {
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original check |\n')
+  printf '%s' "$plan" > "$REPO/body.md"
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","approval_source":"AskUserQuestion","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  # The approved plan itself -> allowed.
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  [ -z "$output" ]
+  # Rewritten after approval -> blocked.
+  printf '## QA\n\n| [ ] | claude | a DIFFERENT check |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  echo "$output" | grep -q '"decision":"block"'
+  echo "$output" | grep -q "changed after it was approved"
+}
+
+@test "pr gate: ticking boxes in the plan does NOT block the create" {
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original check |\n')
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","approval_source":"AskUserQuestion","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  printf '## QA\n\n| [x] | claude | original check |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
 }
