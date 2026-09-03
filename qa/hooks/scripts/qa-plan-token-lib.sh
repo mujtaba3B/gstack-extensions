@@ -376,13 +376,19 @@ qpt_liveness_verdict() {
   local session="$1" seen="$2" feature_ran="${3:-yes}"
   [ -n "$session" ] || { echo "unknown"; return 1; }
   [ "$seen" = "yes" ] && { echo "observed"; return 0; }
-  # A session that started BEFORE the heartbeat existed has no heartbeat no
-  # matter how well registered its minter is, so "no file" would be a false
-  # accusation. <feature_ran> is "no" when the heartbeat directory itself is
-  # absent, i.e. this machine has never run a minter that writes one. Reported
-  # from a consumer repo (the music session) whose post-restart doctor read
-  # "never-observed" for exactly this reason, which would have sent the operator
-  # to restart a second time for nothing.
+  # <feature_ran> is "no" when the heartbeat DIRECTORY is absent, i.e. no minter
+  # carrying this feature has ever run on this machine, so "no file for this
+  # session" would be an accusation with no evidence behind it either way.
+  #
+  # Note what this is NOT claiming. A first cut treated "session started before
+  # the heartbeat shipped" as the unreliable case; a consumer repo disproved that
+  # by reading `observed` in exactly such a session. This marketplace is a
+  # directory source, so a hook SCRIPT is live the moment the file changes even
+  # though its REGISTRATION is frozen at session start, and an already-registered
+  # minter begins writing heartbeats immediately. The genuinely ambiguous case is
+  # narrower: a session that has fired no AskUserQuestion at all since the
+  # heartbeat landed. The gate messages say how to settle that in one step
+  # instead of advising a restart on a maybe.
   [ "$feature_ran" = "no" ] && { echo "unknown"; return 1; }
   echo "never-observed"; return 1
 }

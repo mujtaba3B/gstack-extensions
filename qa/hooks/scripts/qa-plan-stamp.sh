@@ -194,11 +194,11 @@ case "$VERB" in
             echo "the stale hooks and lands you right back here. Run 'qa-plan-stamp.sh doctor'"
             echo "to see whether the installed version has drifted from this source tree."
             echo
-            echo "CAVEAT: a session that started before qa 3.10.0 (which added this heartbeat)"
-            echo "records nothing even when its minter IS registered, so this reads"
-            echo "never-observed during the upgrade itself. If /qa:plan has already stamped"
-            echo "successfully in this session, the minter IS registered and the cause is one"
-            echo "of the ones listed for the observed case, not a missing hook." ;;
+            echo "CAVEAT before you restart: this reads never-observed if this session has"
+            echo "simply fired no AskUserQuestion since qa 3.10.0 landed, because the minter"
+            echo "is what writes the heartbeat. If /qa:plan has already stamped successfully"
+            echo "in this session, the minter IS registered, a restart changes nothing, and"
+            echo "the cause is one of the ones listed for the observed case." ;;
           observed)
             echo "DIAGNOSIS: the token-minting hook IS registered and HAS run in this"
             echo "session, so a restart will not help. It saw a question and declined to"
@@ -446,14 +446,21 @@ case "$VERB" in
       never-observed)
         echo "           the AskUserQuestion minting hook has not run in this session;"
         echo "           if it was added since the session started, only a restart registers it"
-        # The transitional false alarm, reported from a consumer repo. A session
-        # that started before this heartbeat existed records nothing no matter how
-        # well registered its minter is, and the operator who trusts a bare
-        # "not registered" there restarts for nothing. Say so rather than assert.
-        echo "           CAVEAT: a session that started before qa 3.10.0 (which added this"
-        echo "           heartbeat) records nothing even when its minter IS registered, so"
-        echo "           this reads never-observed during the upgrade itself. A session"
-        echo "           started after 3.10.0 was installed gives a reliable answer." ;;
+        # The one narrow false alarm, and how to settle it in one step. First
+        # written as "any session started before 3.10.0 reads never-observed",
+        # which a consumer repo then DISPROVED: its pre-3.10.0 session read
+        # `observed`, because this marketplace is a directory source, so the hook
+        # SCRIPT is live the moment the file changes even though its REGISTRATION
+        # is frozen. An already-registered minter therefore starts writing
+        # heartbeats immediately. The real gap is much smaller: a session whose
+        # LAST AskUserQuestion happened before the heartbeat code landed has no
+        # heartbeat yet and nothing has re-run to write one. Firing any modal
+        # settles it, which beats telling anyone to restart on a maybe.
+        echo "           CAVEAT: this is reliable UNLESS this session has fired no"
+        echo "           AskUserQuestion since qa 3.10.0 landed (the heartbeat is written"
+        echo "           by the minter, so a session that has not run one since then has"
+        echo "           nothing recorded yet). To settle it without restarting: run"
+        echo "           /qa:plan. If it stamps, the minter was registered all along." ;;
       observed)       echo "           the minting hook is registered and running; a restart will not change anything" ;;
       *)              echo "           no session id in the environment, so liveness cannot be determined" ;;
     esac
