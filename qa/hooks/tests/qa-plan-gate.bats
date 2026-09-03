@@ -19,6 +19,10 @@ setup() {
   STAMP="$BATS_TEST_DIRNAME/../scripts/qa-plan-stamp.sh"
   # shellcheck source=/dev/null
   . "$LIB"
+  # The gates are ~/dev-scoped, so the scratch repo must live there. Create the
+  # parent first: a clean CI runner has no ~/dev, and mktemp would fail in setup,
+  # taking the whole suite down before a single test ran (CodeRabbit, PR #76).
+  mkdir -p "$HOME/dev"
   REPO=$(mktemp -d "$HOME/dev/.qpgtest.XXXXXX")
   git -C "$REPO" init -q
   git -C "$REPO" config user.name "Test User"
@@ -46,7 +50,30 @@ gp_write_policy() {  # <gate> <config-json>
       defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
 }
 opt_in()    { gp_write_policy qa-plan "${1:-{\"base_branches\":[\"main\"]}}"; }
-stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# An ATTESTED stamp, i.e. the shape qa-plan-stamp.sh now writes after a real
+# human approval. `approval_source` is the proof field the gates require; a stamp
+# without it is the pre-fix shape, covered separately below.
+stamp_for() { printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"d","approver":"a","approval_source":"AskUserQuestion","approval_nonce":"n","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"; }
+# The pre-fix shape: no approval_source, so nothing proves a human approved it.
+# A pre-fix stamp, BACKDATED so its file mtime sits inside the migration window.
+# The window is what stops the carve-out being a permanent forgeable bypass, so
+# tests must exercise it rather than assume shape alone is enough.
+legacy_stamp_for() {
+  printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+}
+# The same shape, written NOW: not a migration case, must never be honored.
+fresh_unattested_stamp_for() {
+  printf '{"branch":"%s","approved_at":"x","criteria_digest":"d","approver":"a","tool":"qa-plan"}' "$1" > "$GITDIR/qa-plan-approved"
+}
+# Mint a real approval token the way production does, by feeding the minting hook
+# a payload of the shape the harness sends. There is deliberately no bypass.
+MINT="$BATS_TEST_DIRNAME/../scripts/qa-plan-approval-token.sh"
+mint_approval() {
+  jq -nc --arg cwd "$REPO" '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+    tool_input:{questions:[{question:"Approve?",header:"QA plan"}]},
+    tool_response:{answers:{"Approve?":"Approve"}}}' | bash "$MINT"
+}
 edit_payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$REPO"; }
 create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
 
@@ -55,7 +82,9 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 # ========================================================================
 
 @test "stamp_valid: matching branch -> valid" {
-  run qpg_stamp_valid '{"branch":"feat/x"}' "feat/x"
+  # Carries approval_source because a stamp without it is now "unattested"
+  # regardless of branch; that case has its own test below.
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion"}' "feat/x"
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
@@ -465,7 +494,8 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 # ========================================================================
 
 @test "stamp writer: write then status round-trips the branch" {
-  run bash -c "cd '$REPO' && bash '$STAMP' write --approver tester --digest abc123"
+  mint_approval
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
   [ "$status" -eq 0 ]
   [ -f "$GITDIR/qa-plan-approved" ]
   run bash -c "cd '$REPO' && bash '$STAMP' status"
@@ -475,6 +505,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 
 @test "stamp writer: the gate accepts a stamp the writer produced" {
   opt_in
+  mint_approval
   bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
@@ -482,6 +513,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 
 @test "stamp writer: clear removes the stamp and the gate blocks again" {
   opt_in
+  mint_approval
   bash -c "cd '$REPO' && bash '$STAMP' write >/dev/null"
   bash -c "cd '$REPO' && bash '$STAMP' clear >/dev/null"
   run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
@@ -504,4 +536,259 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   run bash -c "cd '$REPO' && printf '%s' '$(create_payload "FOO= gh pr create")' | bash '$PR_GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
+}
+
+# ========================================================================
+# gstack-extensions#71: proof field, plan drift, and the per-gate split
+# ========================================================================
+
+@test "stamp_valid: a pre-fix stamp with no approval_source -> unattested" {
+  run qpg_stamp_valid '{"branch":"feat/x","criteria_digest":"d"}' "feat/x"
+  [ "$output" = "unattested" ]; [ "$status" -eq 1 ]
+}
+
+@test "stamp_valid: matching plan digest -> valid" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" "D1"
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "stamp_valid: a plan edited after approval -> plan-changed" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" "D2"
+  [ "$output" = "plan-changed" ]; [ "$status" -eq 1 ]
+}
+
+@test "stamp_valid: an unreadable plan (empty digest) skips the drift check" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"D1"}' "feat/x" ""
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "stamp_valid: a stamp written without --digest carries none and cannot drift" {
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"none"}' "feat/x" "D2"
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+}
+
+@test "unattested_disposition: an unattested stamp is refused everywhere" {
+  # The mtime-bounded migration window was removed on PR #76: mtime is mutable by
+  # the same shell that writes the stamp, so `touch -t` defeated it in one extra
+  # command. It existed only because a pre-fix branch could not obtain a token;
+  # the minting hook ships now, so the remedy is one /qa:plan approval.
+  for g in build pr deploy something-new; do
+    run qpg_unattested_disposition "$g"
+    [ "$output" = "block" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "stamp_valid: approval_source must be the exact literal, not merely non-empty" {
+  run qpg_stamp_valid '{"branch":"b","approval_source":"AskUserQuestion"}' b
+  [ "$output" = "valid" ]
+  run qpg_stamp_valid '{"branch":"b","approval_source":"yes"}' b
+  [ "$output" = "unattested" ]
+  run qpg_stamp_valid '{"branch":"b","approval_source":true}' b
+  [ "$output" = "unattested" ]
+}
+
+@test "normalize: ticking a box does not change the plan digest" {
+  a=$(qpg_plan_digest '| [ ] | claude | run it |')
+  b=$(qpg_plan_digest '| [x] | claude | run it |')
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "normalize: rewording a check DOES change the plan digest" {
+  a=$(qpg_plan_digest '| [ ] | claude | run it |')
+  b=$(qpg_plan_digest '| [ ] | claude | run something else |')
+  [ "$a" != "$b" ]
+}
+
+@test "normalize: trailing whitespace does not change the digest" {
+  a=$(qpg_plan_digest 'row one')
+  b=$(qpg_plan_digest 'row one   ')
+  [ "$a" = "$b" ]
+}
+
+@test "extract: the QA section stops at the next top-level heading" {
+  run qpg_extract_qa_section "$(printf '## QA\n\n### Dev\n\nrow\n\n## Notes\n\nnot qa\n')"
+  echo "$output" | grep -q "### Dev"
+  ! echo "$output" | grep -q "not qa"
+}
+
+@test "extract: a body with no QA section yields nothing" {
+  run qpg_extract_qa_section "just prose"
+  [ -z "$output" ]
+}
+
+@test "body_file_from_cmd: parses --body-file, --body-file= and -F" {
+  run qpg_body_file_from_cmd "gh pr create --body-file /tmp/b.md --title x"
+  [ "$output" = "/tmp/b.md" ]
+  run qpg_body_file_from_cmd "cd /r && gh pr create -F './body.md'"
+  [ "$output" = "./body.md" ]
+  run qpg_body_file_from_cmd "gh pr create --body-file=\"/tmp/q.md\""
+  [ "$output" = "/tmp/q.md" ]
+  run qpg_body_file_from_cmd "gh pr create --title x"
+  [ -z "$output" ]
+}
+
+@test "body_file_from_cmd: takes the FIRST match, not the last" {
+  # The regex version was greedy and took the last, so a trailing `gh api -F k=v`
+  # pointed the drift check at the wrong document and could FALSE-BLOCK a create.
+  run qpg_body_file_from_cmd "gh pr create --body-file /tmp/a.md && gh api r -F key=val"
+  [ "$output" = "/tmp/a.md" ]
+}
+
+@test "body_file_from_cmd: an unexpanded variable is returned as-is, so the gate can log it" {
+  # /ship emits --body-file "$PR_BODY_FILE"; a PreToolUse hook sees the RAW string.
+  run qpg_body_file_from_cmd "gh pr create --body-file \"\$PR_BODY_FILE\""
+  [ "$output" = "\$PR_BODY_FILE" ]
+}
+
+@test "build gate: a backdated forged stamp no longer buys a build" {
+  # `printf {...} > qa-plan-approved` + `touch -t <past>` used to pass both gates.
+  opt_in
+  legacy_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: a FRESH unattested stamp is refused (the carve-out is bounded)" {
+  # printf two JSON fields into the git dir must NOT open the gate. Keying the
+  # carve-out on shape alone made a forged stamp cheaper than a real one.
+  opt_in
+  fresh_unattested_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: an unattested stamp does NOT also buy a pass on plan drift" {
+  # Ordering: the least-attested stamps must not get the fewest checks.
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original |\n')
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  printf '## QA\n\n| [ ] | claude | REWRITTEN |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  echo "$output" | grep -q '"decision":"block"'
+  echo "$output" | grep -q "changed after it was approved"
+}
+
+@test "pr gate: a backdated forged stamp no longer ships" {
+  opt_in
+  legacy_stamp_for "feat/thing"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: a MISSING stamp still blocks (the pre-fix carve-out is narrow)" {
+  # The carve-out is for stamps that exist without proof, never for no stamp.
+  opt_in
+  rm -f "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: a plan edited after approval blocks the create" {
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original check |\n')
+  printf '%s' "$plan" > "$REPO/body.md"
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","approval_source":"AskUserQuestion","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  # The approved plan itself -> allowed.
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  [ -z "$output" ]
+  # Rewritten after approval -> blocked.
+  printf '## QA\n\n| [ ] | claude | a DIFFERENT check |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  echo "$output" | grep -q '"decision":"block"'
+  echo "$output" | grep -q "changed after it was approved"
+}
+
+@test "pr gate: ticking boxes in the plan does NOT block the create" {
+  opt_in
+  plan=$(printf '## QA\n\n| [ ] | claude | original check |\n')
+  d=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  printf '{"branch":"feat/thing","approval_source":"AskUserQuestion","criteria_digest":"%s"}' "$d" > "$GITDIR/qa-plan-approved"
+  printf '## QA\n\n| [x] | claude | original check |\n' > "$REPO/body.md"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create --body-file $REPO/body.md")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+# ========================================================================
+# Second review round: parser quoting, portable mtime, bounded carve-out
+# ========================================================================
+
+@test "body_file: a -F inside a quoted --body does not FALSE-BLOCK the real body" {
+  # Restores an assertion an earlier edit silently dropped, and pins the bug that
+  # reopened when it went: awk has no notion of shell quoting, so the bare -F
+  # inside the quoted string matched first and the digest was computed from the
+  # WRONG document, blocking a correct create with "the plan changed".
+  run qpg_body_file_from_cmd "gh pr create --body 'see -F notes.md for details' --body-file /tmp/real.md"
+  [ "$output" = "/tmp/real.md" ]
+}
+
+@test "body_file: a -F inside a quoted --title does not win either" {
+  run qpg_body_file_from_cmd "gh pr create --title \"x -F sneaky.md\" --body-file /tmp/real.md"
+  [ "$output" = "/tmp/real.md" ]
+}
+
+@test "body_file: a neighbouring gh api -F in the same line is ignored" {
+  # Segment-aware: only the shell segment carrying `gh pr create` is scanned, so
+  # this no longer depends on first-vs-last position luck.
+  run qpg_body_file_from_cmd "gh api r -F key=val && gh pr create --body-file /tmp/a.md"
+  [ "$output" = "/tmp/a.md" ]
+}
+
+@test "body_file: a quoted path containing a space survives intact" {
+  run qpg_body_file_from_cmd "gh pr create --body-file \"/tmp/my body.md\""
+  [ "$output" = "/tmp/my body.md" ]
+}
+
+@test "body_file: --body-file= with a quoted value still parses" {
+  run qpg_body_file_from_cmd "gh pr create --body-file=\"/tmp/q.md\""
+  [ "$output" = "/tmp/q.md" ]
+}
+
+@test "body_file: a dangling --body-file with no value yields nothing" {
+  run qpg_body_file_from_cmd "gh pr create --body-file"
+  [ -z "$output" ]
+}
+
+@test "pr gate: a pre-fix stamp with NO digest is refused at ship time" {
+  # Without a digest the drift check has nothing to compare and skips, so such a
+  # stamp would be a permanent drift-immune standing approval: strictly LESS
+  # checked than a forged token. The build gate stays lenient.
+  opt_in
+  printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
+  touch -t 202609010000 "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(create_payload "cd $REPO && gh pr create")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "build gate: an unattested stamp is BLOCKED no matter how old its file is" {
+  opt_in
+  printf '{"branch":"feat/thing","approved_at":"x","approver":"a","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
+  touch -t 202001010000 "$GITDIR/qa-plan-approved"
+  run bash -c "printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "extract: a trailing attribution footer after a --- does NOT join the plan" {
+  # /ship appends its footer after a bare thematic break with no heading. Without
+  # the break arm it landed inside the section, changed the digest, and produced a
+  # FALSE plan-changed block on a plan that had not changed. Found on PR #76.
+  plan=$(printf '## QA\n\n| [ ] | claude | check |\n')
+  withfooter=$(printf '## QA\n\n| [ ] | claude | check |\n\n---\n\nGenerated with Claude Code\nhttps://example/session\n')
+  a=$(qpg_plan_digest "$(qpg_extract_qa_section "$plan")")
+  b=$(qpg_plan_digest "$(qpg_extract_qa_section "$withfooter")")
+  [ -n "$a" ]; [ "$a" = "$b" ]
+}
+
+@test "extract: a table separator row does NOT terminate the section" {
+  # The break arm must not fire on |---|---|, which every plan table carries.
+  run qpg_extract_qa_section "$(printf '## QA\n\n| a | b |\n|---|---|\n| [ ] | x |\n')"
+  echo "$output" | grep -q '\[ \]'
 }

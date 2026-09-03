@@ -29,14 +29,38 @@
 #   A stamp is a JSON object written by `qa-plan-stamp.sh write`:
 #     { "branch": "<name>", "approved_at": "<iso8601>",
 #       "approved_at_epoch": <int>, "head_at_approval": "<sha>",
-#       "criteria_digest": "<hex>", "approver": "<who>", "tool": "qa-plan" }
+#       "criteria_digest": "<hex>", "approver": "<who>",
+#       "approval_source": "AskUserQuestion", "approval_nonce": "<hex>",
+#       "tool": "qa-plan" }
 #   Validity is keyed on BRANCH, not HEAD: an approved plan stays approved as the
 #   branch's commits accumulate during the build. (HEAD-keyed re-verification is
 #   the deploy gate's job, via the QA-passed checklist at merge time.) There is
 #   deliberately no TTL: a plan approved for a line of work does not "expire"
 #   mid-build; abandoning the branch is what ends it.
+#
+#   TWO CHECKS WERE ADDED FOR gstack-extensions#71:
+#
+#   1. `approval_source` must be present ("unattested" otherwise). Stamps written
+#      before the approval-token fix carry no such field, and there is no way to
+#      tell one a human approved from one an agent wrote. They therefore FAIL
+#      CLOSED and must be re-approved. This is the deliberate answer to that
+#      issue's back-compat question: silently honoring them would carry the exact
+#      ambiguity the fix exists to remove, and the cost is one re-approval on any
+#      branch still carrying a pre-fix stamp.
+#
+#   2. An optional <current_digest>. When the caller can see the plan the change
+#      is actually shipping (the PR gate reads it out of the `gh pr create` body),
+#      it passes the digest and a mismatch is "plan-changed": the plan was edited
+#      after the human approved it, so the approval no longer covers what is being
+#      shipped and a fresh one is required. This is the check that catches a
+#      SCOPED approval being carried forward as a STANDING one, which is how the
+#      2026-09-02 incident actually happened: a real approval for one piece of
+#      work, extended to later work with a different plan.
+#
+#      Callers that cannot see the plan (the build gate, which runs before any PR
+#      exists) omit it and get branch-scoped validity, exactly as before.
 qpg_stamp_valid() {
-  local stamp="$1" branch="$2"
+  local stamp="$1" branch="$2" current_digest="${3:-}"
 
   if [ -z "$stamp" ]; then echo "no-stamp"; return 1; fi
 
@@ -47,7 +71,121 @@ qpg_stamp_valid() {
 
   [ "$s_branch" = "$branch" ] || { echo "wrong-branch"; return 1; }
 
+  # Plan-drift check, evaluated BEFORE the attestation verdict. Order matters and
+  # the first cut had it backwards: returning "unattested" first meant the LEAST
+  # attested stamps got the FEWEST checks, so a pre-fix stamp was a standing,
+  # drift-immune approval and its `## QA` section could be rewritten to anything.
+  # That left the exact "scoped approval carried forward as standing" hole open on
+  # precisely the branches the migration exists to honor, including the four from
+  # the 2026-09-02 incident. Drift now applies to every stamp that carries a
+  # digest, attested or not.
+  #
+  # Only meaningful when BOTH digests are real: a stamp whose criteria_digest is
+  # "none" carries nothing to compare, and an empty <current_digest> means the
+  # caller could not read the plan. Either way we fall through rather than
+  # inventing a mismatch, so this check can only ever add a block, never remove one.
+  if [ -n "$current_digest" ]; then
+    local s_digest
+    s_digest=$(printf '%s' "$stamp" | jq -r '.criteria_digest // empty' 2>/dev/null) || s_digest=""
+    if [ -n "$s_digest" ] && [ "$s_digest" != "none" ] && [ "$s_digest" != "$current_digest" ]; then
+      echo "plan-changed"; return 1
+    fi
+  fi
+
+  # The source must be the EXACT literal the minter writes, not merely non-empty.
+  # Accepting any truthy string gave a forged stamp a free choice of value and
+  # cost nothing to tighten (CodeRabbit, PR #76). This does not make a written
+  # file unforgeable, which is impossible for any agent with shell access and is
+  # documented honestly in qa-plan-token-lib.sh; it removes a degree of freedom.
+  local s_source
+  s_source=$(printf '%s' "$stamp" | jq -r '.approval_source // empty' 2>/dev/null) || s_source=""
+  [ "$s_source" = "AskUserQuestion" ] || { echo "unattested"; return 1; }
+
   echo "valid"; return 0
+}
+
+# qpg_unattested_disposition <gate>
+#   What a gate does with an "unattested" stamp: one carrying no proof a human
+#   approved it. Echoes "block" for everything. Kept as a function rather than
+#   inlined so the truth table stays enumerated in bats and a future carve-out
+#   has one obvious place to be argued for.
+#
+#   It used to allow such a stamp inside a migration window bounded by the stamp
+#   FILE'S MTIME. CodeRabbit killed that on PR #76 and was right: mtime is
+#   mutable by the same shell that writes the file, so `touch -t` past the cutoff
+#   defeated it in one extra command. The window existed only because a pre-fix
+#   branch could not obtain a token at all (the minting hook was unregistered,
+#   and blocking those stamps caused a machine-wide outage mid-build). With the
+#   hook shipping here, the remedy is one /qa:plan approval, so the carve-out
+#   costs a forgeable bypass to save a click.
+qpg_unattested_disposition() {
+  case "$1" in
+    *) echo "block"; return 1 ;;
+  esac
+}
+
+# qpg_normalize_plan <text>
+#   Canonicalize QA-plan text so a digest of it is stable across the edits that do
+#   NOT constitute a plan change. Echoes the normalized text.
+#
+#   What is normalized away, and why each one matters:
+#     - Tick state: a Dev QA row's box and a Definition-of-Done bullet flip from
+#       unticked to ticked AS THE QA IS RUN. That is the plan being executed, not
+#       the plan being changed, and treating it as a change would invalidate the
+#       human's approval precisely when the driver started doing the work.
+#     - Trailing whitespace and CRLF: invisible, and churned by editors.
+#     - Leading / trailing blank lines: an artifact of how the section was sliced.
+#   Everything else (a reworded check, a new row, a different tester, a changed
+#   expectation) DOES change the digest, which is the point.
+qpg_normalize_plan() {
+  printf '%s' "$1" \
+    | tr -d '\r' \
+    | sed -e 's/\[[xX]\]/[ ]/g' -e 's/[[:space:]]*$//' \
+    | sed -e '/./,$!d' \
+    | awk 'BEGIN{n=0} {lines[n++]=$0} END{last=n-1; while(last>=0 && lines[last]=="") last--; for(i=0;i<=last;i++) print lines[i]}'
+}
+
+# qpg_plan_digest <text>
+#   The canonical digest of a QA plan: sha256 of the normalized text. Echoes the
+#   hex digest, or nothing when no sha256 tool is available (callers treat an
+#   empty digest as "could not read the plan" and skip the drift check, so a host
+#   without shasum degrades to the old branch-scoped behaviour rather than
+#   blocking everything).
+qpg_plan_digest() {
+  local norm; norm=$(qpg_normalize_plan "$1")
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$norm" | shasum -a 256 | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$norm" | sha256sum | cut -d' ' -f1
+  else
+    printf ''
+  fi
+}
+
+# qpg_extract_qa_section <pr_body_text>
+#   Pull the `## QA` section out of a PR body: from the `## QA` heading to the
+#   next top-level `##` heading, or end of body. Echoes the section (heading
+#   included), or nothing when the body has no such section.
+#
+#   `###` subheadings (the Development / Production tables) stay INSIDE, matching
+#   how merge-clearance reads the same section. A body with no `## QA` section
+#   yields empty, which callers treat as "could not read the plan".
+#
+#   A markdown THEMATIC BREAK (`---` alone on a line) also terminates it. gstack
+#   /ship appends its attribution footer after a bare `---` with no heading of its
+#   own, so without this arm the footer is absorbed into the section, changes the
+#   plan's digest, and produces a FALSE "the QA plan changed after it was
+#   approved" block on a body whose plan is byte-identical to the approved one.
+#   Caught on this feature's own PR (#76), which is the shape every future ship
+#   would have hit. Safe to stop on: plan tables use `|---|` separators, which are
+#   not bare, and a thematic break genuinely ends a section.
+qpg_extract_qa_section() {
+  printf '%s' "$1" | awk '
+    /^##[[:space:]]+QA[[:space:]]*$/ { inq=1; print; next }
+    inq && /^##[[:space:]]/ && !/^###/ { inq=0 }
+    inq && /^-{3,}[[:space:]]*$/ { inq=0 }
+    inq { print }
+  '
 }
 
 # qpg_is_spike <branch>
@@ -188,6 +326,67 @@ $paths
 EOF
   [ "$any" -eq 1 ] && { echo "yes"; return 0; }
   echo "no"; return 1
+}
+
+# qpg_body_file_from_cmd <cmd>
+#   Echo the path given to the FIRST `--body-file` / `--body-file=` / `-F` in a
+#   `gh pr create` command, or nothing. Surrounding quotes are stripped.
+#
+#   Tokenized with awk, and QUOTED REGIONS ARE BLANKED FIRST. Both parts are
+#   needed, and the second was learned the hard way twice.
+#
+#   The regex version took the LAST match (its leading `.*` was greedy), so a
+#   trailing `gh api ... -F key=val` won. Switching to first-match fixed that and
+#   opened the mirror-image bug: awk has no notion of shell quoting, so
+#   `--body "see -F notes.md for context"` tokenizes to `--body`, `"see`, `-F`,
+#   `notes.md`, ... and the bare `-F` matched FIRST, ahead of the real
+#   `--body-file`. That is not a harmless skip: if `notes.md` exists and carries
+#   an older `## QA` section, the digest is computed from the WRONG document and
+#   a perfectly correct create is BLOCKED with "the QA plan changed after it was
+#   approved", which is a lie. Blanking quoted spans first makes the parse
+#   independent of which flag happens to come first.
+#
+#   SCOPE, stated honestly: an unexpanded shell variable cannot be resolved from a
+#   PreToolUse payload, which sees the RAW command string. gstack /ship emits
+#   `--body-file "$PR_BODY_FILE"`, so this returns the literal `$PR_BODY_FILE`,
+#   the file is unreadable, and the drift check does not run. That is why the
+#   authoritative binding is the token's plan_digest (captured at click time),
+#   not this re-derivation: this is a secondary confirmation that the body being
+#   shipped matches, and the PR gate LOGS when it cannot run rather than passing
+#   silently.
+qpg_body_file_from_cmd() {
+  printf '%s' "$1" | awk '
+    function seg_has_create(t) { return (t ~ /gh[ \t]+pr[ \t]+create/) }
+    {
+      # 1. Quoting JOINS words. Inside a quoted span, spaces become \001 and the
+      #    quote marks are dropped, so `--body "see -F notes.md"` becomes ONE
+      #    token that can never equal "-F", while `"$PR_BODY_FILE"` survives
+      #    intact as a value we can still report. Blanking the contents instead
+      #    (a first attempt) also destroyed --body-file="path" and the
+      #    unexpanded-variable form the PR gate needs in order to log honestly.
+      out = ""; q = ""; n = length($0)
+      for (k = 1; k <= n; k++) {
+        c = substr($0, k, 1)
+        if (q == "") {
+          if (c == "\"" || c == "\047") q = c
+          else out = out c
+        } else if (c == q) q = ""
+        else out = out (c == " " || c == "\t" ? "\001" : c)
+      }
+      # 2. Only look at the shell segment that actually carries `gh pr create`.
+      #    Otherwise a neighbouring `gh api ... -F key=val` in the same line wins
+      #    or loses on position alone, which is a coin flip either way.
+      nseg = split(out, seg, /&&|\|\||;/)
+      pick = out
+      for (s = 1; s <= nseg; s++) if (seg_has_create(seg[s])) { pick = seg[s]; break }
+      m = split(pick, tok, /[ \t]+/)
+      for (i = 1; i <= m; i++) {
+        v = ""
+        if ((tok[i] == "--body-file" || tok[i] == "-F") && i < m) v = tok[i+1]
+        else if (index(tok[i], "--body-file=") == 1) v = substr(tok[i], 13)
+        if (v != "") { gsub(/\001/, " ", v); print v; exit }
+      }
+    }'
 }
 
 # qpg_marker_gates <marker_json>

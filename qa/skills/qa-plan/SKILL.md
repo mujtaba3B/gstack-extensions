@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-version: 2.2.0
+version: 2.3.0
 description: >-
   QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Also publishes a companion Claude artifact rendering the same plan (the PR body stays the machine source of truth the gates read). It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
 allowed-tools:
@@ -185,19 +185,41 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
 
    The canonical plan lives in the PR body (Step 4); the chat render is the approval-time copy the human reads. If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
 
-2. **On Approve, write the stamp.** Run from the repo (or the branch's worktree). The stamp script ships inside this plugin at `../../hooks/scripts/qa-plan-stamp.sh` relative to this skill's base directory (named in the preamble); resolve it from there:
+2. **Embed the plan digest in the question.** Before firing the modal, compute the canonical digest of the `## QA` section and put the marker in the question text. Never hand-roll the hash: the stamp script computes it through the same functions the gates use, which is the only way the two can agree.
 
    ```bash
-   "<this skill's base directory>/../../hooks/scripts/qa-plan-stamp.sh" write \
-     --digest "$(printf '%s' "<your QA section text>" | shasum -a 256 | cut -d' ' -f1)"
+   STAMP="<this skill's base directory>/../../hooks/scripts/qa-plan-stamp.sh"
+   DIGEST=$("$STAMP" digest <path-to-the-PR-body-or-plan-file>)   # or pipe the body on stdin
    ```
 
-   `--digest` is optional (hashes the approved plan so later drift is detectable); omit if awkward. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+   Then the question text ends with `<qa-plan-digest:$DIGEST>`. It DOES render in the modal, so put it last, on its own, and treat it as a visible fingerprint of the plan being approved rather than hidden metadata. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
 
-3. **Only stamp on an explicit Approve.** The stamp records the human's approval; never write it on their behalf. On Rework it, re-present and stamp only after the next Approve. A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
+   An earlier version told you to run `shasum` over your own slice of the section. That produced a digest of RAW text while the gate hashed NORMALIZED text, so one stray trailing newline created a stamp whose digest could never match and a `gh pr create` that blocked forever with no way to satisfy it. Use the `digest` verb.
+
+3. **On Approve, write the stamp.** Run from the repo (or the branch's worktree), with no arguments:
+
+   ```bash
+   "$STAMP" write
+   ```
+
+   `write` takes NO options. The approver name and the plan digest both come from the token; `--approver` and `--digest` were removed because an input the agent controls is not evidence of a human's approval. The script keys the stamp to the current branch and prints its path. Confirm: "QA plan approved and stamped for `<branch>`; building is unblocked."
+
+   **Check the exit status, and do not pipe the write.** A refusal exits non-zero and explains itself on stderr, but piping (`... | cat`) replaces the pipeline's status with the pipe's, so a refusal then looks like success and you will report a stamp that does not exist. This has already happened once in a real session. Run it bare; `"$STAMP" status` prints both the stamp and whether a token is present.
+
+4. **You cannot write the stamp without the human's click, and you should not try.** As of the approval-token fix (gstack-extensions#71) this is ENFORCED, not merely instructed. `write` refuses unless a `PostToolUse` hook has minted a token from a real `AskUserQuestion` answer of "Approve" on a question whose header matches `"QA plan"`, and it CONSUMES that token, so one click yields exactly one stamp.
+
+   What this means for you in practice:
+
+   - **Header must match `"QA plan"`** (compared case-insensitively after trimming) and the chosen option must normalize to exactly `Approve`. `Approve (recommended)` is fine; a QUALIFIED label like `Approve (skip Prod QA)` deliberately does NOT mint, because a qualified approval is not an unqualified one.
+   - **On Rework it or Skip the gate, nothing is minted.** Re-present, and stamp only after a later Approve.
+   - **If `write` refuses right after an approval**, the minting hook is not registered in the running session. Script CONTENT goes live as soon as the file changes (this marketplace is a directory source, so the plugin root is the checkout), but hook REGISTRATION is read at session start, so a newly added hook needs a restart. Say so plainly and stop; do not look for another way to produce the stamp. Existing approvals still work meanwhile: a stamp already on the branch keeps shipping, so this blocks only NEW approvals until the restart.
+   - **A new or changed plan needs its own approval.** The token is single-use and the stamp's digest is the digest of the plan that was on screen, so carrying a previous Approve forward to a plan the human has not seen does not work and is not something to attempt. Treating a scoped approval as a standing one is exactly the failure this gate exists to prevent: on 2026-09-02 it put approval stamps on four pull requests nobody approved, one of which merged.
+
+   A detached HEAD or base-branch checkout refuses to stamp by design; branch first.
 
 ## What this skill does NOT do
 
 - It does not **execute** QA. Development QA is `/qa` / `qa:browser` / `qa:headless`; Production QA is `/canary`. This skill writes the plan they run against.
 - It does not **invent** criteria. It pulls them from `/spec`, the issue, the mockup, or the user.
 - It does not **merge or open the PR**. Opening the PR is `/ship`; the merge-clearance stamp is `/eng:cr`. The only stamp this skill writes is the QA-plan **approval** stamp (`<git-dir>/qa-plan-approved`), and only after the human approves in Step 6.
+- It does not **mint its own approval**. The token that authorizes the stamp is written by a `PostToolUse` hook from the human's actual answer, which is a field the harness fills in and the model cannot emit. That is deliberate: this is the one stamp in the system that attests to a HUMAN act, so unlike the `/eng:cr` review stamp (which attests to an agent act and is rightly agent-written) it cannot be self-issued.

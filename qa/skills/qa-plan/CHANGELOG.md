@@ -1,5 +1,66 @@
 # qa:plan CHANGELOG
 
+## v2.3.0
+
+The approval stamp now requires a real human approval (gstack-extensions#71).
+
+- `qa-plan-stamp.sh write` refuses unless a single-use approval token is
+  present, and consumes it, so one human click yields exactly one stamp. The
+  token is minted only by a new `PostToolUse` hook on AskUserQuestion
+  (`qa-plan-approval-token.sh`) when a question with header "QA plan" is
+  answered "Approve". That answer is filled in by the harness from a real
+  click and cannot be emitted by the model, which is what makes it a root of
+  trust. There is no environment override and no `--force`.
+- `approver` no longer falls back to `git config user.name`. The writer reads
+  git config nowhere; the name reaches a stamp only through a token. Before
+  this, an agent-written stamp was byte-identical to a human approval and
+  recorded under the human's name.
+- `write` takes NO arguments. `--approver` and `--digest` were both removed:
+  each was an agent-supplied input to a human-attested record. `--approver` let
+  an arbitrary name be recorded under a genuine `approval_source`, and
+  `--digest` let an agent approve plan A and stamp the digest of plan B, which
+  defeated drift detection entirely.
+- The approval binds to the PLAN, not just to the click. `/qa:plan` embeds
+  `<qa-plan-digest:HEX>` in the approval question, the minting hook copies it
+  into the token, and the stamp's `criteria_digest` comes from the token. A new
+  `qa-plan-stamp.sh digest` verb computes it, so the skill never hand-rolls a
+  hash. The skill used to `shasum` raw text while the gate hashed NORMALIZED
+  text, so one stray newline produced a stamp that could never match and a
+  `gh pr create` blocked forever with no way to satisfy it.
+- The mint decision is one pure `qpt_should_mint` truth table rather than an
+  inline guard chain, per this repo's lib rule. That rule earned itself again:
+  the inline version's header check diverged from the lib (byte-exact in jq,
+  case-insensitive in the comparator), so a modal headed "QA Plan" minted
+  nothing while the writer blamed an unregistered hook.
+- A qualified approval is no longer an unqualified one. Label normalization
+  strips only `(recommended)`/`(default)`, so `Approve (skip Prod QA)` does not
+  mint.
+- Stamps carry `approval_source` and `approval_nonce`, and the gates require
+  `approval_source` to equal the exact literal `AskUserQuestion`. A stamp
+  lacking it ("unattested") is REFUSED at both the build and PR gates, with no
+  migration allowance. An earlier cut honored such a stamp when its file
+  predated the fix; that bound was keyed on mtime, which the same shell that
+  writes the stamp can rewrite, so `touch -t` defeated it in one extra command.
+  It only ever existed because a pre-fix branch could not obtain a token while
+  the minting hook was unregistered. A branch still carrying a pre-fix stamp
+  runs `/qa:plan` and approves once; that is the whole migration.
+- Drift is evaluated BEFORE the attestation verdict, so the least-attested
+  stamps no longer get the fewest checks.
+- The PR gate LOGS when the drift check cannot run (`drift-check-skipped`).
+  It could not run on the real `/ship` path at all: `/ship` emits
+  `--body-file "$PR_BODY_FILE"` and a PreToolUse hook sees the raw string, so
+  the file was unreadable and the check silently no-opped while every test
+  passed an already-expanded absolute path. Green suite, dead feature. The
+  token-bound digest is now the authoritative binding; this is confirmation.
+- The PR gate re-derives the digest of the `## QA` section in the body being
+  created and blocks when it differs from the approved one, so a plan edited
+  after approval must be re-approved. Tick state is normalized out, so a QA
+  driver marking rows done does not invalidate the approval.
+- Step 6 of the skill documents the enforced contract. `write` takes NO options:
+  the plan digest reaches the stamp through the token, carried as a
+  `<qa-plan-digest:HEX>` marker in the approval question and computed by the new
+  `qa-plan-stamp.sh digest` verb, never by a hand-rolled hash.
+
 ## v2.2.0
 
 Checkbox-free, skimmable companion artifact.

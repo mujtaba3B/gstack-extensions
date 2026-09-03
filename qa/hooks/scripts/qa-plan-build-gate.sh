@@ -44,9 +44,12 @@ TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # ~/dev (a worktree of the ~/dev repo itself has to live outside it).
 
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
-[ -f "$LIB" ] || exit 0
+TLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-token-lib.sh"
+{ [ -f "$LIB" ] && [ -f "$TLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$LIB"
+# shellcheck source=/dev/null
+. "$TLIB"
 
 # Cheapest discriminator FIRST. This hook fires on every Edit/Write, and most of
 # them are docs, config or tests, which are carved out regardless of policy. The
@@ -80,6 +83,15 @@ GITDIR=$(git -C "$DIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 [ "$VERDICT" = "valid" ] && exit 0
+
+# An unattested stamp (no `approval_source`) is refused. The mtime-bounded
+# migration window that used to live here was removed on PR #76: mtime is
+# mutable by the same shell that writes the stamp. See
+# qpg_unattested_disposition. Logged so the refusal is visible in the gate log.
+if [ "$VERDICT" = "unattested" ]; then
+  printf '%s build-gate BLOCK(unattested) branch=%s file=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+fi
 
 # Blocked: record for visibility (a rotted/bypassed gate should be auditable).
 LOG="$HOME/.claude/qa-plan-gate.log"
