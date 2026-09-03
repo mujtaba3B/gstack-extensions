@@ -99,8 +99,22 @@ def main() -> int:
             break
         time.sleep(0.05)
     if status is None:
-        os.kill(pid, signal.SIGKILL)
-        _, status = os.waitpid(pid, 0)
+        # killpg, not kill: pty.fork made the child a SESSION LEADER, so its
+        # descendants share its process group. Killing only the shell leaves a
+        # `sleep` (or anything else it started) orphaned and running, which the
+        # follow-up review pointed out. Falls back to kill if the group is
+        # already gone.
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            _, status = os.waitpid(pid, 0)
+        except ChildProcessError:   # already reaped
+            status = 0
     sys.stdout.write(b"".join(chunks).decode("utf-8", "replace").replace("\r", ""))
     return os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") \
         else (status >> 8)

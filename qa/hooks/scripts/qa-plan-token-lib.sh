@@ -484,28 +484,49 @@ qpt_writer_is_guarded() {
     # function: a cached writer that reads stdin or sleeps would block the gate
     # forever. Raised by CodeRabbit on PR #80 and correct.
     #
-    # `timeout` is not on stock macOS, so the fallback is a plain bash watchdog
-    # rather than a hope. Either way an expiry counts as "did not write", which
-    # lands on the guarded verdict, and the stamp check below is what actually
-    # decides.
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 10 bash "$p" write >/dev/null 2>&1 </dev/null
-    else
-      bash "$p" write >/dev/null 2>&1 </dev/null &
-      _probe_pid=$!
-      ( sleep 10; kill -9 "$_probe_pid" 2>/dev/null ) >/dev/null 2>&1 &
-      _watchdog_pid=$!
-      wait "$_probe_pid" 2>/dev/null
-      kill "$_watchdog_pid" 2>/dev/null
-      wait "$_watchdog_pid" 2>/dev/null
-    fi
+    # A plain bash watchdog rather than `timeout`, which is not on stock macOS,
+    # so there is one code path instead of a common one and an untested fallback.
+    # An expiry is recorded, not swallowed: see the three-outcome verdict below.
+    # Own process group, so the watchdog can kill DESCENDANTS too. Killing just
+    # the shell leaves a foreground `sleep` orphaned and running (CodeRabbit's
+    # follow-up review). `set -m` gives the background job its own pgid; a
+    # negative pid signals the group. A child that calls setsid still escapes,
+    # which is noted rather than pretended away: the consequence there is a stray
+    # process, not a stuck gate, because the gate has already moved on.
+    set -m 2>/dev/null || true
+    bash "$p" write >/dev/null 2>&1 </dev/null &
+    _probe_pid=$!
+    (
+      sleep 10
+      kill -9 -"$_probe_pid" 2>/dev/null || kill -9 "$_probe_pid" 2>/dev/null
+      : > "$probe/.probe-timed-out"
+    ) >/dev/null 2>&1 &
+    _watchdog_pid=$!
+    wait "$_probe_pid" 2>/dev/null
+    kill -9 "$_watchdog_pid" 2>/dev/null
+    wait "$_watchdog_pid" 2>/dev/null
     exit 0
   )
-  local wrote="no"
+  local wrote="no" timed_out="no"
   [ -f "$probe/.git/qa-plan-approved" ] && wrote="yes"
+  [ -f "$probe/.probe-timed-out" ] && timed_out="yes"
   rm -rf "$probe" 2>/dev/null || true
 
-  if [ "$wrote" = "yes" ]; then echo "no"; return 1; fi
+  # THREE outcomes, not two, and the third one is why this is spelled out.
+  # Collapsing "did not write" and "did not finish" into one answer is a
+  # FAIL-OPEN: a writer that sleeps past the deadline and only then writes gets
+  # killed, leaves no stamp, and would be reported guarded. That is an unguarded
+  # writer surviving the detector, which is precisely what this exists to catch.
+  # Caught by an adversarial pass on the fix for the previous finding, which is a
+  # good argument for reviewing the fix and not just the bug.
+  #
+  # On a timeout the honest answer is "unknown", and the safe rendering of
+  # unknown is "no": the two consumers treat that as PRUNE (bin/install, which
+  # only ever considers versions other than the live one, so the cost is deleting
+  # a stale cache directory that bin/install can recreate) and WARN (the gates,
+  # where an extra warning is harmless). A guarded writer refuses in
+  # milliseconds, so ten seconds is not a boundary it can trip by accident.
+  if [ "$wrote" = "yes" ] || [ "$timed_out" = "yes" ]; then echo "no"; return 1; fi
   echo "yes"; return 0
 }
 

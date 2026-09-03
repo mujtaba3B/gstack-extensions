@@ -667,10 +667,26 @@ HANG
   start=$(date +%s)
   run qpt_writer_is_guarded "$REPO/hanging-writer.sh"
   elapsed=$(( $(date +%s) - start ))
-  # It never writes a stamp, so it is correctly reported as guarded, and the
-  # deadline is what makes that verdict arrive at all.
-  [ "$output" = "yes" ]
+  # A TIMEOUT IS NOT A PASS. The verdict is "no", because the probe learned
+  # nothing: reporting a writer guarded on the strength of "it did not finish"
+  # is a fail-open, and the writer below proves why.
+  [ "$output" = "no" ]
   [ "$elapsed" -lt 30 ]
+}
+
+@test "writer probe: a SLOW unguarded writer is not mistaken for a guarded one" {
+  # The fail-open an adversarial pass found in the fix for the previous finding.
+  # Bounding the probe created a new way to pass it: sleep past the deadline,
+  # then write. The probe kills the writer, sees no stamp, and under a two-state
+  # verdict would report "guarded" and leave an unguarded writer on disk. The
+  # timeout is now recorded separately and renders as "no".
+  cat > "$REPO/slow-unguarded.sh" <<'SLOW'
+#!/bin/bash
+sleep 11
+printf '{"branch":"x"}' > "$(git rev-parse --absolute-git-dir)/qa-plan-approved"
+SLOW
+  run qpt_writer_is_guarded "$REPO/slow-unguarded.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
 }
 
 # ---- qpt_writer_is_guarded --------------------------------------------------
