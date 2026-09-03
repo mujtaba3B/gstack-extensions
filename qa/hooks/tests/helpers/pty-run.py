@@ -33,7 +33,9 @@ import os
 import pty
 import re
 import select
+import signal
 import sys
+import time
 
 TIMEOUT = 15.0
 
@@ -83,7 +85,22 @@ def main() -> int:
         chunks.append(data)
 
     os.close(fd)
-    _, status = os.waitpid(pid, 0)
+
+    # BOUNDED REAP. `select` above has a deadline; the wait did not. Closing the
+    # master usually hangs up the child, but a child that ignores SIGHUP, or that
+    # blocks on something other than the tty, would hang the whole bats suite
+    # with no output and no clue why. Raised by CodeRabbit on PR #80.
+    deadline = time.monotonic() + 5.0
+    status = None
+    while time.monotonic() < deadline:
+        reaped, st = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            status = st
+            break
+        time.sleep(0.05)
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        _, status = os.waitpid(pid, 0)
     sys.stdout.write(b"".join(chunks).decode("utf-8", "replace").replace("\r", ""))
     return os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") \
         else (status >> 8)

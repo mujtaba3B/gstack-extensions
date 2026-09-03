@@ -598,20 +598,79 @@ and then merge"; do
 }
 
 @test "liveness_file: a session id cannot steer the write out of the heartbeat dir" {
-  run qpt_liveness_file "../../evil"
-  [ "$output" = "$(qpt_liveness_dir)/....evil" ]
+  # Path traversal: whatever comes back must sit directly inside the heartbeat
+  # directory, with no way up and out of it.
+  for raw in "../../evil" "a/b" "/etc/passwd" "..%2F.." "x\$(touch /tmp/pwned)"; do
+    run qpt_liveness_file "$raw"
+    [ -n "$output" ]
+    case "$output" in "$(qpt_liveness_dir)/"*) ;; *) false ;; esac
+    case "$output" in *"/../"*|*"/..") false ;; *) ;; esac
+  done
+  [ ! -f /tmp/pwned ]
 
-  run qpt_liveness_file "a/b"
-  [ "$output" = "$(qpt_liveness_dir)/ab" ]
-
-  for bad in "" "/" ".." "..."; do
+  for bad in "" "/"; do
     run qpt_liveness_file "$bad"
-    # Either refused outright, or reduced to something that stays inside the dir.
     if [ -n "$output" ]; then
       case "$output" in "$(qpt_liveness_dir)/"*) ;; *) false ;; esac
-      case "$output" in *"/../"*|*"/..") false ;; *) ;; esac
     fi
   done
+}
+
+@test "liveness_file: sanitizing alone would collide, so distinct ids stay distinct" {
+  # The bug CodeRabbit found on PR #80. Stripping unsafe characters is LOSSY:
+  # "a/b" and "ab" both sanitize to "ab", so two sessions shared one heartbeat
+  # and qp_minter_liveness could answer "observed" for a session that never ran
+  # the hook. That is a wrong answer in the fail-OPEN direction, on the one
+  # readout whose whole job is to stop a wasted restart. A digest of the RAW id
+  # disambiguates; the readable prefix survives for grepping by hand.
+  a=$(qpt_liveness_file "a/b")
+  b=$(qpt_liveness_file "ab")
+  [ -n "$a" ]; [ -n "$b" ]
+  [ "$a" != "$b" ]
+
+  # Same id in, same file out: liveness would be useless if it were not stable.
+  [ "$(qpt_liveness_file "sess-1")" = "$(qpt_liveness_file "sess-1")" ]
+  [ "$(qpt_liveness_file "sess-1")" != "$(qpt_liveness_file "sess-2")" ]
+
+  # And the readable part is still there, so the directory can be read by eye.
+  assert_contains "$(qpt_liveness_file "633cfee0-15fc")" "633cfee0-15fc"
+}
+
+@test "claude_dir: CLAUDE_CONFIG_DIR relocates the heartbeat dir and the gate log" {
+  # Claude Code moves its whole config root when this is set, so hardcoding
+  # ~/.claude writes to a directory the runtime is not using and liveness then
+  # reports never-observed forever. Raised by CodeRabbit on PR #80.
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_claude_dir"
+  [ "$output" = "/tmp/cc-alt" ]
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_liveness_dir"
+  [ "$output" = "/tmp/cc-alt/qa-plan-minter-seen" ]
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_gate_log"
+  [ "$output" = "/tmp/cc-alt/qa-plan-gate.log" ]
+
+  # Unset falls back to ~/.claude, and an unset HOME must not abort under set -u.
+  run env -u CLAUDE_CONFIG_DIR bash -c ". '$TLIB'; qpt_claude_dir"
+  [ "$output" = "$HOME/.claude" ]
+  run env -u CLAUDE_CONFIG_DIR -u HOME bash -c "set -u; . '$TLIB'; qpt_gate_log"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "writer probe: a hanging cached writer cannot block the gate forever" {
+  # The Major finding on PR #80. qpt_writer_is_guarded RUNS a foreign script from
+  # inside a synchronous PreToolUse hook, so an unbounded call is a session-wide
+  # hang, not a slow function. A writer that reads stdin or sleeps must not win.
+  cat > "$REPO/hanging-writer.sh" <<'HANG'
+#!/bin/bash
+cat            # blocks forever on stdin unless stdin is closed
+sleep 600
+HANG
+  start=$(date +%s)
+  run qpt_writer_is_guarded "$REPO/hanging-writer.sh"
+  elapsed=$(( $(date +%s) - start ))
+  # It never writes a stamp, so it is correctly reported as guarded, and the
+  # deadline is what makes that verdict arrive at all.
+  [ "$output" = "yes" ]
+  [ "$elapsed" -lt 30 ]
 }
 
 # ---- qpt_writer_is_guarded --------------------------------------------------

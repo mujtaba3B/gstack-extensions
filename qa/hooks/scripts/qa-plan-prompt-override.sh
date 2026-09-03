@@ -90,7 +90,7 @@ CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
 BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-LOG="$HOME/.claude/qa-plan-gate.log"
+LOG=$(qpt_gate_log)
 
 # THE decision, in one pure call whose truth table is enumerated in bats. Logged
 # either way. A no-mint here is worth a line for the same reason it is in the

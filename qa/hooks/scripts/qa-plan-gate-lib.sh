@@ -152,6 +152,7 @@ qpg_stamp_valid() {
 # (or one terminal command), and by the time it lapses the ordinary click path is
 # almost always available again, since the usual cause of needing an override is a
 # hook that a restart has since registered.
+# shellcheck disable=SC2034  # consumed by qa-plan-stamp.sh, which sources this file
 QPG_OVERRIDE_TTL=28800
 
 # qpg_source_trusted <approval_source>

@@ -132,7 +132,7 @@ _MINT=$(qpt_should_mint "$TOOL" "$HEADER" "$ANSWER" "$BRANCH")
 if [ "$_MINT" != "mint" ]; then
   printf '%s approval-token no-mint(%s) branch=%s header=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_MINT" "${BRANCH:-?}" "${HEADER:-?}" \
-    >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+    >> "$(qpt_gate_log)" 2>/dev/null || true
   exit 0
 fi
 

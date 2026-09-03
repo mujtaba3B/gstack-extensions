@@ -443,7 +443,7 @@ case "$VERB" in
     mv -f "$tmp" "$STAMP" || { rm -f "$tmp"; echo "stamp write failed" >&2; exit 1; }
     printf '%s tty-override stamp branch=%s tty=%s parent=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$TTY_NAME" "$PARENT_CMD" \
-      >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+      >> "$(qpt_gate_log)" 2>/dev/null || true
     echo "$STAMP"
     ;;
 
@@ -510,8 +510,13 @@ case "$VERB" in
     # writer and used it.
     _SRC_MANIFEST="$LIBDIR/../../.claude-plugin/plugin.json"
     _SRC_VER=$(jq -r '.version // empty' "$_SRC_MANIFEST" 2>/dev/null || echo "")
-    _CACHE="$HOME/.claude/plugins/cache/gstack-extensions/qa"
-    _INST_VER=$(ls -1 "$_CACHE" 2>/dev/null | sort -V | tail -1)
+    _CACHE="$(qpt_claude_dir)/plugins/cache/gstack-extensions/qa"
+    # DIRECTORIES only. `ls -1` lists files too, so a stray file with a
+    # version-shaped name (a .DS_Store sibling, a leftover tarball) could sort
+    # highest and be reported as the installed version, producing a false skew
+    # diagnosis in the one command someone runs to find out what is wrong.
+    # Raised by CodeRabbit on PR #80.
+    _INST_VER=$(find "$_CACHE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -V | tail -1)
     echo "  source version:    ${_SRC_VER:-?}"
     echo "  installed version: ${_INST_VER:-<none installed>}"
     if [ -n "$_SRC_VER" ] && [ -n "$_INST_VER" ] && [ "$_SRC_VER" != "$_INST_VER" ]; then

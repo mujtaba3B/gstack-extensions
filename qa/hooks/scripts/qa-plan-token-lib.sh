@@ -478,7 +478,28 @@ qpt_writer_is_guarded() {
     git config user.name probe >/dev/null 2>&1
     git commit -q --allow-empty -m probe >/dev/null 2>&1 || exit 1
     git checkout -q -b probe/guarded >/dev/null 2>&1 || exit 1
-    bash "$p" write >/dev/null 2>&1
+    # BOUNDED, and with stdin closed. This runs a FOREIGN script (an old cached
+    # copy of the writer) from inside a SYNCHRONOUS PreToolUse hook, so an
+    # unbounded call is a hang risk for the whole session, not just for this
+    # function: a cached writer that reads stdin or sleeps would block the gate
+    # forever. Raised by CodeRabbit on PR #80 and correct.
+    #
+    # `timeout` is not on stock macOS, so the fallback is a plain bash watchdog
+    # rather than a hope. Either way an expiry counts as "did not write", which
+    # lands on the guarded verdict, and the stamp check below is what actually
+    # decides.
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10 bash "$p" write >/dev/null 2>&1 </dev/null
+    else
+      bash "$p" write >/dev/null 2>&1 </dev/null &
+      _probe_pid=$!
+      ( sleep 10; kill -9 "$_probe_pid" 2>/dev/null ) >/dev/null 2>&1 &
+      _watchdog_pid=$!
+      wait "$_probe_pid" 2>/dev/null
+      kill "$_watchdog_pid" 2>/dev/null
+      wait "$_watchdog_pid" 2>/dev/null
+    fi
+    exit 0
   )
   local wrote="no"
   [ -f "$probe/.git/qa-plan-approved" ] && wrote="yes"
@@ -493,8 +514,22 @@ qpt_writer_is_guarded() {
 #   rather than a single file because sessions run concurrently on this machine and
 #   a shared file would have them clobbering each other's evidence, turning a
 #   liveness signal into a race.
+qpt_claude_dir() {
+  # Claude Code relocates its whole config root when CLAUDE_CONFIG_DIR is set, so
+  # every path that would be ~/.claude moves with it. Hardcoding $HOME/.claude
+  # writes heartbeats and gate logs to a directory the runtime is not using, and
+  # the liveness readout then reports never-observed forever. Raised by
+  # CodeRabbit on PR #80.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s' "$CLAUDE_CONFIG_DIR"
+  else printf '%s/.claude' "${HOME:-/tmp}"; fi
+}
+
+qpt_gate_log() {
+  printf '%s/qa-plan-gate.log' "$(qpt_claude_dir)"
+}
+
 qpt_liveness_dir() {
-  printf '%s/.claude/qa-plan-minter-seen' "${HOME:-/tmp}"
+  printf '%s/qa-plan-minter-seen' "$(qpt_claude_dir)"
 }
 
 # qpt_liveness_file <session_id>
@@ -503,9 +538,30 @@ qpt_liveness_dir() {
 #   filename, so a session id carrying a slash or a `..` cannot steer the write
 #   out of the heartbeat directory.
 qpt_liveness_file() {
-  local raw="$1" safe
+  local raw="$1" safe digest
   [ -n "$raw" ] || { printf ''; return 1; }
   safe=$(printf '%s' "$raw" | tr -cd 'A-Za-z0-9._-')
+
+  # The sanitized form is LOSSY, so it cannot be the whole filename: stripping
+  # unsafe characters maps "a/b" and "ab" to the same name, and two sessions then
+  # share one heartbeat, which makes qp_minter_liveness answer "observed" for a
+  # session that never ran the hook. That is a wrong answer in the fail-OPEN
+  # direction on the one readout whose job is to stop a wasted restart. Raised by
+  # CodeRabbit on PR #80.
+  #
+  # So a digest of the RAW id disambiguates, while the sanitized prefix keeps the
+  # filename greppable when someone is looking at the directory by hand. Falls
+  # back to the sanitized form alone where no sha tool exists; a machine with
+  # neither shasum nor sha256sum keeps the old lossy behaviour rather than losing
+  # liveness entirely.
+  digest=""
+  if command -v shasum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$raw" | shasum -a 256 | cut -c1-16)
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$raw" | sha256sum | cut -c1-16)
+  fi
+  [ -n "$digest" ] && safe="${safe}.${digest}"
+
   # A name of only dots would still resolve to a directory entry we do not want.
   case "$safe" in ''|.|..) printf ''; return 1 ;; esac
   printf '%s/%s' "$(qpt_liveness_dir)" "$safe"

@@ -86,7 +86,7 @@ done
 if [ -n "$BASEREF" ]; then
   CHANGED=$(git -C "$WORKDIR" diff --name-only "$BASEREF...HEAD" 2>/dev/null)
   if [ -n "$CHANGED" ] && [ "$(qpg_is_bookkeeping "$CHANGED")" = "yes" ]; then
-    LOG="$HOME/.claude/qa-plan-gate.log"
+    LOG=$(qpt_gate_log)
     printf '%s pr-gate ALLOW(bookkeeping) branch=%s files=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$(printf '%s' "$CHANGED" | tr '\n' ',')" >> "$LOG" 2>/dev/null || true
     exit 0
@@ -102,7 +102,7 @@ STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 # --body, an unreadable path, no QA section, no sha256 tool) CURRENT_DIGEST stays
 # empty and qpg_stamp_valid skips the drift check, leaving the stamp requirement
 # itself untouched. This check can only ADD a block, never remove one.
-LOG="$HOME/.claude/qa-plan-gate.log"
+LOG=$(qpt_gate_log)
 CURRENT_DIGEST=""
 _skipwhy=""
 _bodyfile=$(qpg_body_file_from_cmd "$CMD")
@@ -152,7 +152,7 @@ printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
 # only on the BLOCK path (this is where an agent goes looking for another writer),
 # so an allowed edit never pays for the directory walk.
 _STALE=""
-for _d in "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*; do
+for _d in "$(qpt_claude_dir)/plugins/cache/gstack-extensions/qa"/*; do
   [ -d "$_d" ] || continue
   if [ "$(qpt_writer_is_guarded "$_d/hooks/scripts/qa-plan-stamp.sh")" = "no" ]; then
     _STALE="$_STALE $(basename "$_d")"

@@ -90,11 +90,11 @@ VERDICT=$(qpg_stamp_valid "$STAMP" "$BRANCH")
 # qpg_unattested_disposition. Logged so the refusal is visible in the gate log.
 if [ "$VERDICT" = "unattested" ]; then
   printf '%s build-gate BLOCK(unattested) branch=%s file=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" >> "$(qpt_gate_log)" 2>/dev/null || true
 fi
 
 # Blocked: record for visibility (a rotted/bypassed gate should be auditable).
-LOG="$HOME/.claude/qa-plan-gate.log"
+LOG=$(qpt_gate_log)
 printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "$VERDICT" >> "$LOG" 2>/dev/null || true
 
@@ -102,7 +102,7 @@ printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
 # only on the BLOCK path (this is where an agent goes looking for another writer),
 # so an allowed edit never pays for the directory walk.
 _STALE=""
-for _d in "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*; do
+for _d in "$(qpt_claude_dir)/plugins/cache/gstack-extensions/qa"/*; do
   [ -d "$_d" ] || continue
   if [ "$(qpt_writer_is_guarded "$_d/hooks/scripts/qa-plan-stamp.sh")" = "no" ]; then
     _STALE="$_STALE $(basename "$_d")"
