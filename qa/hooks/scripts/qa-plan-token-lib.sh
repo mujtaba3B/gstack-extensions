@@ -244,3 +244,356 @@ qpt_token_approver() {
   [ -n "$a" ] || a="unknown"
   printf '%s' "$a"
 }
+
+# ---------------------------------------------------------------------------
+# HUMAN OVERRIDES (gstack-extensions, 2026-09-03)
+#
+# WHY THESE EXIST. On 2026-09-03 a session held a real human approval and could
+# not spend it. The minting hook was not registered in that session (hook
+# REGISTRATION is read at session start, while script CONTENT is live the moment
+# the file changes, so a newly added hook is dormant until a restart), the stamp
+# writer refused, and the operator's only route was to restart Claude Code. He
+# asked for an override he can give himself, since he is the one approving.
+#
+# THE CONSTRAINT THAT SHAPES THEM. An override an AGENT can invoke reopens the
+# exact hole #71 closed. So the question is not "what command should exist" but
+# "what signal in this system does a human produce and an agent cannot". Measured
+# on 2026-09-03, there are exactly two:
+#
+#   1. `.prompt` on UserPromptSubmit. The harness fills it from the human's typed
+#      message. The model emits assistant turns and tool calls; it cannot submit a
+#      user prompt. Same class of evidence as `.tool_response.answers`, and it does
+#      NOT depend on the AskUserQuestion hook that was dormant.
+#   2. A controlling terminal. No ordinary tool call has one: the agent's Bash
+#      tool runs with no TTY at all (`/dev/tty` -> "device not configured"), and
+#      neither does a `!`-prefixed command. This one needs no hook of any kind,
+#      which is what makes it the break-glass: it still works when EVERY hook is
+#      dormant, which is precisely the state that caused the incident.
+#
+#      IT IS WEAKER THAN (1), and the first draft of this comment got that wrong
+#      by asserting an agent "cannot" reach it. A process can give ITSELF a
+#      controlling terminal with `pty.fork()`, `script`, or `expect`, and running
+#      the exploit during this change's own review confirmed an agent can drive
+#      the confirmation prompt and write a human-tty-override stamp. So route (2)
+#      is an ACCIDENT-GUARD at the same level as the token file itself, not a
+#      boundary. Route (1) is the genuinely unforgeable one: a model cannot
+#      submit a user prompt at all, at any cost.
+#
+# WHAT WAS REJECTED, so it is not re-proposed. A plain sanctioned command the
+# human types with Claude Code's `!` prefix. It carries no distinguishing signal:
+# `!` runs without a TTY too (verified against a real transcript where
+# `! sudo ...` failed with "sudo: a terminal is required to read the password"),
+# so no script can tell the human's `!` from the agent's Bash. That would have
+# restored a one-word, agent-runnable bypass, which is the "sanctioned tool at an
+# unsanctioned moment" failure #71 exists to prevent.
+#
+# HONEST SCOPE. Both overrides land as a FILE, so both inherit the residual
+# already documented above: an agent with shell access can hand-write a stamp or
+# a token. Neither override lowers that floor; each one adds a legitimate human
+# route to the same place. What they do change is the audit trail: an override
+# records its own `approval_source` (human-prompt-override / human-tty-override),
+# so it never masquerades as a modal click, and it carries an expiry because it
+# binds to no plan digest (see QPG_OVERRIDE_TTL in qa-plan-gate-lib.sh). The
+# tty-override stamp additionally records the terminal and the parent process
+# that supplied it, so a pty spawned by an agent is visible to whoever reads the
+# stamp even though nothing blocks on it.
+#
+# A THIRD residual, distinct from the file one and worth naming separately: the
+# minting HOOKS are ordinary scripts that read a JSON payload on stdin. An agent
+# can pipe a fabricated UserPromptSubmit or AskUserQuestion payload straight into
+# one and get a real token out. The harness-filled EVENT is unforgeable; the
+# script that consumes it is not, because it is a file on disk like everything
+# else here. That does not make the typed-phrase route pointless (it remains the
+# only route with no legitimate agent-reachable path, and a fabricated payload is
+# as deliberate an act as hand-writing the token), but "the model cannot emit
+# .prompt" is a statement about the EVENT and must not be repeated as a statement
+# about the SCRIPT.
+#
+# The rule this file keeps re-learning, now written down: do not describe a guard
+# as impossible-to-defeat until you have TRIED to defeat it. The mtime carve-out
+# died to `printf` plus `touch -t`. The "an agent has no terminal" claim died to
+# three lines of `pty.fork()`. Both were defended in a comment before anyone ran
+# the exploit. `qa/hooks/tests/helpers/pty-run.py` exists partly so the second one
+# stays disproved in the test suite rather than in someone's memory.
+
+# The exact phrase the human types to override. Deliberately a sentence rather
+# than a command: it is typed INTO THE CONVERSATION, so it must not look like
+# something an agent would run, and it must read as a deliberate act.
+QPT_OVERRIDE_PHRASE="qa-plan: I approve this plan"
+
+# qpt_normalize_prompt <text>
+#   Canonicalize a typed prompt for comparison: lowercase, collapse every run of
+#   whitespace (newlines included) to one space, trim, then drop trailing `.`/`!`.
+#   Echoes the normalized string.
+#
+#   The trailing-punctuation strip is the one leniency, and it is safe because it
+#   cannot broaden the match to a DIFFERENT phrase, only to the same phrase typed
+#   with a full stop. Everything else is exact.
+qpt_normalize_prompt() {
+  local s
+  s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+  printf '%s' "$s" | sed -e 's/^ *//' -e 's/ *$//' -e 's/[.!]*$//' -e 's/ *$//'
+}
+
+# qpt_prompt_is_override <prompt>
+#   Does this typed prompt mean "override the QA-plan gate"? Echoes "override" /
+#   "no"; return code 0 only for override.
+#
+#   THE WHOLE PROMPT must be the phrase, after normalization. Say what that means
+#   plainly, because "exactly" overstates it: case is folded, every run of
+#   whitespace (newlines included) collapses to one space, and a trailing `.` or
+#   `!` is dropped. So "QA-PLAN: I APPROVE THIS PLAN!" matches, and so does the
+#   phrase typed across two lines. None of those reach a DIFFERENT phrase, which
+#   is the property that matters; they are the same sentence typed by a human who
+#   is not being careful about shift and punctuation. What is rejected is any
+#   prompt with other words in it: not a prefix, not a contained substring, not
+#   one line of a longer message. That is not fussiness: the phrase is written
+#   down in this file, in the skill body, and in the README, so it gets QUOTED in
+#   ordinary conversation about the feature. A substring match would let the
+#   sentence "should I type qa-plan: I approve this plan?" mint a real override,
+#   which is an approval nobody gave. Requiring a standalone message also makes
+#   the override a deliberate act rather than something that falls out of a
+#   sentence. Fails CLOSED: an empty prompt is "no".
+qpt_prompt_is_override() {
+  local n want
+  n=$(qpt_normalize_prompt "$1")
+  want=$(qpt_normalize_prompt "$QPT_OVERRIDE_PHRASE")
+  if [ -n "$n" ] && [ "$n" = "$want" ]; then echo "override"; return 0; fi
+  echo "no"; return 1
+}
+
+# qpt_should_mint_prompt <prompt> <branch>
+#   THE prompt-override mint decision, composed in one pure place, mirroring
+#   qpt_should_mint. Echoes "mint" or a single-word refusal reason
+#   (no-phrase | no-branch); returns 0 only for "mint".
+qpt_should_mint_prompt() {
+  local prompt="$1" branch="$2"
+  [ "$(qpt_prompt_is_override "$prompt")" = "override" ] || { echo "no-phrase"; return 1; }
+  # Same reason as qpt_should_mint: a detached HEAD cannot be stamped, so a token
+  # for one would only be a confusing dead file.
+  { [ -n "$branch" ] && [ "$branch" != "HEAD" ]; } || { echo "no-branch"; return 1; }
+  echo "mint"; return 0
+}
+
+# qpt_stamp_source_for <token_source>
+#   Map a TOKEN's `source` to the `approval_source` its stamp records. Echoes the
+#   stamp value, or nothing for an unrecognized token source; return code mirrors.
+#
+#   This exists so the stamp writer cannot copy an arbitrary token field into the
+#   stamp. Before overrides there was one source and the writer hardcoded the
+#   literal; now there are two, and the naive change (echo the token's own value)
+#   would let a hand-written token choose its own `approval_source` string, which
+#   is exactly the degree of freedom PR #76 removed from the gate side by
+#   requiring an EXACT literal. Fails CLOSED: an unknown source yields empty and
+#   the writer refuses rather than inventing a value.
+qpt_stamp_source_for() {
+  case "$1" in
+    AskUserQuestion)  printf 'AskUserQuestion'; return 0 ;;
+    UserPromptSubmit) printf 'human-prompt-override'; return 0 ;;
+    *)                printf ''; return 1 ;;
+  esac
+}
+
+# qpt_liveness_verdict <session_id> <seen>
+#   Was the approval-token minting hook actually registered in this session?
+#   <seen> is "yes" when a heartbeat for <session_id> exists; <feature_ran> is
+#   "no" when the heartbeat DIRECTORY does not exist at all, which means no
+#   minter carrying this feature has ever run on this machine. Echoes
+#   "observed" | "never-observed" | "unknown"; returns 0 only for "observed".
+#
+#   WHY THIS IS WORTH A FUNCTION. The stamp writer used to GUESS, telling the
+#   operator the hook was "probably not registered" and to restart. That guess is
+#   right sometimes and actively misleading otherwise: the same refusal appears
+#   when the hook IS registered and the header simply did not match, and then a
+#   restart cannot help and the operator burns a session finding that out. The
+#   minter now drops a heartbeat on EVERY AskUserQuestion it sees, so "registered"
+#   becomes an observed fact instead of a hypothesis. "unknown" is honest about
+#   the case where the session id is not in the environment at all.
+qpt_liveness_verdict() {
+  local session="$1" seen="$2" feature_ran="${3:-yes}"
+  [ -n "$session" ] || { echo "unknown"; return 1; }
+  [ "$seen" = "yes" ] && { echo "observed"; return 0; }
+  # <feature_ran> is "no" when the heartbeat DIRECTORY is absent, i.e. no minter
+  # carrying this feature has ever run on this machine, so "no file for this
+  # session" would be an accusation with no evidence behind it either way.
+  #
+  # Note what this is NOT claiming. A first cut treated "session started before
+  # the heartbeat shipped" as the unreliable case; a consumer repo disproved that
+  # by reading `observed` in exactly such a session. This marketplace is a
+  # directory source, so a hook SCRIPT is live the moment the file changes even
+  # though its REGISTRATION is frozen at session start, and an already-registered
+  # minter begins writing heartbeats immediately. The genuinely ambiguous case is
+  # narrower: a session that has fired no AskUserQuestion at all since the
+  # heartbeat landed. The gate messages say how to settle that in one step
+  # instead of advising a restart on a maybe.
+  [ "$feature_ran" = "no" ] && { echo "unknown"; return 1; }
+  echo "never-observed"; return 1
+}
+
+# qpt_tty_confirm_phrase <branch>
+#   The phrase the human must type at the TTY break-glass prompt. Branch-specific
+#   on purpose: it cannot be muscle-memoried into the wrong repo, and a copied
+#   transcript of one override does not spell out the next one.
+qpt_tty_confirm_phrase() {
+  printf 'override qa plan for %s' "$1"
+}
+
+# qpt_writer_is_guarded <path_to_qa_plan_stamp_sh>
+#   Does the stamp writer at <path> require an approval token? Echoes "yes"/"no";
+#   returns 0 for "yes". An unreadable path is "no".
+#
+#   Used by bin/install to prune cached plugin versions whose writer PREDATES the
+#   token guard. Those copies are not merely stale, they are a live bypass: on
+#   2026-09-03 an agent that could not write a stamp with the repo's guarded
+#   writer ran the cached 3.8.0 one by absolute path, and it wrote an unattested
+#   stamp bearing the human's name from `git config user.name`, which is the whole
+#   #71 defect reproduced after the fix had shipped. The gate rejected that stamp,
+#   so nothing merged, but leaving the unguarded writers on disk means every future
+#   session has the same wrong tool within reach.
+qpt_writer_is_guarded() {
+  local p="$1"
+  [ -r "$p" ] || { echo "no"; return 1; }
+
+  # FUNCTIONAL PROBE, not a grep. The first cut matched the string
+  # "qa-plan-approval-token" anywhere in the file, which an adversarial review
+  # pointed out is defeated by one appended COMMENT containing that string: the
+  # unguarded writer then looks guarded and survives pruning. That is the same
+  # "a test satisfiable by a comment is not a test" failure this repo has already
+  # been bitten by, in detector form.
+  #
+  # So actually RUN it: a throwaway git repo, a feature branch, no token, and see
+  # whether it writes a stamp. A guarded writer refuses; an unguarded one writes
+  # one and exits 0. Nothing in a comment can fake that.
+  #
+  # Fails CLOSED on its own errors: if the probe cannot be set up (no git, no
+  # mktemp), the answer is "no", which at worst prunes a cached version that is
+  # already superseded. Deleting a stale cache directory is cheap; leaving an
+  # unguarded stamp writer on disk is what this exists to prevent.
+  command -v git >/dev/null 2>&1 || { echo "no"; return 1; }
+  local probe; probe=$(mktemp -d 2>/dev/null) || { echo "no"; return 1; }
+  (
+    cd "$probe" 2>/dev/null || exit 1
+    git init -q . >/dev/null 2>&1 || exit 1
+    git config user.email probe@example.invalid >/dev/null 2>&1
+    git config user.name probe >/dev/null 2>&1
+    git commit -q --allow-empty -m probe >/dev/null 2>&1 || exit 1
+    git checkout -q -b probe/guarded >/dev/null 2>&1 || exit 1
+    # BOUNDED, and with stdin closed. This runs a FOREIGN script (an old cached
+    # copy of the writer) from inside a SYNCHRONOUS PreToolUse hook, so an
+    # unbounded call is a hang risk for the whole session, not just for this
+    # function: a cached writer that reads stdin or sleeps would block the gate
+    # forever. Raised by CodeRabbit on PR #80 and correct.
+    #
+    # A plain bash watchdog rather than `timeout`, which is not on stock macOS,
+    # so there is one code path instead of a common one and an untested fallback.
+    # An expiry is recorded, not swallowed: see the three-outcome verdict below.
+    # Own process group, so the watchdog can kill DESCENDANTS too. Killing just
+    # the shell leaves a foreground `sleep` orphaned and running (CodeRabbit's
+    # follow-up review). `set -m` gives the background job its own pgid; a
+    # negative pid signals the group. A child that calls setsid still escapes,
+    # which is noted rather than pretended away: the consequence there is a stray
+    # process, not a stuck gate, because the gate has already moved on.
+    set -m 2>/dev/null || true
+    bash "$p" write >/dev/null 2>&1 </dev/null &
+    _probe_pid=$!
+    (
+      sleep 10
+      kill -9 -"$_probe_pid" 2>/dev/null || kill -9 "$_probe_pid" 2>/dev/null
+      : > "$probe/.probe-timed-out"
+    ) >/dev/null 2>&1 &
+    _watchdog_pid=$!
+    wait "$_probe_pid" 2>/dev/null
+    kill -9 "$_watchdog_pid" 2>/dev/null
+    wait "$_watchdog_pid" 2>/dev/null
+    exit 0
+  )
+  local wrote="no" timed_out="no"
+  [ -f "$probe/.git/qa-plan-approved" ] && wrote="yes"
+  [ -f "$probe/.probe-timed-out" ] && timed_out="yes"
+  rm -rf "$probe" 2>/dev/null || true
+
+  # THREE outcomes, not two, and the third one is why this is spelled out.
+  # Collapsing "did not write" and "did not finish" into one answer is a
+  # FAIL-OPEN: a writer that sleeps past the deadline and only then writes gets
+  # killed, leaves no stamp, and would be reported guarded. That is an unguarded
+  # writer surviving the detector, which is precisely what this exists to catch.
+  # Caught by an adversarial pass on the fix for the previous finding, which is a
+  # good argument for reviewing the fix and not just the bug.
+  #
+  # On a timeout the honest answer is "unknown", and the safe rendering of
+  # unknown is "no": the two consumers treat that as PRUNE (bin/install, which
+  # only ever considers versions other than the live one, so the cost is deleting
+  # a stale cache directory that bin/install can recreate) and WARN (the gates,
+  # where an extra warning is harmless). A guarded writer refuses in
+  # milliseconds, so ten seconds is not a boundary it can trip by accident.
+  if [ "$wrote" = "yes" ] || [ "$timed_out" = "yes" ]; then echo "no"; return 1; fi
+  echo "yes"; return 0
+}
+
+# qpt_liveness_dir
+#   Where minter heartbeats live: one file per Claude Code session id. A DIRECTORY
+#   rather than a single file because sessions run concurrently on this machine and
+#   a shared file would have them clobbering each other's evidence, turning a
+#   liveness signal into a race.
+qpt_claude_dir() {
+  # Claude Code relocates its whole config root when CLAUDE_CONFIG_DIR is set, so
+  # every path that would be ~/.claude moves with it. Hardcoding $HOME/.claude
+  # writes heartbeats and gate logs to a directory the runtime is not using, and
+  # the liveness readout then reports never-observed forever. Raised by
+  # CodeRabbit on PR #80.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s' "$CLAUDE_CONFIG_DIR"
+  else printf '%s/.claude' "${HOME:-/tmp}"; fi
+}
+
+qpt_gate_log() {
+  printf '%s/qa-plan-gate.log' "$(qpt_claude_dir)"
+}
+
+qpt_liveness_dir() {
+  printf '%s/qa-plan-minter-seen' "$(qpt_claude_dir)"
+}
+
+# qpt_liveness_file <session_id>
+#   The heartbeat path for one session, or nothing when the id is empty or has no
+#   usable characters. The id is reduced to [A-Za-z0-9._-] before it is used as a
+#   filename, so a session id carrying a slash or a `..` cannot steer the write
+#   out of the heartbeat directory.
+qpt_liveness_file() {
+  local raw="$1" safe digest
+  [ -n "$raw" ] || { printf ''; return 1; }
+  safe=$(printf '%s' "$raw" | tr -cd 'A-Za-z0-9._-')
+
+  # The sanitized form is LOSSY, so it cannot be the whole filename: stripping
+  # unsafe characters maps "a/b" and "ab" to the same name, and two sessions then
+  # share one heartbeat, which makes qp_minter_liveness answer "observed" for a
+  # session that never ran the hook. That is a wrong answer in the fail-OPEN
+  # direction on the one readout whose job is to stop a wasted restart. Raised by
+  # CodeRabbit on PR #80.
+  #
+  # So a digest of the RAW id disambiguates, while the sanitized prefix keeps the
+  # filename greppable when someone is looking at the directory by hand. Falls
+  # back to the sanitized form alone where no sha tool exists; a machine with
+  # neither shasum nor sha256sum keeps the old lossy behaviour rather than losing
+  # liveness entirely.
+  digest=""
+  if command -v shasum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$raw" | shasum -a 256 | cut -c1-16)
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$raw" | sha256sum | cut -c1-16)
+  fi
+  # NO DIGEST TOOL, NO ANSWER. Falling back to the sanitized name alone would
+  # restore the exact collision this function exists to prevent, and a collision
+  # here is a fail-OPEN: two sessions share a heartbeat and liveness reports
+  # `observed` for a session that never ran the hook. A degraded answer is worse
+  # than no answer on a readout whose only job is to stop a wasted restart, so
+  # this refuses and the caller renders it as `unknown` rather than as a verdict
+  # it did not earn. Raised by CodeRabbit on PR #80 against the first cut, which
+  # kept the lossy fallback.
+  [ -n "$digest" ] || { printf ''; return 1; }
+  safe="${safe}.${digest}"
+
+  # A name of only dots would still resolve to a directory entry we do not want.
+  case "$safe" in ''|.|..) printf ''; return 1 ;; esac
+  printf '%s/%s' "$(qpt_liveness_dir)" "$safe"
+  return 0
+}

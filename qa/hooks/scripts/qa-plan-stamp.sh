@@ -45,6 +45,32 @@
 #   qa-plan-stamp.sh clear
 #       Remove the stamp (e.g. to force re-approval after a plan rewrite).
 #
+#   qa-plan-stamp.sh override
+#       THE BREAK-GLASS. Write a stamp on the strength of a human confirming at a
+#       REAL CONTROLLING TERMINAL. Refuses outright when stdin/dev/tty is not a
+#       terminal, which is every agent invocation: the Bash tool runs with no
+#       controlling terminal at all (`/dev/tty` -> "device not configured",
+#       measured 2026-09-03), and so does a `!`-prefixed command typed in Claude
+#       Code (a real transcript shows `! sudo ...` failing with "sudo: a terminal
+#       is required to read the password"). So this verb is reachable from a
+#       terminal tab and from nowhere inside a Claude session, by either party.
+#
+#       It is the ONLY route that needs no hook, which is what makes it the
+#       recovery for the failure that prompted it: on 2026-09-03 the minting hook
+#       was dormant (registration is read at session start), so every hook-based
+#       route, including the typed-phrase override, was dead in that session.
+#
+#       The resulting stamp records approval_source "human-tty-override" and an
+#       expiry, so it is never mistaken for a modal approval.
+#
+#   qa-plan-stamp.sh doctor
+#       Explain the current state instead of making the caller guess: the stamp
+#       and its verdict, the remedy for that verdict, the token, whether the
+#       minting hook has actually been observed in THIS session, and whether the
+#       installed plugin copy has drifted from this source tree. Written because
+#       the 2026-09-03 dead end was diagnosable in principle and undiagnosable in
+#       practice.
+#
 # Keyed to the worktree git dir via `git rev-parse --absolute-git-dir`, never the
 # common dir, so linked worktrees do not share an approval. Stdout is the stamp
 # path on a successful write so the caller can show it.
@@ -64,12 +90,29 @@ GLIB="$LIBDIR/qa-plan-gate-lib.sh"
 # shellcheck source=/dev/null
 . "$GLIB"
 
+# qp_minter_liveness <session_id>
+#   The one I/O wrapper around the pure qpt_liveness_verdict: turn "is there a
+#   heartbeat file for this session" into the verdict. Kept here rather than in
+#   the token lib because that lib is pure by contract and this touches the disk.
+qp_minter_liveness() {
+  local session="$1" hb seen="no" ran="yes"
+  hb=$(qpt_liveness_file "$session" 2>/dev/null || echo "")
+  # No heartbeat PATH means the question cannot be answered at all (no digest
+  # tool on this host), which is different from "answered, and the answer is no".
+  # Reporting never-observed there would send someone to restart on the strength
+  # of a lookup that never happened.
+  [ -n "$hb" ] || { qpt_liveness_verdict "" "no" "$ran"; return; }
+  [ -f "$hb" ] && seen="yes"
+  [ -d "$(qpt_liveness_dir)" ] || ran="no"
+  qpt_liveness_verdict "$session" "$seen" "$ran"
+}
+
 VERB="${1:-status}"; shift || true
 
 # `digest` takes an optional path; `write` and the rest take no options at all.
 DIGEST_PATH="${1:-}"
 case "$VERB" in
-  write|status|clear)
+  write|status|clear|override|doctor)
     [ $# -eq 0 ] || { echo "qa-plan-stamp.sh: '$VERB' takes no arguments (got: $*). --approver and --digest were removed; both come from the approval token." >&2; exit 2; } ;;
 esac
 
@@ -118,6 +161,8 @@ case "$VERB" in
     # person to answer the "QA plan" question with "Approve".
     TOKEN_JSON=$(cat "$TOKEN" 2>/dev/null || echo "")
     TVERDICT=$(qpt_token_valid "$TOKEN_JSON" "$BRANCH" "$(date +%s)")
+    _SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+    _LIVENESS=$(qp_minter_liveness "$_SESSION_ID")
     if [ "$TVERDICT" != "valid" ]; then
       case "$TVERDICT" in
         no-token)    _why="no approval token is present" ;;
@@ -134,12 +179,51 @@ case "$VERB" in
         echo "be written on their behalf. Run /qa:plan: it presents the plan and asks for"
         echo "approval, and answering \"Approve\" is what mints the token this needs."
         echo
-        echo "If you just approved and still see this, the PostToolUse hook that mints the"
-        echo "token is probably not registered in the running session: hook REGISTRATION is"
-        echo "read at session start, so a newly added hook needs a restart even where the"
-        echo "script itself is live. Restart Claude Code (run bin/install first if this"
-        echo "marketplace installs by copy rather than from a directory source), re-approve,"
-        echo "and retry."
+        # The liveness readout. This paragraph used to GUESS ("the hook is
+        # probably not registered") and send the operator to restart. That guess
+        # is wrong whenever the hook IS registered and simply declined to mint,
+        # and a restart cannot fix those cases; on 2026-09-03 it sent the operator
+        # to restart for a problem a restart could not solve. The minter now drops
+        # a heartbeat for every AskUserQuestion it sees, so this reports what was
+        # observed instead of what is likely.
+        case "$_LIVENESS" in
+          never-observed)
+            echo "DIAGNOSIS: the token-minting hook has NOT run at all in this session"
+            echo "(session $_SESSION_ID). Hook REGISTRATION is read at session start, so a"
+            echo "hook added since this session began is dormant no matter how current the"
+            echo "script on disk is."
+            echo
+            echo "FIX, IN THIS ORDER: run bin/install, THEN restart Claude Code. Restarting"
+            echo "alone is not enough and has already cost a session: the hook set is read"
+            echo "from the INSTALLED plugin copy, so a restart with a stale cache re-registers"
+            echo "the stale hooks and lands you right back here. Run 'qa-plan-stamp.sh doctor'"
+            echo "to see whether the installed version has drifted from this source tree."
+            echo
+            echo "CAVEAT before you restart: this reads never-observed if this session has"
+            echo "simply fired no AskUserQuestion since qa 3.10.0 landed, because the minter"
+            echo "is what writes the heartbeat. If /qa:plan has already stamped successfully"
+            echo "in this session, the minter IS registered, a restart changes nothing, and"
+            echo "the cause is one of the ones listed for the observed case." ;;
+          observed)
+            echo "DIAGNOSIS: the token-minting hook IS registered and HAS run in this"
+            echo "session, so a restart will not help. It saw a question and declined to"
+            echo "mint. The usual causes are a modal whose header is not exactly \"QA plan\","
+            echo "an answer that is not exactly \"Approve\" (a qualified label like"
+            echo "\"Approve (skip Prod QA)\" deliberately does not count), or an approval"
+            echo "given on a different branch. Check ~/.claude/qa-plan-gate.log: the hook"
+            echo "logs its refusal reason on every no-mint." ;;
+          *)
+            echo "DIAGNOSIS: cannot tell whether the minting hook is registered (no session"
+            echo "id in the environment). Check ~/.claude/qa-plan-gate.log for"
+            echo "approval-token lines." ;;
+        esac
+        echo
+        echo "IF YOU ARE THE HUMAN and you have already approved this plan, you can override"
+        echo "without restarting. Neither route below is reachable by Claude:"
+        echo "  1. Send \"$QPT_OVERRIDE_PHRASE\" as a message on its own."
+        echo "  2. Run 'qa-plan-stamp.sh override' in a real terminal tab."
+        echo "Route 1 needs the hooks to be registered; route 2 needs nothing but a terminal."
+        echo "Run 'qa-plan-stamp.sh doctor' for the full state."
       } >&2
       exit 1
     fi
@@ -151,9 +235,46 @@ case "$VERB" in
     NONCE=$(printf '%s' "$TOKEN_JSON" | jq -r '.nonce // "none"' 2>/dev/null || echo "none")
     DIGEST=$(printf '%s' "$TOKEN_JSON" | jq -r '.plan_digest // empty' 2>/dev/null || echo "")
     [ -n "$DIGEST" ] || DIGEST="none"
+
+    # The stamp's approval_source is DERIVED from the token's source through a
+    # closed mapping, never copied from it. There are two minting hooks now (the
+    # modal click and the typed override), so the literal can no longer be
+    # hardcoded; the naive fix, echoing the token's own `source`, would hand a
+    # hand-written token a free choice of approval_source, which is exactly the
+    # degree of freedom PR #76 removed from the gate side. An unrecognized source
+    # maps to empty and refuses here rather than producing a stamp the gates will
+    # reject later with a confusing verdict.
+    TOKEN_SOURCE=$(printf '%s' "$TOKEN_JSON" | jq -r '.source // empty' 2>/dev/null || echo "")
+    APPROVAL_SOURCE=$(qpt_stamp_source_for "$TOKEN_SOURCE") || APPROVAL_SOURCE=""
+    if [ -z "$APPROVAL_SOURCE" ]; then
+      {
+        echo "qa-plan-stamp.sh: REFUSING to write the approval stamp: the token's source"
+        echo "(\"${TOKEN_SOURCE:-<absent>}\") is not one this script recognizes. A token is"
+        echo "written only by qa-plan-approval-token.sh (source AskUserQuestion) or"
+        echo "qa-plan-prompt-override.sh (source UserPromptSubmit); anything else means the"
+        echo "file was hand-written. Delete $TOKEN and get a real approval."
+      } >&2
+      exit 1
+    fi
+
     HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
     NOW_EPOCH=$(date +%s)
     NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # An approval that cannot be RE-VERIFIED gets an expiry; one that can does
+    # not. The test is the DIGEST, not the source. See qpg_stamp_valid: a stamp
+    # carrying a real digest is re-checked against whatever is being shipped, so
+    # it can stand for the branch's life; a digest-less one falls through that
+    # check forever and time is its only bound. Keying this on "is it an override"
+    # (the first cut) left a digest-less MODAL approval standing and drift-immune,
+    # which adversarial review caught. jq emits `null` for the bounded-by-drift
+    # case, and `.expires_at_epoch // empty` reads null as absent on the gate side.
+    if [ "$DIGEST" = "none" ]; then
+      EXPIRES=$(( NOW_EPOCH + QPG_OVERRIDE_TTL ))
+    else
+      EXPIRES="null"
+    fi
+
     tmp=$(mktemp "$GITDIR/.qa-plan-approved.XXXXXX") || { echo "mktemp failed" >&2; exit 1; }
     jq -nc \
       --arg branch "$BRANCH" \
@@ -163,10 +284,12 @@ case "$VERB" in
       --arg digest "$DIGEST" \
       --arg approver "$APPROVER" \
       --arg nonce "$NONCE" \
+      --arg source "$APPROVAL_SOURCE" \
+      --argjson expires "$EXPIRES" \
       '{branch:$branch, approved_at:$iso, approved_at_epoch:$epoch,
         head_at_approval:$head, criteria_digest:$digest, approver:$approver,
-        approval_source:"AskUserQuestion", approval_nonce:$nonce,
-        tool:"qa-plan"}' > "$tmp" || { rm -f "$tmp"; echo "jq write failed" >&2; exit 1; }
+        approval_source:$source, approval_nonce:$nonce,
+        expires_at_epoch:$expires, tool:"qa-plan"}' > "$tmp" || { rm -f "$tmp"; echo "jq write failed" >&2; exit 1; }
     mv -f "$tmp" "$STAMP" || { rm -f "$tmp"; echo "stamp write failed: could not move into $STAMP" >&2; exit 1; }
     # CONSUME the token. One click, one stamp: without this a single approval
     # could be replayed to stamp again after the plan changed, which is the
@@ -191,6 +314,247 @@ case "$VERB" in
     echo "$_d"
     ;;
 
+  override)
+    # THE BREAK-GLASS. Authorized by a human confirming at a controlling terminal,
+    # which is the only human-ish signal in this system that needs no hook. That
+    # matters because the failure this exists for is a DORMANT HOOK: on 2026-09-03
+    # the minting hook had been added after the session started, so every
+    # hook-based route was dead and restarting was the only option.
+    #
+    # WHAT THE TTY CHECK IS, STATED HONESTLY. It is an ACCIDENT-GUARD, not a
+    # boundary, and an earlier version of this comment claimed otherwise. The
+    # claim was: an agent has no controlling terminal, so it cannot reach this.
+    # The first half is true and useful. Measured 2026-09-03, the Bash tool runs
+    # with no controlling terminal at all (`/dev/tty` is "device not configured"),
+    # and neither does a `!`-prefixed command in Claude Code (a real transcript
+    # shows `! sudo ...` failing with "sudo: a terminal is required to read the
+    # password"). So no ordinary tool call reaches this verb, by either party.
+    #
+    # The second half was FALSE, and was disproved during this change's own
+    # review by running the exploit rather than reasoning about it. A process can
+    # give ITSELF a controlling terminal: `pty.fork()` in python is three lines,
+    # and `script` and `expect` do the same. An agent that does that can drive
+    # this prompt and write a human-tty-override stamp. Verified working.
+    #
+    # So this verb sits exactly where the token file already sits, and the token
+    # lib's HONEST SCOPE section governs it: an agent with shell access can forge
+    # this, as it can forge any file-based sentinel here. What the check still
+    # buys is the cost line that section draws. Reaching this verb takes a
+    # deliberate, conspicuous act (spawning a pty) rather than a normal tool call,
+    # which is the same "recognizably illegitimate rather than a plausible slip"
+    # distinction that made #71's fix worth shipping. It is NOT the same as the
+    # UserPromptSubmit route, which really is unforgeable: a model cannot submit
+    # a user prompt at all.
+    #
+    # If you are tempted to write "an agent cannot do this" here again: run
+    # qa/hooks/tests/helpers/pty-run.py against this verb first. The bats suite
+    # pins the limitation so it cannot be quietly forgotten.
+    command -v jq >/dev/null 2>&1 || { echo "qa-plan-stamp.sh: jq required" >&2; exit 1; }
+    [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || {
+      echo "qa-plan-stamp.sh: refusing to stamp a detached HEAD; checkout a branch" >&2; exit 1; }
+
+    # fd 9, deliberately not fd 3. bats reserves fd 3 for its own TAP stream, so a
+    # prompt written to fd 3 corrupts the harness output instead of being captured,
+    # and a test around this verb then reports a mangled count rather than a clean
+    # failure. Found while mutation-testing this guard: the mutant that deleted it
+    # broke bats itself, which is indistinguishable from "no test noticed".
+    if ! exec 9<>/dev/tty 2>/dev/null; then
+      {
+        echo "qa-plan-stamp.sh: REFUSING to override: no controlling terminal."
+        echo
+        echo "This verb writes a stamp attesting that a HUMAN approved the QA plan, and the"
+        echo "only thing standing behind it is that a person typed a confirmation at a real"
+        echo "terminal. A process with no controlling terminal cannot be that person."
+        echo
+        echo "If you are Claude: this is not a step to work around, and spawning a pty to"
+        echo "get past it is forging a human approval, not solving a problem. Stop and tell"
+        echo "the human the two routes open to them: sending \"$QPT_OVERRIDE_PHRASE\" as a"
+        echo "message on its own, or running this command themselves in a terminal tab."
+        echo
+        echo "If you are the human: you are seeing this because you ran it through Claude"
+        echo "(the Bash tool and the ! prefix are both non-TTY). Open a terminal tab, cd to"
+        echo "this repo, and run it there."
+      } >&2
+      exit 1
+    fi
+
+    WANT=$(qpt_tty_confirm_phrase "$BRANCH")
+    {
+      echo "QA-plan approval override for branch: $BRANCH"
+      echo
+      echo "You are about to record that YOU approved this branch's two-phase QA plan."
+      echo "This override binds to no plan text, so it expires in $(( QPG_OVERRIDE_TTL / 3600 ))h and is recorded"
+      echo "as approval_source \"human-tty-override\", never as a modal approval."
+      echo
+      echo "Type this exactly to confirm, or anything else to abort:"
+      echo "  $WANT"
+    } >&9
+    printf '> ' >&9
+    IFS= read -r REPLY_LINE <&9 || REPLY_LINE=""
+    exec 9<&- 9>&- 2>/dev/null || true
+
+    # Compared through the same normalizer the typed-phrase override uses, so
+    # case and stray whitespace do not turn a correct confirmation into a
+    # mysterious abort. Still exact otherwise, and branch-specific so a
+    # remembered phrase cannot be replayed into the wrong repo.
+    if [ "$(qpt_normalize_prompt "$REPLY_LINE")" != "$(qpt_normalize_prompt "$WANT")" ]; then
+      echo "qa-plan-stamp.sh: override aborted (confirmation did not match)." >&2
+      exit 1
+    fi
+
+    # `git config user.name` IS consulted here, and only here, for the same reason
+    # the minting hooks consult it: this is a moment we know a real person acted,
+    # which is what entitles the record to carry their name. `write` still reads
+    # it nowhere.
+    APPROVER=$(git config user.name 2>/dev/null || true)
+    [ -n "$APPROVER" ] && APPROVER="$APPROVER (via terminal override)"
+    [ -n "$APPROVER" ] || APPROVER="human (via terminal override)"
+
+    HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+    NOW_EPOCH=$(date +%s)
+    NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    NONCE=$( { head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n'; } || echo "" )
+    [ -n "$NONCE" ] || NONCE="$NOW_EPOCH-$$"
+
+    # PROVENANCE. Since the TTY check is an accident-guard rather than a boundary
+    # (see above), the next best thing is making a forged one LOOK forged in an
+    # audit. A human's terminal has a shell or terminal emulator as its parent; a
+    # pty spawned by an agent has `python`, `script`, or `expect` there. Recorded,
+    # never enforced: this is evidence for whoever reads the stamp later, and
+    # blocking on it would be security theatre, since the same process that
+    # spawns the pty chooses its own parent.
+    TTY_NAME=$( { ps -o tty= -p $$ 2>/dev/null || echo "?"; } | tr -d ' ' )
+    PARENT_CMD=$( { ps -o comm= -p "$PPID" 2>/dev/null || echo "?"; } | sed 's|.*/||' | tr -d ' ' )
+    [ -n "$TTY_NAME" ] || TTY_NAME="?"
+    [ -n "$PARENT_CMD" ] || PARENT_CMD="?"
+
+    tmp=$(mktemp "$GITDIR/.qa-plan-approved.XXXXXX") || { echo "mktemp failed" >&2; exit 1; }
+    jq -nc \
+      --arg branch "$BRANCH" \
+      --arg iso "$NOW_ISO" \
+      --argjson epoch "$NOW_EPOCH" \
+      --arg head "$HEAD" \
+      --arg approver "$APPROVER" \
+      --arg nonce "$NONCE" \
+      --argjson expires "$(( NOW_EPOCH + QPG_OVERRIDE_TTL ))" \
+      --arg tty "$TTY_NAME" \
+      --arg parent "$PARENT_CMD" \
+      '{branch:$branch, approved_at:$iso, approved_at_epoch:$epoch,
+        head_at_approval:$head, criteria_digest:"none", approver:$approver,
+        approval_source:"human-tty-override", approval_nonce:$nonce,
+        expires_at_epoch:$expires, override_tty:$tty, override_parent:$parent,
+        tool:"qa-plan"}' > "$tmp" \
+      || { rm -f "$tmp"; echo "jq write failed" >&2; exit 1; }
+    mv -f "$tmp" "$STAMP" || { rm -f "$tmp"; echo "stamp write failed" >&2; exit 1; }
+    printf '%s tty-override stamp branch=%s tty=%s parent=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$TTY_NAME" "$PARENT_CMD" \
+      >> "$(qpt_gate_log)" 2>/dev/null || true
+    echo "$STAMP"
+    ;;
+
+  doctor)
+    # Explain the state instead of making the caller infer it. Every line here
+    # answers a question that on 2026-09-03 could only be answered by reading
+    # source: which stamp is on the branch, why the gate rejects it, what actually
+    # fixes that, whether the minting hook is alive, and whether the copy of the
+    # plugin that the runtime loads matches this source tree.
+    echo "qa-plan doctor"
+    echo "  repo:    $(git rev-parse --show-toplevel 2>/dev/null || echo '?')"
+    echo "  branch:  ${BRANCH:-<detached>}"
+    echo "  git dir: $GITDIR"
+    echo
+
+    _STAMP_JSON=$(cat "$STAMP" 2>/dev/null || echo "")
+    _V=$(qpg_stamp_valid "$_STAMP_JSON" "$BRANCH")
+    echo "  stamp:   $([ -n "$_STAMP_JSON" ] && echo "present" || echo "absent") [$_V]"
+    if [ -n "$_STAMP_JSON" ]; then
+      echo "           source=$(printf '%s' "$_STAMP_JSON" | jq -r '.approval_source // "<none>"' 2>/dev/null || echo '?')"            "approver=$(printf '%s' "$_STAMP_JSON" | jq -r '.approver // "<none>"' 2>/dev/null || echo '?')"
+      _EXP=$(printf '%s' "$_STAMP_JSON" | jq -r '.expires_at_epoch // empty' 2>/dev/null || echo "")
+      [ -n "$_EXP" ] && echo "           expires=$_EXP (now=$(date +%s))"
+    fi
+    [ "$_V" = "valid" ] || echo "           remedy: $(qpg_block_advice "$_V")"
+    echo
+
+    if [ -f "$TOKEN" ]; then
+      echo "  token:   present [$(qpt_token_valid "$(cat "$TOKEN" 2>/dev/null || echo "")" "$BRANCH" "$(date +%s)")]"            "source=$(jq -r '.source // "<none>"' "$TOKEN" 2>/dev/null || echo '?')"
+    else
+      echo "  token:   none"
+    fi
+
+    _SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+    _L=$(qp_minter_liveness "$_SESSION_ID")
+    echo "  minter:  $_L (session ${_SESSION_ID:-<unset>})"
+    case "$_L" in
+      never-observed)
+        echo "           the AskUserQuestion minting hook has not run in this session;"
+        echo "           if it was added since the session started, only a restart registers it"
+        # The one narrow false alarm, and how to settle it in one step. First
+        # written as "any session started before 3.10.0 reads never-observed",
+        # which a consumer repo then DISPROVED: its pre-3.10.0 session read
+        # `observed`, because this marketplace is a directory source, so the hook
+        # SCRIPT is live the moment the file changes even though its REGISTRATION
+        # is frozen. An already-registered minter therefore starts writing
+        # heartbeats immediately. The real gap is much smaller: a session whose
+        # LAST AskUserQuestion happened before the heartbeat code landed has no
+        # heartbeat yet and nothing has re-run to write one. Firing any modal
+        # settles it, which beats telling anyone to restart on a maybe.
+        echo "           CAVEAT: this is reliable UNLESS this session has fired no"
+        echo "           AskUserQuestion since qa 3.10.0 landed (the heartbeat is written"
+        echo "           by the minter, so a session that has not run one since then has"
+        echo "           nothing recorded yet). To settle it without restarting: run"
+        echo "           /qa:plan. If it stamps, the minter was registered all along." ;;
+      observed)       echo "           the minting hook is registered and running; a restart will not change anything" ;;
+      *)              echo "           no session id in the environment, so liveness cannot be determined" ;;
+    esac
+    echo
+
+    # Version skew between this source tree and the installed plugin copies. The
+    # 2026-09-03 incident had the gate running 3.9.5 logic from the checkout while
+    # the newest INSTALLED copy was 3.8.0, whose stamp writer predates the token
+    # guard entirely. Nothing reported that, and the blocked agent found the old
+    # writer and used it.
+    _SRC_MANIFEST="$LIBDIR/../../.claude-plugin/plugin.json"
+    _SRC_VER=$(jq -r '.version // empty' "$_SRC_MANIFEST" 2>/dev/null || echo "")
+    _CACHE="$(qpt_claude_dir)/plugins/cache/gstack-extensions/qa"
+    # DIRECTORIES only. `ls -1` lists files too, so a stray file with a
+    # version-shaped name (a .DS_Store sibling, a leftover tarball) could sort
+    # highest and be reported as the installed version, producing a false skew
+    # diagnosis in the one command someone runs to find out what is wrong.
+    # Raised by CodeRabbit on PR #80.
+    # `sort -V` is present on current macOS (verified: Apple sort 2.3-199 orders
+    # 3.10.0 above 3.9.0, where plain sort does not), but older BSD sort lacks it
+    # and would error to an empty result, silently blanking the version readout.
+    # So try -V, and fall back to plain sort only if it fails. CodeRabbit flagged
+    # this as broken on macOS; measured, that is not true here, but the fallback
+    # costs one line and the failure mode was a silent one.
+    _CACHE_DIRS=$(find "$_CACHE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)
+    _INST_VER=$(printf '%s\n' "$_CACHE_DIRS" | sort -V 2>/dev/null | tail -1)
+    [ -n "$_INST_VER" ] || _INST_VER=$(printf '%s\n' "$_CACHE_DIRS" | sort | tail -1)
+    echo "  source version:    ${_SRC_VER:-?}"
+    echo "  installed version: ${_INST_VER:-<none installed>}"
+    if [ -n "$_SRC_VER" ] && [ -n "$_INST_VER" ] && [ "$_SRC_VER" != "$_INST_VER" ]; then
+      echo "           SKEW: run bin/install and restart Claude Code."
+    fi
+    _UNGUARDED=""
+    for _d in "$_CACHE"/*; do
+      [ -d "$_d" ] || continue
+      if [ "$(qpt_writer_is_guarded "$_d/hooks/scripts/qa-plan-stamp.sh")" = "no" ]; then
+        _UNGUARDED="$_UNGUARDED $(basename "$_d")"
+      fi
+    done
+    if [ -n "$_UNGUARDED" ]; then
+      echo "           WARNING: cached plugin versions whose stamp writer predates the"
+      echo "           approval-token guard are still on disk:$_UNGUARDED"
+      echo "           Each is a writer that will happily stamp without a human. Run"
+      echo "           bin/install to prune them."
+    fi
+    echo
+
+    echo "  human override routes (neither is reachable by Claude):"
+    echo "    1. send \"$QPT_OVERRIDE_PHRASE\" as a message on its own (needs hooks registered)"
+    echo "    2. run 'qa-plan-stamp.sh override' in a real terminal tab (needs no hooks)"
+    ;;
+
   *)
-    echo "qa-plan-stamp.sh: unknown verb '$VERB' (write|status|clear|digest)" >&2; exit 2 ;;
+    echo "qa-plan-stamp.sh: unknown verb '$VERB' (write|status|clear|digest|override|doctor)" >&2; exit 2 ;;
 esac

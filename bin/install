@@ -112,6 +112,51 @@ for manifest in "$REPO"/*/.claude-plugin/plugin.json; do
 done
 shopt -u nullglob
 
+# 3b. Prune cached plugin versions whose QA-plan stamp writer PREDATES the
+#     approval-token guard (gstack-extensions#71).
+#
+#     These are not merely stale, they are a live bypass. `claude plugin install`
+#     copies into ~/.claude/plugins/cache/<market>/<plugin>/<version>/ and leaves
+#     every older version dir behind, so a repo that has shipped N versions has N
+#     copies of qa-plan-stamp.sh on disk, all executable by absolute path. The
+#     ones written before #71 take `--approver` and require no token at all, so
+#     they write a stamp bearing `git config user.name` for nobody's approval.
+#
+#     That is not hypothetical. On 2026-09-03 an agent blocked by the current
+#     guarded writer found the cached 3.8.0 copy and ran it, and it produced
+#     exactly that stamp on a real branch. The gate rejected it (it carries no
+#     approval_source), so nothing merged, but the wrong tool was in reach and got
+#     used within a day of the fix shipping.
+#
+#     Only versions OTHER than the one just installed are considered, and only
+#     those whose writer fails qpt_writer_is_guarded, so this can never delete the
+#     live copy and never touches a version that is already safe.
+prune_unguarded_writers() {
+  local cache="$HOME/.claude/plugins/cache/$MARKET/qa"
+  local tlib="$REPO/qa/hooks/scripts/qa-plan-token-lib.sh"
+  local keep pruned=0 d ver
+  [[ -d "$cache" ]] || return 0
+  [[ -f "$tlib" ]] || return 0
+  # shellcheck source=/dev/null
+  . "$tlib"
+  keep="$(jq -r '.version // empty' "$REPO/qa/.claude-plugin/plugin.json" 2>/dev/null || true)"
+  # No version means we cannot tell which dir is the live one, so prune nothing.
+  [[ -n "$keep" ]] || return 0
+  shopt -s nullglob
+  for d in "$cache"/*; do
+    [[ -d "$d" ]] || continue
+    ver="$(basename "$d")"
+    [[ "$ver" == "$keep" ]] && continue
+    if [[ "$(qpt_writer_is_guarded "$d/hooks/scripts/qa-plan-stamp.sh")" == "no" ]]; then
+      rm -rf "$d" && { echo "pruned unguarded stamp writer: qa/$ver"; pruned=$((pruned+1)); }
+    fi
+  done
+  shopt -u nullglob
+  [[ "$pruned" -gt 0 ]] && echo "  (those copies could write an approval stamp with no human approval)"
+  return 0
+}
+prune_unguarded_writers
+
 # 4. Stable-path shim for merge-clearance.sh. The real script ships inside the
 #    eng plugin (eng/hooks/scripts/), but external callers invoke it by the
 #    long-standing fixed path ~/.claude/scripts/merge-clearance.sh: the gstack

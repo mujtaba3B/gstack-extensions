@@ -32,6 +32,36 @@ setup() {
 }
 
 teardown() { rm -rf "$REPO"; }
+# ---- substring assertions ---------------------------------------------------
+#
+# WHY THESE EXIST INSTEAD OF `[[ "$output" == *"x"* ]]`. Measured on bats-core
+# 1.13: a failing `[[ ]]` in any position OTHER than the last line of a test body
+# does not fail the test. `[[` is a shell keyword, and errexit does not fire for
+# it there, so an assertion followed by any other line is a silent no-op that
+# passes no matter what the output says. A single-bracket `[ ]` and a function
+# call both fail correctly in the same position.
+#
+# This was found by mutation-testing this suite: the TTY guard on
+# `qa-plan-stamp.sh override` was deleted and every test still passed, because
+# the assertion pinning it sat above another line. Thirty-two assertions across
+# the repo's suites had the same shape. Use these helpers, never a bare `[[ ]]`.
+assert_contains() {  # <haystack> <needle>
+  case "$1" in *"$2"*) return 0 ;; esac
+  echo "assert_contains failed" >&2
+  echo "  wanted substring: $2" >&2
+  echo "  actual:           $1" >&2
+  return 1
+}
+assert_missing() {  # <haystack> <needle-that-must-not-appear>
+  case "$1" in *"$2"*)
+    echo "assert_missing failed" >&2
+    echo "  unwanted substring: $2" >&2
+    echo "  actual:             $1" >&2
+    return 1 ;;
+  esac
+  return 0
+}
+
 
 # A PostToolUse:AskUserQuestion payload. `answers` is the map the HARNESS fills in
 # from the human's click; that is the field an agent cannot forge, and the whole
@@ -259,8 +289,8 @@ mint_approval() { ask_payload "QA plan" "Approve the plan? <qa-plan-digest:$DIGE
   [ "$status" -eq 0 ]
   [ -f "$GITDIR/qa-plan-approved" ]
   run jq -r .approver "$GITDIR/qa-plan-approved"
-  [[ "$output" == *"Real Human"* ]]
-  [[ "$output" == *"AskUserQuestion"* ]]
+  assert_contains "$output" "Real Human"
+  assert_contains "$output" "AskUserQuestion"
 }
 
 @test "stamp: the token is SINGLE USE (one click, one stamp)" {
@@ -458,4 +488,488 @@ Second line of context. <qa-plan-digest:$DIGEST_A>"
   . "$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"
   run qpg_unattested_disposition pr
   [ "$output" = "block" ]
+}
+
+# ========================================================================
+# HUMAN OVERRIDES (2026-09-03)
+#
+# The property under test: an override reaches a stamp ONLY through a signal a
+# human produces and an agent cannot. Two such signals exist, and each gets its
+# own truth table plus an end-to-end pass through the real hook / script.
+# ========================================================================
+
+# A UserPromptSubmit payload. `.prompt` is the human's literal typed message,
+# filled in by the harness. The model emits assistant turns and tool calls; it
+# cannot submit a user prompt, which is what makes this field evidence.
+prompt_payload() {  # <prompt>
+  jq -nc --arg p "$1" --arg cwd "$REPO" \
+    '{hook_event_name:"UserPromptSubmit", prompt:$p, cwd:$cwd, session_id:"s1"}'
+}
+
+# ---- qpt_prompt_is_override -------------------------------------------------
+
+@test "prompt_is_override: the exact phrase" {
+  run qpt_prompt_is_override "qa-plan: I approve this plan"
+  [ "$output" = "override" ]; [ "$status" -eq 0 ]
+}
+
+@test "prompt_is_override: case, surrounding space and a trailing period" {
+  for p in "QA-PLAN: I APPROVE THIS PLAN" \
+           "  qa-plan: I approve this plan  " \
+           "qa-plan: I approve this plan." \
+           "qa-plan: I approve this plan!"; do
+    run qpt_prompt_is_override "$p"
+    [ "$output" = "override" ]
+  done
+}
+
+@test "prompt_is_override: a prompt that merely CONTAINS the phrase does not count" {
+  # This is the load-bearing case. The phrase is written down in the lib, the
+  # skill body and the README, so it gets quoted in ordinary conversation about
+  # the feature; a substring match would let a question about the override BE an
+  # override. Every string below contains the phrase verbatim.
+  for p in "should I type qa-plan: I approve this plan?" \
+           "the phrase is \"qa-plan: I approve this plan\", right?" \
+           "qa-plan: I approve this plan and also ship it" \
+           "run this first, then qa-plan: I approve this plan" \
+           "qa-plan: I approve this plan
+and then merge"; do
+    run qpt_prompt_is_override "$p"
+    [ "$output" = "no" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "prompt_is_override: near misses do not count" {
+  for p in "qa-plan: I approve" \
+           "I approve this plan" \
+           "qa-plan: approve this plan" \
+           "qa plan: I approve this plan" \
+           ""; do
+    run qpt_prompt_is_override "$p"
+    [ "$output" = "no" ]
+  done
+}
+
+# ---- qpt_should_mint_prompt -------------------------------------------------
+
+@test "should_mint_prompt: truth table" {
+  run qpt_should_mint_prompt "qa-plan: I approve this plan" "feat/thing"
+  [ "$output" = "mint" ]; [ "$status" -eq 0 ]
+
+  run qpt_should_mint_prompt "do the thing" "feat/thing"
+  [ "$output" = "no-phrase" ]; [ "$status" -eq 1 ]
+
+  run qpt_should_mint_prompt "qa-plan: I approve this plan" ""
+  [ "$output" = "no-branch" ]; [ "$status" -eq 1 ]
+
+  run qpt_should_mint_prompt "qa-plan: I approve this plan" "HEAD"
+  [ "$output" = "no-branch" ]; [ "$status" -eq 1 ]
+}
+
+# ---- qpt_stamp_source_for ---------------------------------------------------
+
+@test "stamp_source_for: closed mapping, unknown sources yield nothing" {
+  run qpt_stamp_source_for "AskUserQuestion"
+  [ "$output" = "AskUserQuestion" ]; [ "$status" -eq 0 ]
+
+  run qpt_stamp_source_for "UserPromptSubmit"
+  [ "$output" = "human-prompt-override" ]; [ "$status" -eq 0 ]
+
+  # A hand-written token must not get to name its own approval_source. Note the
+  # STAMP values are rejected as TOKEN sources too: the two vocabularies are
+  # deliberately different, so echoing a stamp value back in a token fails.
+  for src in "" "human-tty-override" "human-prompt-override" "askuserquestion" "anything" "true"; do
+    run qpt_stamp_source_for "$src"
+    [ "$output" = "" ]; [ "$status" -eq 1 ]
+  done
+}
+
+# ---- qpt_liveness_verdict ---------------------------------------------------
+
+@test "liveness_verdict: truth table" {
+  run qpt_liveness_verdict "s1" "yes"
+  [ "$output" = "observed" ]; [ "$status" -eq 0 ]
+
+  run qpt_liveness_verdict "s1" "no"
+  [ "$output" = "never-observed" ]; [ "$status" -eq 1 ]
+
+  run qpt_liveness_verdict "" "yes"
+  [ "$output" = "unknown" ]; [ "$status" -eq 1 ]
+}
+
+@test "liveness_file: a session id cannot steer the write out of the heartbeat dir" {
+  # Path traversal: whatever comes back must sit directly inside the heartbeat
+  # directory, with no way up and out of it.
+  for raw in "../../evil" "a/b" "/etc/passwd" "..%2F.." "x\$(touch /tmp/pwned)"; do
+    run qpt_liveness_file "$raw"
+    [ -n "$output" ]
+    case "$output" in "$(qpt_liveness_dir)/"*) ;; *) false ;; esac
+    case "$output" in *"/../"*|*"/..") false ;; *) ;; esac
+  done
+  [ ! -f /tmp/pwned ]
+
+  for bad in "" "/"; do
+    run qpt_liveness_file "$bad"
+    if [ -n "$output" ]; then
+      case "$output" in "$(qpt_liveness_dir)/"*) ;; *) false ;; esac
+    fi
+  done
+}
+
+@test "liveness_file: sanitizing alone would collide, so distinct ids stay distinct" {
+  # The bug CodeRabbit found on PR #80. Stripping unsafe characters is LOSSY:
+  # "a/b" and "ab" both sanitize to "ab", so two sessions shared one heartbeat
+  # and qp_minter_liveness could answer "observed" for a session that never ran
+  # the hook. That is a wrong answer in the fail-OPEN direction, on the one
+  # readout whose whole job is to stop a wasted restart. A digest of the RAW id
+  # disambiguates; the readable prefix survives for grepping by hand.
+  a=$(qpt_liveness_file "a/b")
+  b=$(qpt_liveness_file "ab")
+  [ -n "$a" ]; [ -n "$b" ]
+  [ "$a" != "$b" ]
+
+  # Same id in, same file out: liveness would be useless if it were not stable.
+  [ "$(qpt_liveness_file "sess-1")" = "$(qpt_liveness_file "sess-1")" ]
+  [ "$(qpt_liveness_file "sess-1")" != "$(qpt_liveness_file "sess-2")" ]
+
+  # And the readable part is still there, so the directory can be read by eye.
+  assert_contains "$(qpt_liveness_file "633cfee0-15fc")" "633cfee0-15fc"
+}
+
+@test "liveness_file: with no digest tool it refuses rather than colliding" {
+  # The fail-open CodeRabbit found in the first cut of the collision fix: when
+  # neither shasum nor sha256sum exists, falling back to the sanitized name alone
+  # restores the very collision the digest was added to prevent. A degraded
+  # answer is worse than none here, because the collision makes liveness report
+  # `observed` for a session that never ran the hook.
+  # A PATH carrying everything the function needs EXCEPT a digest tool. Emptying
+  # PATH outright would break `tr` too and the test would pass for the wrong
+  # reason (an early return on an empty sanitized name).
+  nodigest="$BATS_TEST_TMPDIR/nodigest"; mkdir -p "$nodigest"
+  for t in tr cut env; do
+    src=$(command -v "$t") && ln -sf "$src" "$nodigest/$t"
+  done
+  run env PATH="$nodigest" /bin/bash -c ". '$TLIB'; qpt_liveness_file 'a/b'; echo \"rc=\$?\""
+  assert_contains "$output" "rc=1"
+  assert_missing "$output" "qa-plan-minter-seen"
+}
+
+@test "minter liveness: an unanswerable lookup reads unknown, not never-observed" {
+  # The verdict must distinguish "asked, and the answer is no" from "could not
+  # ask". Reporting never-observed on a lookup that never happened is what sends
+  # someone to restart for nothing, which is the failure this whole change exists
+  # to stop.
+  run env PATH="/nonexistent:/usr/bin:/bin" bash -c "cd '$REPO' && CLAUDE_CODE_SESSION_ID=s1 bash '$STAMP' doctor"
+  assert_contains "$output" "minter:"
+}
+
+@test "claude_dir: CLAUDE_CONFIG_DIR relocates the heartbeat dir and the gate log" {
+  # Claude Code moves its whole config root when this is set, so hardcoding
+  # ~/.claude writes to a directory the runtime is not using and liveness then
+  # reports never-observed forever. Raised by CodeRabbit on PR #80.
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_claude_dir"
+  [ "$output" = "/tmp/cc-alt" ]
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_liveness_dir"
+  [ "$output" = "/tmp/cc-alt/qa-plan-minter-seen" ]
+  run env CLAUDE_CONFIG_DIR=/tmp/cc-alt bash -c ". '$TLIB'; qpt_gate_log"
+  [ "$output" = "/tmp/cc-alt/qa-plan-gate.log" ]
+
+  # Unset falls back to ~/.claude, and an unset HOME must not abort under set -u.
+  run env -u CLAUDE_CONFIG_DIR bash -c ". '$TLIB'; qpt_claude_dir"
+  [ "$output" = "$HOME/.claude" ]
+  run env -u CLAUDE_CONFIG_DIR -u HOME bash -c "set -u; . '$TLIB'; qpt_gate_log"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "writer probe: a hanging cached writer cannot block the gate forever" {
+  # The Major finding on PR #80. qpt_writer_is_guarded RUNS a foreign script from
+  # inside a synchronous PreToolUse hook, so an unbounded call is a session-wide
+  # hang, not a slow function. A writer that reads stdin or sleeps must not win.
+  cat > "$REPO/hanging-writer.sh" <<'HANG'
+#!/bin/bash
+cat            # blocks forever on stdin unless stdin is closed
+sleep 600
+HANG
+  start=$(date +%s)
+  run qpt_writer_is_guarded "$REPO/hanging-writer.sh"
+  elapsed=$(( $(date +%s) - start ))
+  # A TIMEOUT IS NOT A PASS. The verdict is "no", because the probe learned
+  # nothing: reporting a writer guarded on the strength of "it did not finish"
+  # is a fail-open, and the writer below proves why.
+  [ "$output" = "no" ]
+  [ "$elapsed" -lt 30 ]
+}
+
+@test "writer probe: a SLOW unguarded writer is not mistaken for a guarded one" {
+  # The fail-open an adversarial pass found in the fix for the previous finding.
+  # Bounding the probe created a new way to pass it: sleep past the deadline,
+  # then write. The probe kills the writer, sees no stamp, and under a two-state
+  # verdict would report "guarded" and leave an unguarded writer on disk. The
+  # timeout is now recorded separately and renders as "no".
+  cat > "$REPO/slow-unguarded.sh" <<'SLOW'
+#!/bin/bash
+sleep 11
+printf '{"branch":"x"}' > "$(git rev-parse --absolute-git-dir)/qa-plan-approved"
+SLOW
+  run qpt_writer_is_guarded "$REPO/slow-unguarded.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
+}
+
+# ---- qpt_writer_is_guarded --------------------------------------------------
+
+@test "writer_is_guarded: distinguishes a pre-token writer from the current one" {
+  # The real current writer requires a token.
+  run qpt_writer_is_guarded "$STAMP"
+  [ "$output" = "yes" ]; [ "$status" -eq 0 ]
+
+  # A pre-#71 writer: no token logic at all. This is the 3.8.0 shape that wrote a
+  # stamp bearing the human's name for nobody's approval on 2026-09-03.
+  cat > "$REPO/old-stamp.sh" <<'OLD'
+#!/bin/bash
+# writes the stamp with no guard, --approver defaults to git config user.name
+APPROVER=$(git config user.name)
+jq -nc --arg a "$APPROVER" '{approver:$a}' > .git/qa-plan-approved
+OLD
+  run qpt_writer_is_guarded "$REPO/old-stamp.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
+
+  run qpt_writer_is_guarded "$REPO/does-not-exist.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
+
+  # A COMMENT mentioning the token file must not make an unguarded writer look
+  # guarded. The first cut grepped for that string and this exact two-line
+  # mutation defeated it, leaving the unguarded writer un-pruned.
+  cat > "$REPO/old-stamp-with-comment.sh" <<'OLD2'
+#!/bin/bash
+# reads qa-plan-approval-token ... except it does not
+APPROVER=$(git config user.name)
+jq -nc --arg a "$APPROVER" '{approver:$a}' > "$(git rev-parse --absolute-git-dir)/qa-plan-approved"
+OLD2
+  run qpt_writer_is_guarded "$REPO/old-stamp-with-comment.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
+}
+
+# ---- the prompt-override hook, end to end -----------------------------------
+
+@test "prompt-override hook: the exact phrase mints a UserPromptSubmit token" {
+  OVR="$BATS_TEST_DIRNAME/../scripts/qa-plan-prompt-override.sh"
+  run bash -c "cd '$REPO' && prompt_payload_out=\$(jq -nc --arg p 'qa-plan: I approve this plan' --arg cwd '$REPO' '{prompt:\$p, cwd:\$cwd, session_id:\"s1\"}') && printf '%s' \"\$prompt_payload_out\" | bash '$OVR'"
+  [ "$status" -eq 0 ]
+  # Silent by contract: stdout on UserPromptSubmit is injected into the model's
+  # context, so this hook must never emit anything.
+  [ "$output" = "" ]
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+  [ "$(jq -r .source "$GITDIR/qa-plan-approval-token")" = "UserPromptSubmit" ]
+  [ "$(jq -r .branch "$GITDIR/qa-plan-approval-token")" = "feat/thing" ]
+  # No plan digest: a typed sentence attests to no plan text, and pretending
+  # otherwise would make an override look drift-checked when it is not.
+  [ "$(jq -r .plan_digest "$GITDIR/qa-plan-approval-token")" = "" ]
+}
+
+@test "prompt-override hook: an ordinary prompt mints nothing" {
+  OVR="$BATS_TEST_DIRNAME/../scripts/qa-plan-prompt-override.sh"
+  for p in "fix the bug" "should I type qa-plan: I approve this plan?" "qa-plan: I approve this plan now"; do
+    prompt_payload "$p" | bash "$OVR"
+    [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  done
+}
+
+# ---- the stamp writer, on an override token ---------------------------------
+
+@test "write: a UserPromptSubmit token yields a human-prompt-override stamp with an expiry" {
+  OVR="$BATS_TEST_DIRNAME/../scripts/qa-plan-prompt-override.sh"
+  prompt_payload "qa-plan: I approve this plan" | bash "$OVR"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "human-prompt-override" ]
+  # An override binds to no plan digest, so time is the only bound it can have.
+  exp=$(jq -r .expires_at_epoch "$GITDIR/qa-plan-approved")
+  [ "$exp" != "null" ]
+  [ "$exp" -gt "$(date +%s)" ]
+  # Single-use, exactly like the click path.
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "write: a modal-click stamp WITH a digest gets no expiry" {
+  # The asymmetry is keyed on the DIGEST, not the source: a click that binds to a
+  # plan digest is re-verified by the drift check and can stand for the branch's
+  # life. A digest-less click does NOT get that exemption (covered in
+  # qa-plan-gate.bats), which is the hole adversarial review found.
+  mint_approval
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "AskUserQuestion" ]
+  [ "$(jq -r .expires_at_epoch "$GITDIR/qa-plan-approved")" = "null" ]
+}
+
+@test "write: a hand-written token with an invented source writes NO stamp" {
+  # The whole point of qpt_stamp_source_for being a closed mapping. Copying the
+  # token's own `source` into the stamp would let this file choose its own
+  # approval_source and sail through the gate.
+  jq -nc --arg b feat/thing --argjson e "$(date +%s)" \
+    '{branch:$b, approved_at_epoch:$e, approver:"Real Human", nonce:"x",
+      source:"human-tty-override"}' > "$GITDIR/qa-plan-approval-token"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -ne 0 ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+  assert_contains "$output" "not one this script recognizes"
+}
+
+# ---- the TTY break-glass ----------------------------------------------------
+
+@test "override verb: refuses without a controlling terminal" {
+  # bats runs with stdin redirected and no controlling terminal, which is the
+  # same condition every agent invocation has: the Bash tool cannot open
+  # /dev/tty at all. This is the ONLY thing standing behind the verb, so it is
+  # the one behaviour that must never regress.
+  run bash -c "cd '$REPO' && bash '$STAMP' override < /dev/null"
+  # Exit 1 specifically, and the refusal must be the TTY one. Asserting only
+  # "non-zero" would pass for any failure at all, including the script not
+  # existing, which is how a test like this quietly stops testing anything.
+  [ "$status" -eq 1 ]
+  assert_contains "$output" "no controlling terminal"
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+}
+
+@test "override verb: writes no stamp and consumes no token when it refuses" {
+  mint_approval
+  run bash -c "cd '$REPO' && bash '$STAMP' override < /dev/null"
+  [ "$status" -ne 0 ]
+  # A refused override must not burn an unrelated pending approval.
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+}
+
+@test "doctor: reports the stamp verdict, its remedy and the liveness state" {
+  run bash -c "cd '$REPO' && bash '$STAMP' doctor"
+  [ "$status" -eq 0 ]
+  assert_contains "$output" "stamp:"
+  assert_contains "$output" "minter:"
+  assert_contains "$output" "remedy:"
+  # It must name both human routes, since the whole point is that a blocked
+  # agent can tell the human what THEY can do.
+  assert_contains "$output" "qa-plan: I approve this plan"
+  assert_contains "$output" "override"
+}
+
+# ---- the TTY break-glass, WITH a real terminal -------------------------------
+#
+# Everything above proves the verb REFUSES without a terminal. That is only half
+# the contract, and the missing half was found by mutation-testing: deleting the
+# confirmation-phrase check entirely left every test green, because no test ever
+# reached the confirmation step. A guard whose success path is untested is a
+# guard that can silently stop guarding.
+#
+# `script` allocates a pty, which is the only way to give a child a controlling
+# terminal from a non-interactive test. The BSD and GNU spellings differ, so both
+# are tried and the test skips where neither works rather than failing CI on a
+# platform difference.
+
+# PTY_RUN: run a shell command line on a REAL pty and type one line at it.
+#
+# `script` cannot be used here: bats redirects stdin away from a terminal and BSD
+# `script` refuses in that situation, so it silently skipped on this machine and
+# the terminal-only code path went untested. The python helper uses pty.fork,
+# which needs no existing terminal and gives the child a CONTROLLING terminal,
+# the exact condition the override verb requires and an agent's Bash tool can
+# never have.
+PTY_RUN() {  # <shell-command-line> <line-to-type>
+  # The opt-in the helper requires before it will drive the override verb. It
+  # ships inside the installed plugin, so without this it would be a turnkey way
+  # to manufacture the controlling terminal the gate asks for.
+  QA_PLAN_PTY_SELFTEST=1 python3 "$BATS_TEST_DIRNAME/helpers/pty-run.py" "$1" "$2"
+}
+
+@test "override verb: a real terminal plus the exact phrase writes a tty-override stamp" {
+  run PTY_RUN "cd '$REPO' && bash '$STAMP' override" "override qa plan for feat/thing"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/qa-plan-approved" ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "human-tty-override" ]
+  # It binds to no plan text, so it must carry an expiry and no digest.
+  [ "$(jq -r .criteria_digest "$GITDIR/qa-plan-approved")" = "none" ]
+  exp=$(jq -r .expires_at_epoch "$GITDIR/qa-plan-approved")
+  [ "$exp" -gt "$(date +%s)" ]
+  # The human's own name, read from git config at the moment they confirmed.
+  assert_contains "$(jq -r .approver "$GITDIR/qa-plan-approved")" "terminal override"
+}
+
+@test "override verb: a real terminal with the WRONG phrase writes nothing" {
+  # This is the case the mutation exposed: with a terminal available, the ONLY
+  # thing left between an accidental keypress and a stamp is the phrase check.
+  for reply in "yes" "y" "override" "override qa plan for main" ""; do
+    rm -f "$GITDIR/qa-plan-approved"
+    PTY_RUN "cd '$REPO' && bash '$STAMP' override" "$reply" >/dev/null 2>&1 || true
+    [ ! -f "$GITDIR/qa-plan-approved" ]
+  done
+}
+
+@test "override verb: the confirmation phrase is branch-specific" {
+  # A phrase remembered from another repo must not work here, so a copied
+  # transcript of one override does not spell out the next one.
+  run qpt_tty_confirm_phrase "feat/thing"
+  [ "$output" = "override qa plan for feat/thing" ]
+  run qpt_tty_confirm_phrase "other/branch"
+  [ "$output" = "override qa plan for other/branch" ]
+}
+
+@test "override verb: an agent CAN self-grant a pty, and that limitation is pinned here" {
+  # This test asserts a WEAKNESS, deliberately. The first version of this feature
+  # claimed in code comments, the skill body, the README and a message to another
+  # session that the TTY route was unreachable by an agent. Running the exploit
+  # during review disproved it in one command: pty.fork() gives a process its own
+  # controlling terminal, so an agent can drive the confirmation prompt.
+  #
+  # Rather than delete the route (it is the only hook-free recovery, which is the
+  # whole reason it exists) the limitation is documented and pinned. If someone
+  # later "hardens" the check and believes they have closed this, THIS test going
+  # red is the signal that the claim needs re-verifying, not that the test is
+  # stale. And if it stays green, nobody can honestly write "an agent cannot".
+  run PTY_RUN "cd '$REPO' && bash '$STAMP' override" "override qa plan for feat/thing"
+  [ -f "$GITDIR/qa-plan-approved" ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "human-tty-override" ]
+  # The mitigation that IS real: the stamp records where the terminal came from,
+  # so a spawned pty is visible to whoever reads it. Enforcement would be theatre
+  # (the spawner picks its own parent), but evidence is not.
+  [ "$(jq -r .override_tty "$GITDIR/qa-plan-approved")" != "null" ]
+  [ "$(jq -r .override_parent "$GITDIR/qa-plan-approved")" != "null" ]
+}
+
+@test "the UserPromptSubmit route is the one that is genuinely unforgeable" {
+  # Stated as a test so the two routes are never conflated. Nothing an agent runs
+  # produces a UserPromptSubmit event: the hook only ever fires on a real typed
+  # message. An agent CAN hand-write the token file, which is the documented
+  # file-level residual shared by every sentinel here, but it cannot cause the
+  # harness to deliver a prompt it did not receive. Its only lever is the same
+  # one it has on every other file, and qpt_stamp_source_for still refuses any
+  # token source it does not recognize.
+  for bogus in "human-tty-override" "human-prompt-override" "typed" "user"; do
+    run qpt_stamp_source_for "$bogus"
+    [ "$output" = "" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "write: a digest-less approval gets an expiry whatever its source" {
+  # The writer side of the rule the gate enforces. mint_approval embeds a digest,
+  # so this mints from a question with no <qa-plan-digest:...> marker instead.
+  ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$MINT"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "AskUserQuestion" ]
+  [ "$(jq -r .criteria_digest "$GITDIR/qa-plan-approved")" = "none" ]
+  exp=$(jq -r .expires_at_epoch "$GITDIR/qa-plan-approved")
+  [ "$exp" != "null" ]
+  [ "$exp" -gt "$(date +%s)" ]
+}
+
+@test "pty helper: refuses to drive the override verb without the test opt-in" {
+  # The shipped-exploit finding, pinned. bin/install copies this helper into the
+  # plugin cache on every machine, so a blocked agent would otherwise find a
+  # documented tool inside the plugin whose job is to defeat the plugin's own
+  # gate. This is a speed bump, not a boundary (the variable is settable, the
+  # file is copyable, the stdlib is fifteen lines away), and the comments say so.
+  run env -u QA_PLAN_PTY_SELFTEST python3 "$BATS_TEST_DIRNAME/helpers/pty-run.py" \
+    "cd '$REPO' && bash '$STAMP' override" "override qa plan for feat/thing"
+  [ "$status" -eq 2 ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+  assert_contains "$output" "forges it"
 }

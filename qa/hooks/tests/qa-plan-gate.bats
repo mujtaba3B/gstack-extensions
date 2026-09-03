@@ -34,6 +34,36 @@ setup() {
 }
 
 teardown() { rm -rf "$REPO"; }
+# ---- substring assertions ---------------------------------------------------
+#
+# WHY THESE EXIST INSTEAD OF `[[ "$output" == *"x"* ]]`. Measured on bats-core
+# 1.13: a failing `[[ ]]` in any position OTHER than the last line of a test body
+# does not fail the test. `[[` is a shell keyword, and errexit does not fire for
+# it there, so an assertion followed by any other line is a silent no-op that
+# passes no matter what the output says. A single-bracket `[ ]` and a function
+# call both fail correctly in the same position.
+#
+# This was found by mutation-testing this suite: the TTY guard on
+# `qa-plan-stamp.sh override` was deleted and every test still passed, because
+# the assertion pinning it sat above another line. Thirty-two assertions across
+# the repo's suites had the same shape. Use these helpers, never a bare `[[ ]]`.
+assert_contains() {  # <haystack> <needle>
+  case "$1" in *"$2"*) return 0 ;; esac
+  echo "assert_contains failed" >&2
+  echo "  wanted substring: $2" >&2
+  echo "  actual:           $1" >&2
+  return 1
+}
+assert_missing() {  # <haystack> <needle-that-must-not-appear>
+  case "$1" in *"$2"*)
+    echo "assert_missing failed" >&2
+    echo "  unwanted substring: $2" >&2
+    echo "  actual:             $1" >&2
+    return 1 ;;
+  esac
+  return 0
+}
+
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -82,9 +112,11 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 # ========================================================================
 
 @test "stamp_valid: matching branch -> valid" {
-  # Carries approval_source because a stamp without it is now "unattested"
-  # regardless of branch; that case has its own test below.
-  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion"}' "feat/x"
+  # Carries approval_source because a stamp without it is "unattested" regardless
+  # of branch, and a criteria_digest because a digest-less stamp is time-bounded
+  # regardless of branch. Both of those have their own tests; this one is about
+  # branch matching alone, so it must not trip either.
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"d"}' "feat/x"
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
@@ -525,7 +557,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   opt_in
   run bash -c "CLAUDE_PLUGIN_ROOT=/nonexistent/other-plugin printf '%s' '$(edit_payload "$REPO/src/main.py")' | bash '$BUILD_GATE'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"decision":"block"'* ]]
+  assert_contains "$output" '"decision":"block"'
 }
 
 @test "pr gate blocks: an EMPTY env-var prefix before gh pr create is still caught" {
@@ -562,8 +594,16 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
-@test "stamp_valid: a stamp written without --digest carries none and cannot drift" {
+@test "stamp_valid: a digest-less stamp cannot drift, so it is time-bounded instead" {
+  # This test used to assert that such a stamp was simply `valid`, which is the
+  # hole adversarial review found: with no digest the drift check can never fire,
+  # so "valid forever" made it a standing, drift-immune approval. It is now
+  # bounded by an expiry, and one it does not carry is treated as lapsed.
   run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"none"}' "feat/x" "D2"
+  [ "$output" = "approval-expired" ]; [ "$status" -eq 1 ]
+
+  # With a live expiry it is valid, and the drift check still cannot fire on it.
+  run qpg_stamp_valid '{"branch":"feat/x","approval_source":"AskUserQuestion","criteria_digest":"none","expires_at_epoch":4000000000}' "feat/x" "D2"
   [ "$output" = "valid" ]; [ "$status" -eq 0 ]
 }
 
@@ -579,11 +619,13 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 }
 
 @test "stamp_valid: approval_source must be the exact literal, not merely non-empty" {
-  run qpg_stamp_valid '{"branch":"b","approval_source":"AskUserQuestion"}' b
+  # Digests present throughout: this test is about the source literal, and a
+  # digest-less stamp would be time-bounded for an unrelated reason.
+  run qpg_stamp_valid '{"branch":"b","approval_source":"AskUserQuestion","criteria_digest":"d"}' b
   [ "$output" = "valid" ]
-  run qpg_stamp_valid '{"branch":"b","approval_source":"yes"}' b
+  run qpg_stamp_valid '{"branch":"b","approval_source":"yes","criteria_digest":"d"}' b
   [ "$output" = "unattested" ]
-  run qpg_stamp_valid '{"branch":"b","approval_source":true}' b
+  run qpg_stamp_valid '{"branch":"b","approval_source":true,"criteria_digest":"d"}' b
   [ "$output" = "unattested" ]
 }
 
@@ -791,4 +833,225 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
   # The break arm must not fire on |---|---|, which every plan table carries.
   run qpg_extract_qa_section "$(printf '## QA\n\n| a | b |\n|---|---|\n| [ ] | x |\n')"
   echo "$output" | grep -q '\[ \]'
+}
+
+# ========================================================================
+# HUMAN OVERRIDES: trusted sources and override expiry (2026-09-03)
+#
+# The gate now accepts three approval_source values instead of one. That widening
+# is exactly the kind of change that quietly becomes "anything non-empty" again,
+# so the allowlist is a truth table and the override's expiry is enumerated in
+# both directions.
+# ========================================================================
+
+# An OVERRIDE stamp: no plan digest (a typed phrase or a terminal confirmation
+# attests to no plan text), so it carries an expiry instead.
+override_stamp() {  # <branch> <source> <expires_at_epoch|null>
+  printf '{"branch":"%s","approved_at":"x","approved_at_epoch":1,"head_at_approval":"y","criteria_digest":"none","approver":"a","approval_source":"%s","approval_nonce":"n","expires_at_epoch":%s,"tool":"qa-plan"}' \
+    "$1" "$2" "$3" > "$GITDIR/qa-plan-approved"
+}
+
+@test "source_trusted: exactly three values, everything else fails closed" {
+  for ok in AskUserQuestion human-prompt-override human-tty-override; do
+    run qpg_source_trusted "$ok"
+    [ "$output" = "trusted" ]; [ "$status" -eq 0 ]
+  done
+  # The empty string is the pre-#71 stamp shape and must stay refused. The rest
+  # are the shapes a forged stamp would reach for: a truthy string, a case
+  # variant, a near miss, and the token-side vocabulary.
+  for bad in "" "true" "yes" "1" "askuserquestion" "AskUserQuestion " "human-override" "UserPromptSubmit" "null"; do
+    run qpg_source_trusted "$bad"
+    [ "$output" = "no" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "source_is_override: separates a click from an override" {
+  for o in human-prompt-override human-tty-override; do
+    run qpg_source_is_override "$o"
+    [ "$output" = "override" ]; [ "$status" -eq 0 ]
+  done
+  # A click is trusted but is NOT an override: collapsing the two questions is
+  # how an override would inherit the click path's unlimited lifetime.
+  for n in AskUserQuestion "" "anything"; do
+    run qpg_source_is_override "$n"
+    [ "$output" = "no" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "stamp_valid: an override inside its window is valid, outside it is expired" {
+  now=1000000
+  override_stamp feat/thing human-prompt-override $(( now + 60 ))
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "valid" ]; [ "$status" -eq 0 ]
+
+  override_stamp feat/thing human-prompt-override $(( now - 1 ))
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "approval-expired" ]; [ "$status" -eq 1 ]
+
+  # The boundary belongs to the valid side.
+  override_stamp feat/thing human-tty-override "$now"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "valid" ]
+}
+
+@test "stamp_valid: an override with no usable expiry is EXPIRED, not unbounded" {
+  # Fail-closed direction. The writers always set an expiry, so its absence means
+  # the file was not written by them. Treating "no expiry" as "never expires"
+  # would make hand-writing an override stamp strictly EASIER than hand-writing a
+  # click stamp, which inverts the whole point.
+  for exp in null '""' '"soon"' '"-1"'; do
+    override_stamp feat/thing human-tty-override "$exp"
+    run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" 1000000
+    [ "$output" = "approval-expired" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "stamp_valid: an expiry on a CLICK stamp is ignored, it never expires" {
+  # The asymmetry, asserted from the other side: a click binds to a plan digest,
+  # so the drift check re-verifies it and time is not its bound.
+  printf '{"branch":"feat/thing","criteria_digest":"d","approval_source":"AskUserQuestion","expires_at_epoch":1}' > "$GITDIR/qa-plan-approved"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" 1000000
+  [ "$output" = "valid" ]
+}
+
+@test "stamp_valid: drift still wins over an override's expiry" {
+  # Order matters. The drift check runs BEFORE the source and expiry checks, so a
+  # stamp that is both drifted and expired reports the drift, which is the more
+  # specific fact. This also pins that overrides did not get inserted ahead of
+  # the drift check, which would have re-opened the hole PR #76 closed.
+  printf '{"branch":"feat/thing","criteria_digest":"OLD","approval_source":"human-tty-override","expires_at_epoch":1}' > "$GITDIR/qa-plan-approved"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "NEW" 1000000
+  [ "$output" = "plan-changed" ]
+}
+
+# ========================================================================
+# PER-VERDICT BLOCK ADVICE
+#
+# The 2026-09-03 dead end was one sentence of advice applied to every verdict.
+# ========================================================================
+
+@test "block_advice: every verdict gets its own remedy, none repeat" {
+  seen=""
+  for v in no-stamp wrong-branch plan-changed unattested approval-expired malformed; do
+    run qpg_block_advice "$v"
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
+    # Distinctness is the property that failed before: six verdicts, one string.
+    case "$seen" in *"|$output|"*) false ;; esac
+    seen="$seen|$output|"
+  done
+}
+
+@test "block_advice: unattested tells you to CLEAR the stamp, not just re-run /qa:plan" {
+  # THE regression test for 2026-09-03. The operator had already run /qa:plan and
+  # approved; a stale writer's stamp sat on the branch; re-running /qa:plan could
+  # never remove it. Advice that omits the clear step is the bug, not a wording
+  # nit, so it is asserted as behaviour.
+  run qpg_block_advice unattested
+  assert_contains "$output" "clear"
+  assert_contains "$output" "doctor"
+  # And it must say plainly that re-running alone is not enough.
+  assert_contains "$output" "NOT"
+}
+
+@test "block_advice: no-stamp still points at /qa:plan, and an unknown verdict is safe" {
+  run qpg_block_advice no-stamp
+  assert_contains "$output" "/qa:plan"
+  assert_missing "$output" "clear"
+
+  run qpg_block_advice "something-new"
+  [ "$status" -eq 0 ]
+  assert_contains "$output" "/qa:plan"
+}
+
+@test "override_hint: names both human routes and neither is a command for Claude" {
+  run qpg_override_hint
+  assert_contains "$output" "qa-plan: I approve this plan"
+  assert_contains "$output" "override"
+  assert_contains "$output" "terminal"
+  # It must NOT claim Claude cannot take the terminal route: that claim was
+  # falsified by running the exploit (pty.fork), and the one message an agent is
+  # guaranteed to read is the worst place to assert a boundary that is not one.
+  assert_missing "$output" "Claude cannot"
+  assert_contains "$output" "do not attempt"
+}
+
+# ========================================================================
+# The build gate's message, per verdict, end to end.
+# ========================================================================
+
+@test "build gate: each stamp state produces its own remedy in the block reason" {
+  opt_in
+  mkdir -p "$REPO/src"
+
+  # 1. No stamp at all.
+  run bash -c "jq -nc --arg f '$REPO/src/main.py' --arg c '$REPO' '{tool_name:\"Edit\", cwd:\$c, tool_input:{file_path:\$f}}' | bash '$BUILD_GATE'"
+  assert_contains "$output" "no-stamp"
+  assert_contains "$output" "/qa:plan"
+
+  # 2. The pre-token shape: the exact 2026-09-03 state.
+  printf '{"branch":"feat/thing","criteria_digest":"none","approver":"Mujtaba Badat","tool":"qa-plan"}' > "$GITDIR/qa-plan-approved"
+  run bash -c "jq -nc --arg f '$REPO/src/main.py' --arg c '$REPO' '{tool_name:\"Edit\", cwd:\$c, tool_input:{file_path:\$f}}' | bash '$BUILD_GATE'"
+  assert_contains "$output" "unattested"
+  # The cure it was missing.
+  assert_contains "$output" "clear"
+  # And the human's way out, which did not exist at all before.
+  assert_contains "$output" "qa-plan: I approve this plan"
+
+  # 3. A lapsed override.
+  override_stamp feat/thing human-tty-override 1
+  run bash -c "jq -nc --arg f '$REPO/src/main.py' --arg c '$REPO' '{tool_name:\"Edit\", cwd:\$c, tool_input:{file_path:\$f}}' | bash '$BUILD_GATE'"
+  assert_contains "$output" "approval-expired"
+  assert_contains "$output" "bounded by time"
+
+  # 4. A live override unblocks the edit entirely.
+  override_stamp feat/thing human-tty-override "$(( $(date +%s) + 3600 ))"
+  run bash -c "jq -nc --arg f '$REPO/src/main.py' --arg c '$REPO' '{tool_name:\"Edit\", cwd:\$c, tool_input:{file_path:\$f}}' | bash '$BUILD_GATE'"
+  [ "$output" = "" ]
+}
+
+@test "stale_writer_warning: empty list says nothing, a list warns and says do NOT use it" {
+  run qpg_stale_writer_warning ""
+  [ "$output" = "" ]; [ "$status" -eq 1 ]
+
+  run qpg_stale_writer_warning "3.6.2 3.7.0 3.8.0"
+  [ "$status" -eq 0 ]
+  assert_contains "$output" "3.8.0"
+  # The message has to tell the agent NOT to reach for it, because reaching for
+  # it is the obvious next step from a block, and is what actually happened.
+  assert_contains "$output" "Do NOT reach for one"
+  assert_contains "$output" "bin/install"
+}
+
+@test "stamp_valid: a digest-less MODAL approval is time-bounded, not standing" {
+  # THE hole adversarial review found in this change's first cut. Keying the
+  # expiry on "is this an override" left the ordinary path able to produce a
+  # standing, drift-immune approval: fire the QA-plan modal with no
+  # <qa-plan-digest:...> marker, get criteria_digest "none", and the stamp then
+  # falls through the drift check forever with no expiry to stop it. The rule is
+  # keyed on the DIGEST now, so the source cannot buy an exemption.
+  now=1000000
+  printf '{"branch":"feat/thing","criteria_digest":"none","approval_source":"AskUserQuestion"}' > "$GITDIR/qa-plan-approved"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "approval-expired" ]; [ "$status" -eq 1 ]
+
+  # With an expiry it is valid while the window is open, and only that long.
+  printf '{"branch":"feat/thing","criteria_digest":"none","approval_source":"AskUserQuestion","expires_at_epoch":1000060}' > "$GITDIR/qa-plan-approved"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "valid" ]
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" 1000061
+  [ "$output" = "approval-expired" ]
+
+  # A real digest is what buys a standing approval, because the drift check can
+  # then re-verify it. No expiry needed, and none honored.
+  printf '{"branch":"feat/thing","criteria_digest":"abc123","approval_source":"AskUserQuestion"}' > "$GITDIR/qa-plan-approved"
+  run qpg_stamp_valid "$(cat "$GITDIR/qa-plan-approved")" feat/thing "" "$now"
+  [ "$output" = "valid" ]
+}
+
+@test "stamp_valid: an absent criteria_digest field is treated as no digest" {
+  # Not just the literal "none": a stamp that omits the field entirely must not
+  # slip past by being malformed in a convenient direction.
+  run qpg_stamp_valid '{"branch":"feat/thing","approval_source":"AskUserQuestion"}' feat/thing "" 1000000
+  [ "$output" = "approval-expired" ]
 }
