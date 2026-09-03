@@ -177,8 +177,8 @@ case "$VERDICT" in
     # omission is what turned the 2026-09-03 block into a dead end.
     REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no trusted \`approval_source\`). Such a stamp was either hand-written or produced by a writer that predates the approval-token fix, and there is no way to tell those apart, so it is refused. The migration window that used to honor pre-fix stamps was removed because it keyed on file mtime, which the same shell that writes the stamp can rewrite. $(qpg_block_advice "$VERDICT")"
     ;;
-  override-expired)
-    REASON="QA-plan gate: branch \`$BRANCH\` was authorized by a HUMAN OVERRIDE that has now lapsed. An override attests that a person approved the plan, but it binds to no plan text, so unlike a modal approval it cannot be re-verified against what is being shipped and it expires instead. $(qpg_block_advice "$VERDICT")"
+  approval-expired)
+    REASON="QA-plan gate: branch \`$BRANCH\` carries an approval that has lapsed. It binds to no plan digest, so nothing can re-verify it against what is being shipped, and time is the only bound it has. Every human override is in this category, and so is a modal approval whose question carried no digest marker. $(qpg_block_advice "$VERDICT")"
     ;;
   *)
     REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no usable approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. $(qpg_block_advice "$VERDICT") \`/ship\` folds the plan into the body. A spike branch is not exempt here: opening a PR is shipping, so the plan is required."

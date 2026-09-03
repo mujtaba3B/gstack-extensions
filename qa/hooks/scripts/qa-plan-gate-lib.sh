@@ -24,7 +24,7 @@
 # qpg_stamp_valid <stamp_json> <branch> [current_digest] [now_epoch]
 #   Decide whether an approval stamp authorizes building / PRing on <branch>.
 #   Echoes "valid" on success, else a single-word reason (no-stamp | malformed |
-#   wrong-branch | plan-changed | unattested | override-expired). Return code
+#   wrong-branch | plan-changed | unattested | approval-expired). Return code
 #   mirrors the verdict (0 valid, 1 otherwise). Every verdict has a matching row
 #   in qpg_block_advice, so a gate never has to invent remedy text.
 #
@@ -111,26 +111,35 @@ qpg_stamp_valid() {
   s_source=$(printf '%s' "$stamp" | jq -r '.approval_source // empty' 2>/dev/null) || s_source=""
   [ "$(qpg_source_trusted "$s_source")" = "trusted" ] || { echo "unattested"; return 1; }
 
-  # An OVERRIDE stamp expires; a modal-click stamp does not. The asymmetry is not
-  # arbitrary. A click binds to a plan DIGEST, so the drift check above already
-  # re-verifies it against whatever is being shipped and it can safely stand for
-  # the branch's whole life. An override binds to no plan text at all (the human
-  # types a phrase or a terminal confirmation; neither carries a digest), so it
-  # falls through the drift check every time and would otherwise be a standing,
-  # drift-immune approval. That is precisely the "scoped approval carried forward
-  # as a standing one" shape of the 2026-09-02 incident, so the override is
-  # bounded in the only dimension it has left.
+  # AN APPROVAL THAT CANNOT BE RE-VERIFIED MUST EXPIRE. The test is the DIGEST,
+  # not the source, and that correction came from an adversarial review of this
+  # change: the first cut keyed the expiry on "is this an override", which left a
+  # real hole. A modal click whose question carried no `<qa-plan-digest:...>`
+  # marker produces a stamp with criteria_digest "none", which falls through the
+  # drift check above (nothing to compare) AND, under the source-keyed rule, got
+  # no expiry either. That is a standing, drift-immune approval reachable through
+  # the ORDINARY path: approve once with a digest-less question, then rewrite the
+  # `## QA` section freely. It is exactly the "scoped approval carried forward as
+  # a standing one" shape of the 2026-09-02 incident, arrived at from the other
+  # direction.
   #
-  # A missing or non-numeric expiry on an override stamp is EXPIRED, not
-  # unbounded: the writers always set one, so its absence means the stamp was not
-  # written by them.
-  if [ "$(qpg_source_is_override "$s_source")" = "override" ]; then
+  # So: a stamp carrying a real digest stands for the branch's life, because the
+  # drift check re-verifies it against whatever is being shipped. A stamp with no
+  # digest (every override, plus any digest-less click) is bounded by time,
+  # because time is the only bound it has left.
+  #
+  # A missing or non-numeric expiry on such a stamp is EXPIRED, not unbounded:
+  # the writers always set one, so its absence means the stamp predates this rule
+  # or was not written by them. Fail-closed; the cure is one re-approval.
+  local s_digest_e
+  s_digest_e=$(printf '%s' "$stamp" | jq -r '.criteria_digest // empty' 2>/dev/null) || s_digest_e=""
+  if [ -z "$s_digest_e" ] || [ "$s_digest_e" = "none" ]; then
     local s_exp
     s_exp=$(printf '%s' "$stamp" | jq -r '.expires_at_epoch // empty' 2>/dev/null) || s_exp=""
-    case "$s_exp" in ''|*[!0-9]*) echo "override-expired"; return 1 ;; esac
+    case "$s_exp" in ''|*[!0-9]*) echo "approval-expired"; return 1 ;; esac
     [ -n "$now" ] || now=$(date +%s)
-    case "$now" in ''|*[!0-9]*) echo "override-expired"; return 1 ;; esac
-    [ "$now" -le "$s_exp" ] || { echo "override-expired"; return 1; }
+    case "$now" in ''|*[!0-9]*) echo "approval-expired"; return 1 ;; esac
+    [ "$now" -le "$s_exp" ] || { echo "approval-expired"; return 1; }
   fi
 
   echo "valid"; return 0
@@ -198,8 +207,8 @@ qpg_block_advice() {
       echo "The QA plan changed after it was approved, so the approval no longer covers what is being shipped. Re-run /qa:plan and get the current plan approved." ;;
     unattested)
       echo "A stamp exists but carries no proof a human approved it (no trusted approval_source). Running /qa:plan again will NOT fix this on its own, because the stale stamp stays on disk. Run 'qa-plan-stamp.sh doctor' to see where it came from (usually an older cached copy of the stamp writer, which predates the approval-token guard), then 'qa-plan-stamp.sh clear', then /qa:plan." ;;
-    override-expired)
-      echo "A human override authorized this branch but has lapsed (overrides expire because they bind to no plan digest). Get the plan approved through /qa:plan, or have the human give a fresh override." ;;
+    approval-expired)
+      echo "This branch's approval carries no plan digest, so nothing can re-verify it against what is being shipped and it is bounded by time instead, and that window has closed. Every human override is in this category, and so is a modal approval whose question carried no <qa-plan-digest:...> marker. Get the plan approved through /qa:plan, which embeds the digest and produces an approval that does not expire, or have the human give a fresh override." ;;
     malformed)
       echo "The stamp file is not valid JSON, so nothing can be read from it. Run 'qa-plan-stamp.sh clear' and then /qa:plan." ;;
     *)
@@ -228,13 +237,21 @@ qpg_stale_writer_warning() {
 }
 
 # qpg_override_hint
-#   The one-line pointer to the two human override routes, appended to a block so
-#   the human reading over the agent's shoulder knows a route exists that does not
-#   require a restart. Deliberately addressed TO THE HUMAN and phrased so the
-#   agent cannot mistake it for something to run: neither route is reachable from
-#   an agent, and an agent that tries the terminal one gets a refusal.
+#   The pointer to the two human override routes, appended to a block so the
+#   human reading over the agent's shoulder knows a route exists that does not
+#   require a restart. Addressed TO THE HUMAN.
+#
+#   It used to end "Claude cannot do either of these for you, which is the point."
+#   That was half false and the half that was false mattered. The typed phrase is
+#   genuinely beyond an agent: nothing it does produces a UserPromptSubmit event.
+#   The terminal route is only beyond an ORDINARY tool call; a process can spawn
+#   itself a pty, which was verified by running the exploit. So the hint now says
+#   which is which, and tells the agent plainly that taking the second route is
+#   forging a human approval rather than solving a problem. An instruction it can
+#   disobey is all that is available there, and pretending otherwise in the one
+#   message an agent is guaranteed to read would be the worst place to be wrong.
 qpg_override_hint() {
-  echo "If you are the human and you have already approved this plan, you can override without a restart: send \"qa-plan: I approve this plan\" as a message on its own, or run 'qa-plan-stamp.sh override' in a real terminal tab. Claude cannot do either of these for you, which is the point."
+  echo "If you are the human and you have already approved this plan, you can override without a restart: send \"qa-plan: I approve this plan\" as a message on its own (nothing Claude does can produce that event), or run 'qa-plan-stamp.sh override' yourself in a real terminal tab. CLAUDE: do not attempt either. The second refuses for any ordinary tool call because it needs a controlling terminal; spawning one to get around that is forging a record that a human approved this, and the stamp records the parent process that did it."
 }
 
 # qpg_unattested_disposition <gate>

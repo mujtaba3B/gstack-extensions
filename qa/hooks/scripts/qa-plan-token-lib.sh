@@ -264,11 +264,20 @@ qpt_token_approver() {
 #      message. The model emits assistant turns and tool calls; it cannot submit a
 #      user prompt. Same class of evidence as `.tool_response.answers`, and it does
 #      NOT depend on the AskUserQuestion hook that was dormant.
-#   2. A controlling terminal. The agent's Bash tool runs with no TTY at all
-#      (`/dev/tty` -> "device not configured"), so a prompt read from /dev/tty
-#      cannot be answered by an agent. This one needs no hook of any kind, which
-#      is what makes it the break-glass: it still works when EVERY hook is
+#   2. A controlling terminal. No ordinary tool call has one: the agent's Bash
+#      tool runs with no TTY at all (`/dev/tty` -> "device not configured"), and
+#      neither does a `!`-prefixed command. This one needs no hook of any kind,
+#      which is what makes it the break-glass: it still works when EVERY hook is
 #      dormant, which is precisely the state that caused the incident.
+#
+#      IT IS WEAKER THAN (1), and the first draft of this comment got that wrong
+#      by asserting an agent "cannot" reach it. A process can give ITSELF a
+#      controlling terminal with `pty.fork()`, `script`, or `expect`, and running
+#      the exploit during this change's own review confirmed an agent can drive
+#      the confirmation prompt and write a human-tty-override stamp. So route (2)
+#      is an ACCIDENT-GUARD at the same level as the token file itself, not a
+#      boundary. Route (1) is the genuinely unforgeable one: a model cannot
+#      submit a user prompt at all, at any cost.
 #
 # WHAT WAS REJECTED, so it is not re-proposed. A plain sanctioned command the
 # human types with Claude Code's `!` prefix. It carries no distinguishing signal:
@@ -284,7 +293,28 @@ qpt_token_approver() {
 # route to the same place. What they do change is the audit trail: an override
 # records its own `approval_source` (human-prompt-override / human-tty-override),
 # so it never masquerades as a modal click, and it carries an expiry because it
-# binds to no plan digest (see QPG_OVERRIDE_TTL in qa-plan-gate-lib.sh).
+# binds to no plan digest (see QPG_OVERRIDE_TTL in qa-plan-gate-lib.sh). The
+# tty-override stamp additionally records the terminal and the parent process
+# that supplied it, so a pty spawned by an agent is visible to whoever reads the
+# stamp even though nothing blocks on it.
+#
+# A THIRD residual, distinct from the file one and worth naming separately: the
+# minting HOOKS are ordinary scripts that read a JSON payload on stdin. An agent
+# can pipe a fabricated UserPromptSubmit or AskUserQuestion payload straight into
+# one and get a real token out. The harness-filled EVENT is unforgeable; the
+# script that consumes it is not, because it is a file on disk like everything
+# else here. That does not make the typed-phrase route pointless (it remains the
+# only route with no legitimate agent-reachable path, and a fabricated payload is
+# as deliberate an act as hand-writing the token), but "the model cannot emit
+# .prompt" is a statement about the EVENT and must not be repeated as a statement
+# about the SCRIPT.
+#
+# The rule this file keeps re-learning, now written down: do not describe a guard
+# as impossible-to-defeat until you have TRIED to defeat it. The mtime carve-out
+# died to `printf` plus `touch -t`. The "an agent has no terminal" claim died to
+# three lines of `pty.fork()`. Both were defended in a comment before anyone ran
+# the exploit. `qa/hooks/tests/helpers/pty-run.py` exists partly so the second one
+# stays disproved in the test suite rather than in someone's memory.
 
 # The exact phrase the human types to override. Deliberately a sentence rather
 # than a command: it is typed INTO THE CONVERSATION, so it must not look like
@@ -309,8 +339,15 @@ qpt_normalize_prompt() {
 #   Does this typed prompt mean "override the QA-plan gate"? Echoes "override" /
 #   "no"; return code 0 only for override.
 #
-#   THE WHOLE PROMPT must be the phrase. Not a prefix, not a contained substring,
-#   not one line of a longer message. That is not fussiness: the phrase is written
+#   THE WHOLE PROMPT must be the phrase, after normalization. Say what that means
+#   plainly, because "exactly" overstates it: case is folded, every run of
+#   whitespace (newlines included) collapses to one space, and a trailing `.` or
+#   `!` is dropped. So "QA-PLAN: I APPROVE THIS PLAN!" matches, and so does the
+#   phrase typed across two lines. None of those reach a DIFFERENT phrase, which
+#   is the property that matters; they are the same sentence typed by a human who
+#   is not being careful about shift and punctuation. What is rejected is any
+#   prompt with other words in it: not a prefix, not a contained substring, not
+#   one line of a longer message. That is not fussiness: the phrase is written
 #   down in this file, in the skill body, and in the README, so it gets QUOTED in
 #   ordinary conversation about the feature. A substring match would let the
 #   sentence "should I type qa-plan: I approve this plan?" mint a real override,
@@ -416,8 +453,39 @@ qpt_tty_confirm_phrase() {
 qpt_writer_is_guarded() {
   local p="$1"
   [ -r "$p" ] || { echo "no"; return 1; }
-  if grep -q 'qa-plan-approval-token' "$p" 2>/dev/null; then echo "yes"; return 0; fi
-  echo "no"; return 1
+
+  # FUNCTIONAL PROBE, not a grep. The first cut matched the string
+  # "qa-plan-approval-token" anywhere in the file, which an adversarial review
+  # pointed out is defeated by one appended COMMENT containing that string: the
+  # unguarded writer then looks guarded and survives pruning. That is the same
+  # "a test satisfiable by a comment is not a test" failure this repo has already
+  # been bitten by, in detector form.
+  #
+  # So actually RUN it: a throwaway git repo, a feature branch, no token, and see
+  # whether it writes a stamp. A guarded writer refuses; an unguarded one writes
+  # one and exits 0. Nothing in a comment can fake that.
+  #
+  # Fails CLOSED on its own errors: if the probe cannot be set up (no git, no
+  # mktemp), the answer is "no", which at worst prunes a cached version that is
+  # already superseded. Deleting a stale cache directory is cheap; leaving an
+  # unguarded stamp writer on disk is what this exists to prevent.
+  command -v git >/dev/null 2>&1 || { echo "no"; return 1; }
+  local probe; probe=$(mktemp -d 2>/dev/null) || { echo "no"; return 1; }
+  (
+    cd "$probe" 2>/dev/null || exit 1
+    git init -q . >/dev/null 2>&1 || exit 1
+    git config user.email probe@example.invalid >/dev/null 2>&1
+    git config user.name probe >/dev/null 2>&1
+    git commit -q --allow-empty -m probe >/dev/null 2>&1 || exit 1
+    git checkout -q -b probe/guarded >/dev/null 2>&1 || exit 1
+    bash "$p" write >/dev/null 2>&1
+  )
+  local wrote="no"
+  [ -f "$probe/.git/qa-plan-approved" ] && wrote="yes"
+  rm -rf "$probe" 2>/dev/null || true
+
+  if [ "$wrote" = "yes" ]; then echo "no"; return 1; fi
+  echo "yes"; return 0
 }
 
 # qpt_liveness_dir

@@ -256,13 +256,15 @@ case "$VERB" in
     NOW_EPOCH=$(date +%s)
     NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    # An override stamp carries an expiry; a modal-click stamp does not. See
-    # QPG_OVERRIDE_TTL and the reasoning in qpg_stamp_valid: an override binds to
-    # no plan digest, so the drift check can never invalidate it and time is the
-    # only bound left. jq emits `null` for the click path, and
-    # `.expires_at_epoch // empty` on the gate side reads null as absent, which is
-    # exactly the "no expiry" the click path wants.
-    if [ "$(qpg_source_is_override "$APPROVAL_SOURCE")" = "override" ]; then
+    # An approval that cannot be RE-VERIFIED gets an expiry; one that can does
+    # not. The test is the DIGEST, not the source. See qpg_stamp_valid: a stamp
+    # carrying a real digest is re-checked against whatever is being shipped, so
+    # it can stand for the branch's life; a digest-less one falls through that
+    # check forever and time is its only bound. Keying this on "is it an override"
+    # (the first cut) left a digest-less MODAL approval standing and drift-immune,
+    # which adversarial review caught. jq emits `null` for the bounded-by-drift
+    # case, and `.expires_at_epoch // empty` reads null as absent on the gate side.
+    if [ "$DIGEST" = "none" ]; then
       EXPIRES=$(( NOW_EPOCH + QPG_OVERRIDE_TTL ))
     else
       EXPIRES="null"
@@ -308,22 +310,40 @@ case "$VERB" in
     ;;
 
   override)
-    # THE BREAK-GLASS. Authorized by a human confirming at a REAL CONTROLLING
-    # TERMINAL, which is the only human signal in this system that needs no hook.
-    # That matters because the failure this exists for is a DORMANT HOOK: on
-    # 2026-09-03 the minting hook had been added after the session started, so
-    # every hook-based route was dead and restarting was the only option.
+    # THE BREAK-GLASS. Authorized by a human confirming at a controlling terminal,
+    # which is the only human-ish signal in this system that needs no hook. That
+    # matters because the failure this exists for is a DORMANT HOOK: on 2026-09-03
+    # the minting hook had been added after the session started, so every
+    # hook-based route was dead and restarting was the only option.
     #
-    # WHY A TTY IS REAL EVIDENCE HERE. Measured 2026-09-03: the agent's Bash tool
-    # runs with no controlling terminal whatsoever. `[ -t 0 ]` is false and
-    # `/dev/tty` cannot even be opened ("device not configured"), because the
-    # process has no controlling terminal to open, and a process cannot acquire
-    # another session's terminal. A `!`-prefixed command in Claude Code is the
-    # same: a real transcript shows `! sudo ...` failing with "sudo: a terminal is
-    # required to read the password". So this verb is reachable from a terminal
-    # tab and from nowhere inside a Claude session, by the agent OR the human.
-    # That last part is the cost of the design and it is deliberate: a route the
-    # human can take from the Claude prompt is a route the agent can take too.
+    # WHAT THE TTY CHECK IS, STATED HONESTLY. It is an ACCIDENT-GUARD, not a
+    # boundary, and an earlier version of this comment claimed otherwise. The
+    # claim was: an agent has no controlling terminal, so it cannot reach this.
+    # The first half is true and useful. Measured 2026-09-03, the Bash tool runs
+    # with no controlling terminal at all (`/dev/tty` is "device not configured"),
+    # and neither does a `!`-prefixed command in Claude Code (a real transcript
+    # shows `! sudo ...` failing with "sudo: a terminal is required to read the
+    # password"). So no ordinary tool call reaches this verb, by either party.
+    #
+    # The second half was FALSE, and was disproved during this change's own
+    # review by running the exploit rather than reasoning about it. A process can
+    # give ITSELF a controlling terminal: `pty.fork()` in python is three lines,
+    # and `script` and `expect` do the same. An agent that does that can drive
+    # this prompt and write a human-tty-override stamp. Verified working.
+    #
+    # So this verb sits exactly where the token file already sits, and the token
+    # lib's HONEST SCOPE section governs it: an agent with shell access can forge
+    # this, as it can forge any file-based sentinel here. What the check still
+    # buys is the cost line that section draws. Reaching this verb takes a
+    # deliberate, conspicuous act (spawning a pty) rather than a normal tool call,
+    # which is the same "recognizably illegitimate rather than a plausible slip"
+    # distinction that made #71's fix worth shipping. It is NOT the same as the
+    # UserPromptSubmit route, which really is unforgeable: a model cannot submit
+    # a user prompt at all.
+    #
+    # If you are tempted to write "an agent cannot do this" here again: run
+    # qa/hooks/tests/helpers/pty-run.py against this verb first. The bats suite
+    # pins the limitation so it cannot be quietly forgotten.
     command -v jq >/dev/null 2>&1 || { echo "qa-plan-stamp.sh: jq required" >&2; exit 1; }
     [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || {
       echo "qa-plan-stamp.sh: refusing to stamp a detached HEAD; checkout a branch" >&2; exit 1; }
@@ -341,9 +361,10 @@ case "$VERB" in
         echo "only thing standing behind it is that a person typed a confirmation at a real"
         echo "terminal. A process with no controlling terminal cannot be that person."
         echo
-        echo "If you are Claude: this is not a step to work around. Stop and tell the human"
-        echo "the two routes open to them: sending \"$QPT_OVERRIDE_PHRASE\" as a message on"
-        echo "its own, or running this command themselves in a terminal tab."
+        echo "If you are Claude: this is not a step to work around, and spawning a pty to"
+        echo "get past it is forging a human approval, not solving a problem. Stop and tell"
+        echo "the human the two routes open to them: sending \"$QPT_OVERRIDE_PHRASE\" as a"
+        echo "message on its own, or running this command themselves in a terminal tab."
         echo
         echo "If you are the human: you are seeing this because you ran it through Claude"
         echo "(the Bash tool and the ! prefix are both non-TTY). Open a terminal tab, cd to"
@@ -390,6 +411,18 @@ case "$VERB" in
     NONCE=$( { head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n'; } || echo "" )
     [ -n "$NONCE" ] || NONCE="$NOW_EPOCH-$$"
 
+    # PROVENANCE. Since the TTY check is an accident-guard rather than a boundary
+    # (see above), the next best thing is making a forged one LOOK forged in an
+    # audit. A human's terminal has a shell or terminal emulator as its parent; a
+    # pty spawned by an agent has `python`, `script`, or `expect` there. Recorded,
+    # never enforced: this is evidence for whoever reads the stamp later, and
+    # blocking on it would be security theatre, since the same process that
+    # spawns the pty chooses its own parent.
+    TTY_NAME=$( { ps -o tty= -p $$ 2>/dev/null || echo "?"; } | tr -d ' ' )
+    PARENT_CMD=$( { ps -o comm= -p "$PPID" 2>/dev/null || echo "?"; } | sed 's|.*/||' | tr -d ' ' )
+    [ -n "$TTY_NAME" ] || TTY_NAME="?"
+    [ -n "$PARENT_CMD" ] || PARENT_CMD="?"
+
     tmp=$(mktemp "$GITDIR/.qa-plan-approved.XXXXXX") || { echo "mktemp failed" >&2; exit 1; }
     jq -nc \
       --arg branch "$BRANCH" \
@@ -399,14 +432,18 @@ case "$VERB" in
       --arg approver "$APPROVER" \
       --arg nonce "$NONCE" \
       --argjson expires "$(( NOW_EPOCH + QPG_OVERRIDE_TTL ))" \
+      --arg tty "$TTY_NAME" \
+      --arg parent "$PARENT_CMD" \
       '{branch:$branch, approved_at:$iso, approved_at_epoch:$epoch,
         head_at_approval:$head, criteria_digest:"none", approver:$approver,
         approval_source:"human-tty-override", approval_nonce:$nonce,
-        expires_at_epoch:$expires, tool:"qa-plan"}' > "$tmp" \
+        expires_at_epoch:$expires, override_tty:$tty, override_parent:$parent,
+        tool:"qa-plan"}' > "$tmp" \
       || { rm -f "$tmp"; echo "jq write failed" >&2; exit 1; }
     mv -f "$tmp" "$STAMP" || { rm -f "$tmp"; echo "stamp write failed" >&2; exit 1; }
-    printf '%s tty-override stamp branch=%s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
+    printf '%s tty-override stamp branch=%s tty=%s parent=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$TTY_NAME" "$PARENT_CMD" \
+      >> "$HOME/.claude/qa-plan-gate.log" 2>/dev/null || true
     echo "$STAMP"
     ;;
 

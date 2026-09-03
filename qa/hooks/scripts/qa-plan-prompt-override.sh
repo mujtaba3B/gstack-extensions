@@ -22,6 +22,17 @@
 # INDEPENDENT of the AskUserQuestion hook, which is what makes it a recovery path
 # rather than a second copy of the thing that was broken.
 #
+# SCOPE OF THAT CLAIM, stated precisely because it is easy to overstate. The
+# EVENT is unforgeable. THIS SCRIPT is not: it reads JSON on stdin, so an agent
+# can pipe a fabricated payload into it and get a token, which an adversarial
+# review of this feature pointed out. That is the same file-level residual the
+# token lib documents for every sentinel here, and there is no fix available from
+# inside a shell script that anything on the box can run. What survives is the
+# cost line: fabricating a payload to feed a hook is a deliberate act with no
+# innocent reading, unlike running a sanctioned tool at the wrong moment. Do not
+# write "an agent cannot mint this" anywhere; write that no agent ACTION produces
+# the event.
+#
 # WHY NOT A COMMAND THE HUMAN TYPES WITH `!`. That was the first proposal and it
 # does not work. Measured on 2026-09-03: the agent's Bash tool has no controlling
 # terminal at all (`/dev/tty` -> "device not configured"), and neither does a

@@ -634,6 +634,18 @@ OLD
 
   run qpt_writer_is_guarded "$REPO/does-not-exist.sh"
   [ "$output" = "no" ]; [ "$status" -eq 1 ]
+
+  # A COMMENT mentioning the token file must not make an unguarded writer look
+  # guarded. The first cut grepped for that string and this exact two-line
+  # mutation defeated it, leaving the unguarded writer un-pruned.
+  cat > "$REPO/old-stamp-with-comment.sh" <<'OLD2'
+#!/bin/bash
+# reads qa-plan-approval-token ... except it does not
+APPROVER=$(git config user.name)
+jq -nc --arg a "$APPROVER" '{approver:$a}' > "$(git rev-parse --absolute-git-dir)/qa-plan-approved"
+OLD2
+  run qpt_writer_is_guarded "$REPO/old-stamp-with-comment.sh"
+  [ "$output" = "no" ]; [ "$status" -eq 1 ]
 }
 
 # ---- the prompt-override hook, end to end -----------------------------------
@@ -677,9 +689,11 @@ OLD
   [ ! -f "$GITDIR/qa-plan-approval-token" ]
 }
 
-@test "write: a modal-click stamp gets NO expiry" {
-  # The asymmetry is deliberate: a click binds to a plan digest, so the drift
-  # check re-verifies it and it can stand for the branch's life.
+@test "write: a modal-click stamp WITH a digest gets no expiry" {
+  # The asymmetry is keyed on the DIGEST, not the source: a click that binds to a
+  # plan digest is re-verified by the drift check and can stand for the branch's
+  # life. A digest-less click does NOT get that exemption (covered in
+  # qa-plan-gate.bats), which is the hole adversarial review found.
   mint_approval
   run bash -c "cd '$REPO' && bash '$STAMP' write"
   [ "$status" -eq 0 ]
@@ -758,7 +772,10 @@ OLD
 # the exact condition the override verb requires and an agent's Bash tool can
 # never have.
 PTY_RUN() {  # <shell-command-line> <line-to-type>
-  python3 "$BATS_TEST_DIRNAME/helpers/pty-run.py" "$1" "$2"
+  # The opt-in the helper requires before it will drive the override verb. It
+  # ships inside the installed plugin, so without this it would be a turnkey way
+  # to manufacture the controlling terminal the gate asks for.
+  QA_PLAN_PTY_SELFTEST=1 python3 "$BATS_TEST_DIRNAME/helpers/pty-run.py" "$1" "$2"
 }
 
 @test "override verb: a real terminal plus the exact phrase writes a tty-override stamp" {
@@ -791,4 +808,66 @@ PTY_RUN() {  # <shell-command-line> <line-to-type>
   [ "$output" = "override qa plan for feat/thing" ]
   run qpt_tty_confirm_phrase "other/branch"
   [ "$output" = "override qa plan for other/branch" ]
+}
+
+@test "override verb: an agent CAN self-grant a pty, and that limitation is pinned here" {
+  # This test asserts a WEAKNESS, deliberately. The first version of this feature
+  # claimed in code comments, the skill body, the README and a message to another
+  # session that the TTY route was unreachable by an agent. Running the exploit
+  # during review disproved it in one command: pty.fork() gives a process its own
+  # controlling terminal, so an agent can drive the confirmation prompt.
+  #
+  # Rather than delete the route (it is the only hook-free recovery, which is the
+  # whole reason it exists) the limitation is documented and pinned. If someone
+  # later "hardens" the check and believes they have closed this, THIS test going
+  # red is the signal that the claim needs re-verifying, not that the test is
+  # stale. And if it stays green, nobody can honestly write "an agent cannot".
+  run PTY_RUN "cd '$REPO' && bash '$STAMP' override" "override qa plan for feat/thing"
+  [ -f "$GITDIR/qa-plan-approved" ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "human-tty-override" ]
+  # The mitigation that IS real: the stamp records where the terminal came from,
+  # so a spawned pty is visible to whoever reads it. Enforcement would be theatre
+  # (the spawner picks its own parent), but evidence is not.
+  [ "$(jq -r .override_tty "$GITDIR/qa-plan-approved")" != "null" ]
+  [ "$(jq -r .override_parent "$GITDIR/qa-plan-approved")" != "null" ]
+}
+
+@test "the UserPromptSubmit route is the one that is genuinely unforgeable" {
+  # Stated as a test so the two routes are never conflated. Nothing an agent runs
+  # produces a UserPromptSubmit event: the hook only ever fires on a real typed
+  # message. An agent CAN hand-write the token file, which is the documented
+  # file-level residual shared by every sentinel here, but it cannot cause the
+  # harness to deliver a prompt it did not receive. Its only lever is the same
+  # one it has on every other file, and qpt_stamp_source_for still refuses any
+  # token source it does not recognize.
+  for bogus in "human-tty-override" "human-prompt-override" "typed" "user"; do
+    run qpt_stamp_source_for "$bogus"
+    [ "$output" = "" ]; [ "$status" -eq 1 ]
+  done
+}
+
+@test "write: a digest-less approval gets an expiry whatever its source" {
+  # The writer side of the rule the gate enforces. mint_approval embeds a digest,
+  # so this mints from a question with no <qa-plan-digest:...> marker instead.
+  ask_payload "QA plan" "Approve the plan?" "Approve" | bash "$MINT"
+  run bash -c "cd '$REPO' && bash '$STAMP' write"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .approval_source "$GITDIR/qa-plan-approved")" = "AskUserQuestion" ]
+  [ "$(jq -r .criteria_digest "$GITDIR/qa-plan-approved")" = "none" ]
+  exp=$(jq -r .expires_at_epoch "$GITDIR/qa-plan-approved")
+  [ "$exp" != "null" ]
+  [ "$exp" -gt "$(date +%s)" ]
+}
+
+@test "pty helper: refuses to drive the override verb without the test opt-in" {
+  # The shipped-exploit finding, pinned. bin/install copies this helper into the
+  # plugin cache on every machine, so a blocked agent would otherwise find a
+  # documented tool inside the plugin whose job is to defeat the plugin's own
+  # gate. This is a speed bump, not a boundary (the variable is settable, the
+  # file is copyable, the stdlib is fifteen lines away), and the comments say so.
+  run env -u QA_PLAN_PTY_SELFTEST python3 "$BATS_TEST_DIRNAME/helpers/pty-run.py" \
+    "cd '$REPO' && bash '$STAMP' override" "override qa plan for feat/thing"
+  [ "$status" -eq 2 ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+  assert_contains "$output" "forges it"
 }
