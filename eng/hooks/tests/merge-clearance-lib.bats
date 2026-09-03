@@ -1293,6 +1293,19 @@ disp() {
   run mc_cr_success_rate_limited "success" "" \
     "$(jq -nc --arg b "$marker" '[{author:"coderabbitai[bot]", body:$b}]')"
   [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "success rate-limited: marker survives a LATER CR comment (the friendships#6 shape)" {
+  # The whole reason this uses mc_cr_rate_limited (anywhere) and NOT
+  # mc_cr_rate_limited_latest: CR posts the marker and then supersedes it with
+  # walkthrough text. A single-element fixture cannot tell the two apart, so this
+  # pins the decision the function was written to make. _latest would say "no".
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:$m},
+                                  {author:"coderabbitai[bot]", body:"## Walkthrough\nThis PR ..."}]')"
+  [ "$output" = "yes" ]
 }
 
 @test "success rate-limited: a genuinely green review is NOT relaxed" {
@@ -1322,4 +1335,69 @@ disp() {
   [ "$output" = "no" ]
   run mc_cr_failure_rate_limited "success" "Review rate limited" "[]"
   [ "$output" = "no" ]
+}
+
+
+# ---- the ENTRY predicate, and the interlock it feeds ------------------------
+#
+# mc_status_rate_limited is the loose gate-entry test AND the thing
+# mc_cr_reviewed_head keys off. It used to match a literal "rate limit" with a
+# SPACE only, so the hyphenated spelling escaped it, mc_cr_reviewed_head reported
+# "CR reviewed this head", and the PR reached a full CLEAR with no CodeRabbit
+# review and no local-review requirement. Fail-OPEN, and strictly worse than the
+# fail-closed wedge the rate-limit shapes exist to remove.
+
+@test "entry predicate: the hyphenated spelling is caught" {
+  run mc_status_rate_limited "Rate-limited"
+  [ "$output" = "yes" ]
+}
+
+@test "entry predicate: the no-separator spelling is caught" {
+  run mc_status_rate_limited "ratelimit exceeded"
+  [ "$output" = "yes" ]
+}
+
+@test "entry predicate: matches the same spellings as the hardened matcher" {
+  # Keeping the two patterns identical is load-bearing: a description the hardened
+  # matcher would act on must first be able to ENTER the branch.
+  for d in "Review rate limited" "Rate-limited" "ratelimit exceeded" "Rate limit exceeded"; do
+    [ "$(mc_status_rate_limited "$d")" = "yes" ] || { echo "entry missed: $d"; return 1; }
+    [ "$(mc_desc_rate_limited "$d")" = "yes" ]   || { echo "hardened missed: $d"; return 1; }
+  done
+}
+
+@test "entry predicate: an ordinary green description is still not a rate limit" {
+  run mc_status_rate_limited "1 file reviewed"
+  [ "$output" = "no" ]
+  run mc_status_rate_limited ""
+  [ "$output" = "no" ]
+}
+
+@test "entry predicate: the loose variant deliberately has NO negation guard" {
+  # Asymmetric on purpose: loose to ENTER, strict to ACT. A negated description
+  # should still get a second look, and mc_desc_rate_limited is what refuses it.
+  [ "$(mc_status_rate_limited "not rate limited")" = "yes" ]
+  [ "$(mc_desc_rate_limited   "not rate limited")" = "no"  ]
+}
+
+@test "reviewed-head: a hyphenated rate limit is NOT proof CR reviewed the head" {
+  # End to end, the false-CLEAR this closes.
+  run mc_cr_reviewed_head '[]' "abc123" "success" "Rate-limited"
+  [ "$output" = "no" ]
+}
+
+@test "reviewed-head: a genuine green status IS proof CR reviewed the head" {
+  run mc_cr_reviewed_head '[]' "abc123" "success" "1 file reviewed"
+  [ "$output" = "yes" ]
+}
+
+@test "the CR_RL_BACKSTOPPED interlock is still two conditions, not one" {
+  # This is the single most catastrophic mutation in the file: drop the
+  # REVIEW_STATE conjunct and EVERY rate-limited PR across all four shapes
+  # auto-clears with no local review. It lives as inline shell in the I/O script,
+  # so no unit test can reach it; pin the text, in the style of the existing
+  # GraphQL-cap pin above.
+  run grep -qE 'CR_RATE_LIMITED" = "yes" \] && \[ "\$REVIEW_STATE" = "current" \] && CR_RL_BACKSTOPPED=yes' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
 }

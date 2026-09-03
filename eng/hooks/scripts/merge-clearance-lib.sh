@@ -350,10 +350,35 @@ mc_cr_reviewed_head() {
 #   an empty or unreadable description is "no", which fails toward the previous
 #   behavior rather than toward blocking every green PR.
 mc_status_rate_limited() {
-  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    *"rate limit"*) echo "yes" ;;
-    *) echo "no" ;;
-  esac
+  # Same spellings as mc_desc_rate_limited, deliberately WITHOUT its negation
+  # guard: this is the loose ENTRY predicate (is a green status worth a second
+  # look), while mc_desc_rate_limited is what a shape may act on. Keeping the two
+  # patterns identical is load-bearing. This used to match a literal "rate limit"
+  # with a SPACE only, so "Rate-limited" and "ratelimit" escaped it, and because
+  # mc_cr_reviewed_head keys off this same predicate the gate then concluded CR had
+  # REVIEWED the head. A PR could reach a full CLEAR with no CodeRabbit review and
+  # no local-review requirement at all: a fail-OPEN hole, strictly worse than the
+  # fail-closed wedge this file's rate-limit shapes exist to remove.
+  if printf '%s' "${1:-}" | grep -qiE 'rate[ -]?limit'; then echo "yes"; else echo "no"; fi
+}
+
+# mc_desc_rate_limited <cr_status_description>
+#   The HARDENED description test: a positive "rate limit" match minus prefix
+#   negations. Shared by the failure and success shapes, both of which rely on it
+#   as PROOF that CR did not review.
+#
+#   Not to be confused with mc_status_rate_limited above, which is the LOOSE
+#   variant (plain substring, no negation guard). That one only decides whether a
+#   green status is worth a second look; this one is what a shape may act on.
+mc_desc_rate_limited() {
+  local desc="${1:-}"
+  # Positive match, minus negations. grep -i keeps the case-insensitivity without
+  # a tr round-trip, and -E gives the optional space/hyphen between the words.
+  if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
+     && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
+    echo "yes"; return 0
+  fi
+  echo "no"; return 1
 }
 
 # mc_cr_rate_limited <comments_json>
@@ -513,24 +538,6 @@ mc_cr_rate_limited_latest() {
 #   "no", so a genuine CR failure is never mistaken for a rate limit. Like the other
 #   two shapes this only ever RELAXES the gate in combination with a current local
 #   /eng:cr review; mc_cr_failure_disposition owns that interlock.
-# mc_desc_rate_limited <cr_status_description>
-#   The HARDENED description test: a positive "rate limit" match minus prefix
-#   negations. Shared by the failure and success shapes, both of which rely on it
-#   as PROOF that CR did not review.
-#
-#   Not to be confused with mc_status_rate_limited above, which is the LOOSE
-#   variant (plain substring, no negation guard). That one only decides whether a
-#   green status is worth a second look; this one is what a shape may act on.
-mc_desc_rate_limited() {
-  local desc="${1:-}"
-  # Positive match, minus negations. grep -i keeps the case-insensitivity without
-  # a tr round-trip, and -E gives the optional space/hyphen between the words.
-  if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
-     && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
-    echo "yes"; return 0
-  fi
-  echo "no"; return 1
-}
 
 mc_cr_failure_rate_limited() {
   local state="$1" desc="${2:-}" comments="${3:-[]}"

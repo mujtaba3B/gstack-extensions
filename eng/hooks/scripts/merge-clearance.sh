@@ -503,7 +503,12 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
       # comment in place and the marker can vanish mid-PR. Pass the comments only
       # as the secondary proof, and only when the description did not settle it,
       # so the common path still costs no extra API call.
-      CR_RATE_LIMITED=$(mc_desc_rate_limited "$CR_STATUS_DESC")
+      # Call the SAME function twice, as the failure branch does at its own site.
+      # Passing the description here keeps mc_cr_success_rate_limited's primary arm
+      # live in production rather than exercised only by tests; the second call
+      # supplies the comments as the secondary proof, and only when the first did
+      # not settle it, so the green path still costs no extra API call.
+      CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "$CR_STATUS_DESC" '[]')
       [ "$CR_RATE_LIMITED" = "yes" ] \
         || CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "" "$(cr_issue_comments)")
     else
