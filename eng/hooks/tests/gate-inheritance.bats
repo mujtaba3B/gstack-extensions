@@ -157,7 +157,31 @@ bash_payload() {
   . "$SCRIPTS/ship-gate-repo-lib.sh"
   run sg_dev_repo_gitdir "$OUTSIDE"
   [ "$status" -eq 0 ]
-  [[ "$output" == "$OUTSIDE"* ]]           # keyed to the worktree, not the main checkout
+
+  # This assertion was DEAD until 2026-09-03. It was a bare `[[ ]]` with two lines
+  # after it, which under bats-core 1.13 cannot fail the test, and the moment it
+  # was made real it went red for two reasons the silence had been hiding:
+  #
+  #   1. It compared the UNRESOLVED $OUTSIDE against `git rev-parse
+  #      --show-toplevel`, which resolves symlinks. On macOS /tmp is a symlink to
+  #      /private/tmp, so the prefix never matched and never could.
+  #   2. sg_dev_repo_gitdir returns TWO tab-separated fields, `<top>\t<gitdir>`,
+  #      and a prefix test on the whole string only ever looked at the first. The
+  #      comment claimed "keyed to the worktree, not the main checkout", which is
+  #      a statement about the SECOND field, and nothing checked it.
+  #
+  # Both fields are asserted now, against the resolved path. The library was
+  # correct all along; only the test was wrong.
+  local want_top; want_top=$(cd -P "$OUTSIDE" && pwd)
+  local got_top="${output%%$'\t'*}"
+  local got_gitdir="${output#*$'\t'}"
+  [ "$got_top" = "$want_top" ]
+  # The worktree's own gitdir lives under <main>/.git/worktrees/<name>. If scope
+  # ever regressed to the main checkout this would be a plain `<main>/.git`.
+  case "$got_gitdir" in */.git/worktrees/*) ;; *)
+    echo "expected the WORKTREE gitdir (.../.git/worktrees/...), not the main checkout" >&2
+    echo "got: $got_gitdir" >&2; false ;;
+  esac
   git -C "$REPO" worktree remove --force "$OUTSIDE" 2>/dev/null || true
 }
 

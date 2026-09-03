@@ -149,48 +149,78 @@ setup() {
   [ "$output" = "review_then_land" ]
 }
 
+# ---- substring assertions ---------------------------------------------------
+#
+# WHY THESE EXIST INSTEAD OF `[[ "$output" == *"x"* ]]`. Measured on bats-core
+# 1.13: a failing `[[ ]]` in any position OTHER than the last line of a test body
+# does not fail the test. `[[` is a shell keyword and errexit does not fire for it
+# there, so an assertion followed by any other line is a silent no-op that passes
+# no matter what the output says. A single-bracket `[ ]` and a function call both
+# fail correctly in the same position.
+#
+# Found by mutation-testing the qa plugin's suites, where a deleted guard left
+# every test green. Nine of the assertions in THIS file were in that state: the
+# last line of each test body was doing all the work and the ones above it were
+# decoration. Use these helpers, never a bare `[[ ]]`.
+assert_contains() {  # <haystack> <needle>
+  case "$1" in *"$2"*) return 0 ;; esac
+  echo "assert_contains failed" >&2
+  echo "  wanted substring: $2" >&2
+  echo "  actual:           $1" >&2
+  return 1
+}
+assert_missing() {  # <haystack> <needle-that-must-not-appear>
+  case "$1" in *"$2"*)
+    echo "assert_missing failed" >&2
+    echo "  unwanted substring: $2" >&2
+    echo "  actual:             $1" >&2
+    return 1 ;;
+  esac
+  return 0
+}
+
 # ---- swn_build_context ------------------------------------------------------
 
 @test "swn_build_context: watch names /eng:pr-watcher and the URL" {
   run swn_build_context watch 'https://github.com/o/r/pull/9' 9
-  [[ "$output" == *"/eng:pr-watcher https://github.com/o/r/pull/9"* ]]
-  [[ "$output" == *"PR #9"* ]]
+  assert_contains "$output" "/eng:pr-watcher https://github.com/o/r/pull/9"
+  assert_contains "$output" "PR #9"
 }
 
 @test "swn_build_context: watch forbids presenting a land-choice menu" {
   # The standing default is "wait for CodeRabbit, then land" - the nudge must tell
   # the agent to just do it, not improvise a land-now / watch / pause question.
   run swn_build_context watch 'https://github.com/o/r/pull/9' 9
-  [[ "$output" == *"Do NOT ask the user how to land"* ]]
-  [[ "$output" == *"standing default"* ]]
+  assert_contains "$output" "Do NOT ask the user how to land"
+  assert_contains "$output" "standing default"
 }
 
 @test "swn_build_context: land names /land-and-deploy and forbids watching" {
   run swn_build_context land 'https://github.com/o/r/pull/9' 9
-  [[ "$output" == *"/land-and-deploy"* ]]
-  [[ "$output" == *"do NOT start /eng:pr-watcher"* ]]
-  [[ "$output" == *"rate limited by coderabbit.ai"* ]]
-  [[ "$output" == *"Do NOT ask the user how to land"* ]]
+  assert_contains "$output" "/land-and-deploy"
+  assert_contains "$output" "do NOT start /eng:pr-watcher"
+  assert_contains "$output" "rate limited by coderabbit.ai"
+  assert_contains "$output" "Do NOT ask the user how to land"
 }
 
 @test "swn_build_context: review_then_land names /eng:cr then /land-and-deploy" {
   run swn_build_context review_then_land 'https://github.com/o/r/pull/9' 9
-  [[ "$output" == *"/eng:cr"* ]]
-  [[ "$output" == *"/land-and-deploy"* ]]
-  [[ "$output" == *"Do NOT open-endedly watch"* ]]
-  [[ "$output" == *"Do NOT ask the user how to land"* ]]
+  assert_contains "$output" "/eng:cr"
+  assert_contains "$output" "/land-and-deploy"
+  assert_contains "$output" "Do NOT open-endedly watch"
+  assert_contains "$output" "Do NOT ask the user how to land"
 }
 
 @test "swn_build_context: unknown mode falls back to the watch nudge" {
   run swn_build_context banana 'https://github.com/o/r/pull/9' 9
-  [[ "$output" == *"/eng:pr-watcher"* ]]
+  assert_contains "$output" "/eng:pr-watcher"
 }
 
 @test "swn_build_context: no em-dash in any branch (global style rule)" {
   local emdash; emdash=$(printf '\xe2\x80\x94')   # U+2014 UTF-8 bytes, so no literal em-dash lives in this file
   for m in watch land review_then_land; do
     run swn_build_context "$m" 'https://github.com/o/r/pull/9' 9
-    [[ "$output" != *"$emdash"* ]]
+    assert_missing "$output" "$emdash"
   done
 }
 

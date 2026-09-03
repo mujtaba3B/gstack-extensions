@@ -973,3 +973,19 @@ PTY_RUN() {  # <shell-command-line> <line-to-type>
   [ ! -f "$GITDIR/qa-plan-approved" ]
   assert_contains "$output" "forges it"
 }
+
+@test "doctor: never claims Claude cannot reach the terminal override" {
+  # THE regression this pins. 3.10.0 retracted "an agent cannot reach the TTY
+  # route" in the block message, the skill body and both READMEs after pty.fork
+  # disproved it, but missed this footer, so doctor contradicted the gate three
+  # lines of output away. A wrong claim about a security property is worse in
+  # doctor than anywhere else: doctor is what someone runs precisely when they
+  # are trying to work out what is true.
+  run bash -c "cd '$REPO' && bash '$STAMP' doctor"
+  [ "$status" -eq 0 ]
+  assert_missing "$output" "neither is reachable by Claude"
+  assert_missing "$output" "Claude cannot"
+  # And it must still say something useful about each route's actual strength.
+  assert_contains "$output" "nothing Claude does can produce that event"
+  assert_contains "$output" "accident-guard only"
+}

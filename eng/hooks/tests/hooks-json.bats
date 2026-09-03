@@ -49,7 +49,13 @@ tuples() {
   run jq -r '.hooks[][].hooks[].command' "$HOOKS_JSON"
   [ "$status" -eq 0 ]
   while IFS= read -r cmd; do
-    [[ "$cmd" == "\"\${CLAUDE_PLUGIN_ROOT}\""/hooks/scripts/* ]]
+    # case/esac, not `[[ ]]`: this sits inside a while loop, so a failing `[[ ]]`
+    # here is a silent no-op under bats-core 1.13 and every command would pass.
+    # Stays a GLOB match on the quoted prefix; assert_contains would accept the
+    # prefix anywhere in the command, including after an injected `;`.
+    case "$cmd" in "\"\${CLAUDE_PLUGIN_ROOT}\""/hooks/scripts/*) ;; *)
+      echo "command does not start with the quoted plugin root: $cmd" >&2; false ;;
+    esac
   done <<< "$output"
 }
 
