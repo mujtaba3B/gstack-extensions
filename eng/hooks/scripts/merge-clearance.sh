@@ -497,7 +497,18 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
   # independent of that interlock; the gating combines the two. Skip the extra API
   # call when the *.pen path already auto-satisfied.
   if [ "$CR_HEAD_UNREVIEWABLE" != "yes" ]; then
-    CR_RATE_LIMITED=$(mc_cr_rate_limited "$(cr_issue_comments)")
+    if [ "$CR_STATUS_STATE" = "success" ]; then
+      # Shape 4: green status, rate-limited description. The description is the
+      # primary proof (mc_cr_success_rate_limited), because CR edits its marker
+      # comment in place and the marker can vanish mid-PR. Pass the comments only
+      # as the secondary proof, and only when the description did not settle it,
+      # so the common path still costs no extra API call.
+      CR_RATE_LIMITED=$(mc_desc_rate_limited "$CR_STATUS_DESC")
+      [ "$CR_RATE_LIMITED" = "yes" ] \
+        || CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "" "$(cr_issue_comments)")
+    else
+      CR_RATE_LIMITED=$(mc_cr_rate_limited "$(cr_issue_comments)")
+    fi
   fi
 elif [ "$CR_STATUS_STATE" = "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ]; then
   # Stuck-pending rate-limit: CodeRabbit posts a "pending" commit status the moment

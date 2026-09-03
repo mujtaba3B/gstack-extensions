@@ -394,6 +394,41 @@ mc_cr_rate_limited() {
   echo "no"; return 1
 }
 
+# mc_cr_success_rate_limited <cr_status_state> <cr_status_description> [comments_json]
+#   FOURTH rate-limit shape: status SUCCESS with a rate-limit description.
+#     1. status MISSING  + marker comment                  -> mc_cr_rate_limited
+#     2. status PENDING (stuck) + marker as LATEST comment -> mc_cr_rate_limited_latest
+#     3. status FAILURE  + rate-limit description          -> mc_cr_failure_rate_limited
+#     4. status SUCCESS  + rate-limit description          -> THIS function
+#
+#   Shape 4 is the most dangerous of the four, because CR publishes GREEN: the check
+#   reads "pass" while the description reads "Review rate limited", so every surface
+#   that trusts the check state alone sees a clean review that never happened.
+#
+#   Keying only on the marker comment (as shape 1 does) is not enough here, and the
+#   failure is intermittent in the worst way: CodeRabbit posts its rate-limit notice
+#   and then EDITS THAT SAME COMMENT IN PLACE as the review progresses. Observed on
+#   mujtaba3B/friendships#6 (2026-09-02): the marker was present at 01:14 and
+#   auto-satisfied the gate, and by 01:38 it had been overwritten by the walkthrough
+#   text, leaving a PR the gate KNEW was rate-limited ("status=success but RATE
+#   LIMITED") but had no way to clear, with no flag that applied
+#   (--override-cr-failure is failure-only). So the description is the primary proof
+#   here exactly as in shape 3, and the marker is the secondary one.
+#
+#   Like shapes 1-3 this only RELAXES the reviewed-head dimension, and only when a
+#   current local /eng:cr review backstops it (CR_RL_BACKSTOPPED). It is never a
+#   bare bypass: with no local review the gate still blocks.
+mc_cr_success_rate_limited() {
+  local state="$1" desc="${2:-}" comments="${3:-[]}"
+  [ "$state" = "success" ] || { echo "no"; return 1; }
+  if [ "$(mc_desc_rate_limited "$desc")" = "yes" ]; then echo "yes"; return 0; fi
+  # Secondary proof: the marker anywhere in CR's comments. Deliberately the
+  # anywhere variant, not _latest: a success status means CR finished (or gave up),
+  # so there is no in-flight review whose newer comment should win.
+  if [ "$(mc_cr_rate_limited "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
 # mc_cr_rate_limited_latest <comments_json>
 #   Stricter sibling of mc_cr_rate_limited, for the STUCK-PENDING case: CodeRabbit
 #   posts a "pending" commit status the moment it STARTS a review, then can hit the
@@ -478,13 +513,29 @@ mc_cr_rate_limited_latest() {
 #   "no", so a genuine CR failure is never mistaken for a rate limit. Like the other
 #   two shapes this only ever RELAXES the gate in combination with a current local
 #   /eng:cr review; mc_cr_failure_disposition owns that interlock.
-mc_cr_failure_rate_limited() {
-  local state="$1" desc="${2:-}" comments="${3:-[]}"
-  [ "$state" = "failure" ] || { echo "no"; return 1; }
+# mc_desc_rate_limited <cr_status_description>
+#   The HARDENED description test: a positive "rate limit" match minus prefix
+#   negations. Shared by the failure and success shapes, both of which rely on it
+#   as PROOF that CR did not review.
+#
+#   Not to be confused with mc_status_rate_limited above, which is the LOOSE
+#   variant (plain substring, no negation guard). That one only decides whether a
+#   green status is worth a second look; this one is what a shape may act on.
+mc_desc_rate_limited() {
+  local desc="${1:-}"
   # Positive match, minus negations. grep -i keeps the case-insensitivity without
   # a tr round-trip, and -E gives the optional space/hyphen between the words.
   if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
      && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
+    echo "yes"; return 0
+  fi
+  echo "no"; return 1
+}
+
+mc_cr_failure_rate_limited() {
+  local state="$1" desc="${2:-}" comments="${3:-[]}"
+  [ "$state" = "failure" ] || { echo "no"; return 1; }
+  if [ "$(mc_desc_rate_limited "$desc")" = "yes" ]; then
     echo "yes"; return 0
   fi
   # Second proof: the marker as CR's LATEST comment. mc_cr_rate_limited_latest

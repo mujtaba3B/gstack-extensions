@@ -1245,3 +1245,81 @@ disp() {
   [ "$(echo "$output" | jq 'length')" -eq 2 ]
   [ "$(echo "$output" | jq -r '[.[]|.state]|index("failure")')" != "null" ]
 }
+
+# ---- mc_desc_rate_limited / mc_cr_success_rate_limited -----------------------
+#
+# The FOURTH rate-limit shape: CodeRabbit publishes state=success with the
+# description "Review rate limited". The check reads "pass" while CR never read
+# the code, so anything trusting the check state alone sees a review that did not
+# happen. Keying only on the marker comment is not enough: CR posts that notice and
+# then EDITS THE SAME COMMENT IN PLACE, so it can vanish mid-PR (observed on
+# mujtaba3B/friendships#6, present 01:14 and gone by 01:38) or never appear at all
+# (observed on the fitness pillar's PR #2).
+
+@test "desc rate-limited: the observed 'Review rate limited' phrasing" {
+  run mc_desc_rate_limited "Review rate limited"
+  [ "$output" = "yes" ]
+}
+
+@test "desc rate-limited: hyphenated and spaced spellings" {
+  run mc_desc_rate_limited "Rate-limited"
+  [ "$output" = "yes" ]
+  run mc_desc_rate_limited "Rate limit exceeded"
+  [ "$output" = "yes" ]
+}
+
+@test "desc rate-limited: a NEGATED description does not buy the escape hatch" {
+  run mc_desc_rate_limited "not rate limited, genuine failure"
+  [ "$output" = "no" ]
+  run mc_desc_rate_limited "no rate limit hit"
+  [ "$output" = "no" ]
+}
+
+@test "desc rate-limited: an ordinary green description is not a rate limit" {
+  run mc_desc_rate_limited "1 file reviewed"
+  [ "$output" = "no" ]
+  run mc_desc_rate_limited ""
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: description alone is proof, no marker needed" {
+  # The whole point: CR erased the marker, or never posted one.
+  run mc_cr_success_rate_limited "success" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+}
+
+@test "success rate-limited: marker is the SECONDARY proof when the description is bare" {
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg b "$marker" '[{author:"coderabbitai[bot]", body:$b}]')"
+  [ "$output" = "yes" ]
+}
+
+@test "success rate-limited: a genuinely green review is NOT relaxed" {
+  # The regression that would matter most: every clean PR silently skipping CR.
+  run mc_cr_success_rate_limited "success" "1 file reviewed" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: only the success state qualifies" {
+  run mc_cr_success_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_success_rate_limited "pending" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_success_rate_limited "missing" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: a negated description is not rescued by an absent marker" {
+  run mc_cr_success_rate_limited "success" "not rate limited" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "failure shape still works after sharing the description test" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "internal error" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_failure_rate_limited "success" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+}
