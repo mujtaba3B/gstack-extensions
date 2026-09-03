@@ -435,8 +435,13 @@ cr_issue_comments() {
 # keeps blocking - the safe direction).
 cr_status_description() {
   local out
+  # Distinguish a FAILED fetch from a successful one returning an empty string.
+  # Collapsing both into "" was a fail-open: empty lets mc_cr_reviewed_head accept
+  # the bare success state as proof CR reviewed HEAD, so a transient gh failure on a
+  # rate-limited-but-green PR cleared it with no review at all.
   out=$(gh api "repos/$REPO/commits/$HEAD/statuses" \
-          -q 'first(.[] | select(.context=="CodeRabbit") | (.description // ""))' 2>/dev/null) || out=""
+          -q 'first(.[] | select(.context=="CodeRabbit") | (.description // ""))' 2>/dev/null) \
+    || { printf '%s' "$MC_DESC_UNAVAILABLE"; return 0; }
   printf '%s' "$out"
 }
 
@@ -470,6 +475,14 @@ CR_VERDICT=$(mc_cr_verdict "$THREADS" "$REVIEWS" "$CR_STATUS_STATE"); CR_RC=$?
 CR_STATUS_DESC=""
 [ "$CR_STATUS_STATE" = "success" ] && CR_STATUS_DESC=$(cr_status_description)
 CR_STATUS_RL=$(mc_status_rate_limited "$CR_STATUS_DESC")
+# "Could not read the description" is its own gap, separate from "read it, and it
+# says rate limited". Both mean the gate cannot confirm CR reviewed HEAD, and both
+# are backstopped by a current local /eng:cr review.
+CR_DESC_UNAVAILABLE=$(mc_desc_unavailable "$CR_STATUS_DESC")
+# Name the gap honestly wherever the backstop is rendered: "rate-limited" is a
+# claim the gate cannot make when it never managed to read the description.
+CR_GAP_LABEL="CR rate-limited"
+[ "$CR_DESC_UNAVAILABLE" = "yes" ] && CR_GAP_LABEL="CR status description unreadable"
 CR_REVIEWED_HEAD=$(mc_cr_reviewed_head "$REVIEWS" "$HEAD" "$CR_STATUS_STATE" "$CR_STATUS_DESC")
 CR_INPROGRESS=0
 [ "$CR_STATUS_STATE" = "pending" ] && CR_INPROGRESS=1
@@ -485,7 +498,8 @@ CR_HEAD_UNREVIEWABLE=no
 CR_RATE_LIMITED=no
 CR_FAILURE_RATE_LIMITED=no
 if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
-   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ]; }; then
+   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ] \
+        || [ "$CR_DESC_UNAVAILABLE" = "yes" ]; }; then
   CR_HEAD_UNREVIEWABLE=$(mc_head_cr_unreviewable "$(head_changed_files "$HEAD")" "$CR_UNREVIEWABLE_GLOBS")
   # Second auto-satisfy path for the same "CR silent on HEAD" gap: CodeRabbit
   # itself posted its rate-limit notice (mc_cr_rate_limited finds the stable
@@ -575,7 +589,7 @@ QA_STATE=$(mc_qa_state "$BODY" "$REQUIRE_QA_PLAN")
 # pass - the last of which can happen on a HEAD CR DID review), fall back to the
 # local /eng:cr review IFF that review is current for this HEAD. Never lose both reviewers - CR down + no local review
 # still blocks. Computed here because it needs REVIEW_STATE (section 3).
-CR_RL_BACKSTOPPED=$(mc_cr_rl_backstopped "$CR_RATE_LIMITED" "$REVIEW_STATE")
+CR_RL_BACKSTOPPED=$(mc_cr_rl_backstopped "$CR_RATE_LIMITED" "$REVIEW_STATE" "$CR_DESC_UNAVAILABLE")
 
 # Operator override for a GENUINE CodeRabbit failure (one with no rate-limit
 # evidence). This is the human-judgment counterpart to the machine-detectable
@@ -687,9 +701,15 @@ case "$CR_FAILURE_DISPOSITION" in
     CR_BLOCKED=1 ;;
 esac
 if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
-   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ]; } \
+   && { [ "$CR_STATUS_STATE" = "missing" ] || [ "$CR_STATUS_RL" = "yes" ] \
+        || [ "$CR_DESC_UNAVAILABLE" = "yes" ]; } \
    && [ "$CR_HEAD_UNREVIEWABLE" != "yes" ] && [ "$CR_RL_BACKSTOPPED" != "yes" ]; then
-  if [ "$CR_RATE_LIMITED" = "yes" ]; then
+  if [ "$CR_DESC_UNAVAILABLE" = "yes" ]; then
+    # Name the real cause: the gate could not READ the status description, so it
+    # cannot confirm CR reviewed this head either way. Do not say "rate-limited"
+    # (unproven) or "has not reviewed" (also unproven).
+    BLOCKERS+=("CodeRabbit status description could not be read, so the gate cannot confirm it reviewed this head (retry, or run /eng:cr on this head and land)")
+  elif [ "$CR_RATE_LIMITED" = "yes" ]; then
     # Rate-limited but no current local review to backstop it: tell the operator
     # exactly how to clear it rather than emitting the generic "not reviewed" line.
     BLOCKERS+=("CodeRabbit is rate-limited and no current local review backstops it (run /eng:cr on this head, then land)")
@@ -742,7 +762,7 @@ qa_mark=bad;     case "$QA_STATE" in complete) qa_mark=ok;; n/a) qa_mark=warn;; 
   # HEAD (reviewed-head=yes) and only the status is rate-limited, so attaching the
   # note there would credit the backstop for something CR did on its own.
   [ "$CR_RL_BACKSTOPPED" = "yes" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
-    && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: CR rate-limited, current local /eng:cr review backstops)"
+    && cr_head_note="reviewed-head=${CR_REVIEWED_HEAD} (auto-satisfied: ${CR_GAP_LABEL}, current local /eng:cr review backstops)"
   cr_verdict_note="verdict=${CR_VERDICT}"
   [ "$CR_VERDICT" = "unresolved-waived" ] && cr_verdict_note="verdict=${CR_VERDICT} (only OUTDATED CR threads left unresolved; CR status green on HEAD; current threads would still block)"
   # The status cell states WHICH of the two failure escapes applied, so a cleared
@@ -822,7 +842,7 @@ case "$TTL" in ''|*[!0-9]*) TTL="$DEFAULT_TTL" ;; esac
 CR_HEAD_EVIDENCE="reviewed-head=${CR_REVIEWED_HEAD}"
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && CR_HEAD_EVIDENCE="auto-satisfied: CR-unreviewable-only HEAD"
 [ "$CR_RL_BACKSTOPPED" = "yes" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
-  && CR_HEAD_EVIDENCE="auto-satisfied: CR rate-limited, local review backstops"
+  && CR_HEAD_EVIDENCE="auto-satisfied: ${CR_GAP_LABEL}, local review backstops"
 
 # Same for the CR commit status: when a "failure" was cleared, the evidence records
 # WHICH escape did it, so an audit of the stamp never has to guess.
@@ -859,7 +879,7 @@ STAMP_JSON=$(jq -nc \
 DESC_NOTES=()
 [ "$CR_FAILURE_OVERRIDDEN" = "yes" ] && DESC_NOTES+=("OPERATOR OVERRIDE --override-cr-failure on a genuine CR failure, local review backstops")
 [ "$CR_FAILURE_DISPOSITION" = "cleared-rate-limited" ] && DESC_NOTES+=("CR status failure = rate limit, local review backstops")
-[ "$CR_RL_BACKSTOPPED" = "yes" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && DESC_NOTES+=("CR rate-limited, local review backstops")
+[ "$CR_RL_BACKSTOPPED" = "yes" ] && [ "$CR_REVIEWED_HEAD" = "no" ] && DESC_NOTES+=("${CR_GAP_LABEL}, local review backstops")
 [ "$CR_HEAD_UNREVIEWABLE" = "yes" ] && DESC_NOTES+=("CR-head auto-satisfied: unreviewable-only HEAD")
 [ "$CR_VERDICT" = "unresolved-waived" ] && DESC_NOTES+=("CR green on HEAD, only OUTDATED CR threads waived")
 [ "$IS_BOOKKEEPING" = "yes" ] && DESC_NOTES+=("bookkeeping fast-lane: docs/inventory only, review+QA waived")

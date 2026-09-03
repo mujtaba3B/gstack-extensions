@@ -337,7 +337,13 @@ mc_cr_reviewed_head() {
     ] | length
   ' 2>/dev/null) || hit=0
   if [ "${hit:-0}" -gt 0 ] 2>/dev/null; then echo "yes"; return 0; fi
-  if [ "$cr_status" = "success" ] && [ "$(mc_status_rate_limited "$cr_desc")" != "yes" ]; then
+  # An UNREADABLE description is not evidence of a review. Proof 2 rests entirely on
+  # the description being known not to say "rate limited"; if the fetch failed we
+  # know nothing, so accepting the bare success state here is the same fail-open as
+  # the missed spelling. A genuinely empty description still passes (see
+  # MC_DESC_UNAVAILABLE) because most green statuses carry no description.
+  if [ "$cr_status" = "success" ] && [ "$(mc_status_rate_limited "$cr_desc")" != "yes" ] \
+     && [ "$(mc_desc_unavailable "$cr_desc")" != "yes" ]; then
     echo "yes"; return 0
   fi
   echo "no"; return 1
@@ -360,6 +366,25 @@ mc_status_rate_limited() {
   # no local-review requirement at all: a fail-OPEN hole, strictly worse than the
   # fail-closed wedge this file's rate-limit shapes exist to remove.
   if printf '%s' "${1:-}" | grep -qiE 'rate[ -]?limit'; then echo "yes"; else echo "no"; fi
+}
+
+# MC_DESC_UNAVAILABLE
+#   Sentinel a caller passes as the description when it could not READ CodeRabbit's
+#   status description at all (the gh call failed), as distinct from reading it
+#   successfully and finding it empty. Collapsing those two into "" is a fail-OPEN:
+#   an empty description makes mc_cr_reviewed_head accept proof 2, so a transient gh
+#   failure on a green-but-rate-limited PR restored the exact hole this file exists
+#   to close. A genuinely empty description keeps its old meaning ("not known to be
+#   rate limited"), because most green statuses carry no description and treating
+#   that as unknown would block every clean PR.
+MC_DESC_UNAVAILABLE="__mc_desc_fetch_failed__"
+
+# mc_desc_unavailable <cr_status_description>
+#   "yes" when the description is the MC_DESC_UNAVAILABLE sentinel. Exact match, so
+#   no real CodeRabbit description can be mistaken for it.
+mc_desc_unavailable() {
+  [ "${1:-}" = "$MC_DESC_UNAVAILABLE" ] && { echo "yes"; return 0; }
+  echo "no"; return 1
 }
 
 # mc_desc_rate_limited <cr_status_description>
@@ -596,8 +621,12 @@ mc_cr_failure_rate_limited() {
 #
 #   Fail-closed on anything unrecognized: only the exact pair (yes, current) relaxes.
 mc_cr_rl_backstopped() {
-  local rate_limited="${1:-no}" review="${2:-}"
-  if [ "$rate_limited" = "yes" ] && [ "$review" = "current" ]; then
+  local rate_limited="${1:-no}" review="${2:-}" desc_unavailable="${3:-no}"
+  # Both gap kinds are "we cannot confirm CR reviewed this head", and both are
+  # backstopped by the same current local review. An unreadable description must be
+  # backstoppable rather than an unclearable wedge: a transient gh failure is not a
+  # reason to make a PR unmergeable by any means.
+  if { [ "$rate_limited" = "yes" ] || [ "$desc_unavailable" = "yes" ]; } && [ "$review" = "current" ]; then
     echo "yes"; return 0
   fi
   echo "no"; return 1

@@ -1474,6 +1474,53 @@ disp() {
   [ "$status" -eq 1 ]
 }
 
+@test "rl backstopped: an UNREADABLE description is the same backstoppable gap" {
+  # A failed description fetch means "cannot confirm CR reviewed this head", which
+  # is the same gap a rate limit creates and takes the same backstop. It must NOT
+  # be an unclearable wedge: a transient gh failure is not a reason to make a PR
+  # unmergeable by any means.
+  run mc_cr_rl_backstopped "no" "current" "yes"
+  [ "$output" = "yes" ]
+  run mc_cr_rl_backstopped "no" "stale" "yes"
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "no" "missing" "yes"
+  [ "$output" = "no" ]
+}
+
+@test "rl backstopped: the third argument defaults to no" {
+  # Two-argument callers keep their exact meaning.
+  run mc_cr_rl_backstopped "no" "current"
+  [ "$output" = "no" ]
+}
+
+# ---- MC_DESC_UNAVAILABLE ----------------------------------------------------
+
+@test "desc unavailable: only the exact sentinel counts" {
+  run mc_desc_unavailable "$MC_DESC_UNAVAILABLE"
+  [ "$output" = "yes" ]
+  for d in "" "Review rate limited" "1 file reviewed" "__mc_desc_fetch_failed" "x__mc_desc_fetch_failed__"; do
+    run mc_desc_unavailable "$d"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "reviewed-head: an UNREADABLE description is NOT proof CR reviewed the head" {
+  # The fail-open two independent reviewers found: a failed gh fetch used to be
+  # indistinguishable from an empty description, and empty accepts proof 2. So a
+  # transient network failure on a green-but-rate-limited PR cleared it with no
+  # CodeRabbit review and no local-review requirement.
+  run mc_cr_reviewed_head "[]" "abc123" "success" "$MC_DESC_UNAVAILABLE"
+  [ "$output" = "no" ]
+}
+
+@test "reviewed-head: a genuinely EMPTY description still counts as reviewed" {
+  # The other half of the fix, and the reason it is narrow: most green statuses
+  # carry no description at all. Treating empty as unknown would block every clean
+  # PR, so only a FAILED fetch is unknown.
+  run mc_cr_reviewed_head "[]" "abc123" "success" ""
+  [ "$output" = "yes" ]
+}
+
 @test "rl backstopped: unrecognized inputs fail CLOSED" {
   run mc_cr_rl_backstopped "" ""
   [ "$output" = "no" ]
@@ -1483,9 +1530,22 @@ disp() {
   [ "$output" = "no" ]
 }
 
+@test "the caller emits the sentinel when the description fetch FAILS" {
+  # mc_desc_unavailable can only do its job if the I/O layer actually reports the
+  # failure. Reverting cr_status_description to `|| out=""` restores the fail-open
+  # and passes every other test in this file, so pin the emission.
+  #
+  # The pattern is anchored to a real statement: leading whitespace then `||`, so a
+  # commented-out copy (`# || { printf ...`) cannot satisfy it. That is the flaw
+  # that made the old CR_RL_BACKSTOPPED pin defeatable.
+  run grep -qE '^[[:space:]]+\|\| \{ printf '"'"'%s'"'"' "\$MC_DESC_UNAVAILABLE"; return 0; \}$' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
+}
+
 @test "the caller computes CR_RL_BACKSTOPPED through the pure function" {
   # Mirrors the real caller: the decision must not drift back into inline shell.
-  run grep -qE '^CR_RL_BACKSTOPPED=\$\(mc_cr_rl_backstopped "\$CR_RATE_LIMITED" "\$REVIEW_STATE"\)$' \
+  run grep -qE '^CR_RL_BACKSTOPPED=\$\(mc_cr_rl_backstopped "\$CR_RATE_LIMITED" "\$REVIEW_STATE" "\$CR_DESC_UNAVAILABLE"\)$' \
     "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
   [ "$status" -eq 0 ]
 }
