@@ -1,5 +1,56 @@
 # qa:plan CHANGELOG
 
+## v2.4.0
+
+Two human overrides, an honest diagnosis, and the removal of a live bypass.
+
+The trigger: on 2026-09-03 a session held a real human approval it could not
+spend. The AskUserQuestion minter had been added to hooks.json after that
+session started, and hook REGISTRATION is read at session start while script
+CONTENT is live immediately, so the gate ran the new logic against a dormant
+minter. The stamp writer refused, correctly, and the only documented remedy was
+"restart Claude Code". The operator, whose approval was the thing being refused,
+asked for a way to give it himself.
+
+- **Two human override routes**, each chained to a signal an agent cannot
+  produce. `qa-plan-prompt-override.sh` is a `UserPromptSubmit` hook that mints
+  the ordinary single-use token when the human sends exactly
+  `qa-plan: I approve this plan` as a whole message: `.prompt` is filled in by
+  the harness from typed input, and the model cannot submit a user prompt.
+  `qa-plan-stamp.sh override` is the break-glass, requiring a real controlling
+  terminal; it needs no hook at all, which is what makes it the recovery for a
+  dormant-hook session. Override stamps record `approval_source` of
+  `human-prompt-override` / `human-tty-override` and carry an expiry
+  (`QPG_OVERRIDE_TTL`, 8h), because they bind to no plan digest and would
+  otherwise be standing, drift-immune approvals.
+- **A plain `!`-typed command was rejected as the override.** It carries no
+  signal distinguishing the human from the agent: measured 2026-09-03, the Bash
+  tool has no controlling terminal at all, and neither does a `!` command. A
+  sanctioned `qa-plan-stamp.sh approve` would have been a one-word bypass any
+  agent could run.
+- **Per-verdict block advice** (`qpg_block_advice`). Both gates emitted one
+  remedy for every verdict. For `unattested` that advice was actively wrong: the
+  operator had already run /qa:plan, and re-running it never clears a stale
+  stamp. Each verdict now names its own cure, and `unattested` says to clear
+  first.
+- **Minter liveness** replaces a guess. The minter drops a per-session
+  heartbeat, so the refusal reports whether the hook actually ran instead of
+  saying it is "probably not registered" and sending the operator to restart for
+  a problem a restart cannot fix. The restart advice is also reordered:
+  `bin/install` FIRST, then restart, because the hook set is read from the
+  installed copy.
+- **`doctor`** reports the stamp verdict and its remedy, the token, liveness,
+  version skew between source and installed plugin, and any cached writer that
+  predates the token guard.
+- **Stale unguarded writers are pruned by `bin/install`, and named in the block
+  message.** Every shipped version left a copy of `qa-plan-stamp.sh` in the
+  plugin cache, and the pre-#71 ones need no token and record
+  `git config user.name`. That is not theoretical: on 2026-09-03 an agent
+  blocked by the guarded writer ran the cached 3.8.0 copy and it stamped without
+  complaint, reproducing the whole #71 defect a day after the fix shipped. The
+  warning now appears in the block itself, which is the moment an agent goes
+  looking for another writer.
+
 ## v2.3.0
 
 The approval stamp now requires a real human approval (gstack-extensions#71).
