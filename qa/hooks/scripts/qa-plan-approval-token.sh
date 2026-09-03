@@ -48,6 +48,27 @@ TLIB="$LIBDIR/qa-plan-token-lib.sh"
 
 TOOL=$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')
 
+# HEARTBEAT, written before any decision. Its only claim is "this hook executed
+# in this session", which is exactly the fact the stamp writer used to GUESS at.
+# Its refusal text told the operator the hook was "probably not registered" and
+# sent them to restart Claude Code; that guess is wrong whenever the hook IS
+# registered and merely declined to mint (wrong header, answer other than
+# Approve), and a restart cannot fix those. Recording liveness converts that
+# sentence from a hypothesis into an observation. Written for EVERY
+# AskUserQuestion, not only QA-plan ones, because the question being asked is
+# "did this hook run", not "did it mint".
+#
+# Best-effort in every direction: a failure here must never affect minting.
+_SESSION_EARLY=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null || echo "")
+_HB=$(qpt_liveness_file "$_SESSION_EARLY" 2>/dev/null || echo "")
+if [ -n "$_HB" ]; then
+  mkdir -p "$(qpt_liveness_dir)" 2>/dev/null || true
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$_HB" 2>/dev/null || true
+  # Sweep heartbeats older than a week so the directory cannot grow without
+  # bound. -mtime +7 is portable across BSD and GNU find.
+  find "$(qpt_liveness_dir)" -type f -mtime +7 -delete 2>/dev/null || true
+fi
+
 # Resolve the repo from the session cwd. Unlike the ship/land sentinels there is
 # no `cd <dir> &&` to honor: an AskUserQuestion has no command line, so the
 # session cwd is the only signal, and it is the right one (the human is approving

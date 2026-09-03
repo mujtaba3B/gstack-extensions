@@ -148,6 +148,19 @@ fi
 printf '%s pr-gate BLOCK branch=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$VERDICT" >> "$LOG" 2>/dev/null || true
 
+# Cached copies of the stamp writer that predate the approval-token guard. Scanned
+# only on the BLOCK path (this is where an agent goes looking for another writer),
+# so an allowed edit never pays for the directory walk.
+_STALE=""
+for _d in "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*; do
+  [ -d "$_d" ] || continue
+  if [ "$(qpt_writer_is_guarded "$_d/hooks/scripts/qa-plan-stamp.sh")" = "no" ]; then
+    _STALE="$_STALE $(basename "$_d")"
+  fi
+done
+_STALE="${_STALE# }"
+_STALE_WARN=$(qpg_stale_writer_warning "$_STALE" || true)
+
 # The two verdicts introduced with the approval-token fix get their own wording,
 # because "no approved-plan stamp" would be actively misleading for both: in one
 # case a stamp exists but predates the fix, in the other a stamp exists and is
@@ -157,13 +170,23 @@ case "$VERDICT" in
     REASON="QA-plan gate: the QA plan changed after it was approved. Branch \`$BRANCH\` has a valid approval stamp, but the \`## QA\` section in the PR body you are about to create does not match the plan the human approved (the stamp's criteria_digest differs from the digest of the body's plan). An approval covers the plan it was given for, not whatever the plan later became. Re-run \`/qa:plan\` so the current plan is presented and approved on its own terms, then retry. If the only difference is tick state, that is normalized out and would not have triggered this, so the plan text itself really did change."
     ;;
   unattested)
-    REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no \`approval_source\`). Such a stamp was either hand-written or produced by a writer that predates the approval-token fix, and there is no way to tell those apart, so it is refused. The migration window that used to honor pre-fix stamps was removed because it keyed on file mtime, which the same shell that writes the stamp can rewrite. Run \`/qa:plan\` and approve the plan; that mints the token the stamp writer requires."
+    # The gate-specific context stays here; the REMEDY comes from qpg_block_advice
+    # so both gates say the same thing. This arm used to end with "Run /qa:plan and
+    # approve the plan", which omits the step that actually matters: the stale
+    # stamp has to be CLEARED first, because /qa:plan does not remove it. That
+    # omission is what turned the 2026-09-03 block into a dead end.
+    REASON="QA-plan gate: branch \`$BRANCH\` carries a stamp with no proof a human approved it (no trusted \`approval_source\`). Such a stamp was either hand-written or produced by a writer that predates the approval-token fix, and there is no way to tell those apart, so it is refused. The migration window that used to honor pre-fix stamps was removed because it keyed on file mtime, which the same shell that writes the stamp can rewrite. $(qpg_block_advice "$VERDICT")"
+    ;;
+  override-expired)
+    REASON="QA-plan gate: branch \`$BRANCH\` was authorized by a HUMAN OVERRIDE that has now lapsed. An override attests that a person approved the plan, but it binds to no plan text, so unlike a modal approval it cannot be re-verified against what is being shipped and it expires instead. $(qpg_block_advice "$VERDICT")"
     ;;
   *)
-    REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. Run \`/qa:plan\`: it writes the two-phase plan into the PR body, presents it for approval, and on your yes writes the stamp that unblocks \`gh pr create\` (and \`/ship\` folds the plan into the body). A spike branch is not exempt here: opening a PR is shipping, so the plan is required."
+    REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE the PR goes up. Branch \`$BRANCH\` has no usable approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan must be presented to and approved by the human before opening the PR. $(qpg_block_advice "$VERDICT") \`/ship\` folds the plan into the body. A spike branch is not exempt here: opening a PR is shipping, so the plan is required."
     ;;
 esac
+REASON="$REASON $(qpg_override_hint)"
 _BP_REF=$(qpg_build_procedure_ref "$MARKER")
 [ -n "$_BP_REF" ] && REASON="$REASON (This repo also follows your workspace build procedure: $_BP_REF.)"
+[ -n "$_STALE_WARN" ] && REASON="$REASON $_STALE_WARN"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

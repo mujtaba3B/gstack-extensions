@@ -98,8 +98,28 @@ LOG="$HOME/.claude/qa-plan-gate.log"
 printf '%s build-gate BLOCK branch=%s file=%s verdict=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$REL" "$VERDICT" >> "$LOG" 2>/dev/null || true
 
-REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE building. You are about to edit source (\`$REL\`) on \`$BRANCH\` with no approved-plan stamp [${VERDICT}]. This repo's QA-plan policy: the Development + Production QA plan is presented to and approved by the human before implementation. Run \`/qa:plan\` now: it pulls the success criteria, writes the two-phase plan, presents it for approval, and on your yes writes the stamp that unblocks editing. Reading code is NOT gated, so investigate freely first. For a genuine spike/exploration where the plan cannot be written yet, branch as \`spike/<name>\` to bypass this gate. Docs, tests, and config edits are also ungated."
+# Cached copies of the stamp writer that predate the approval-token guard. Scanned
+# only on the BLOCK path (this is where an agent goes looking for another writer),
+# so an allowed edit never pays for the directory walk.
+_STALE=""
+for _d in "$HOME/.claude/plugins/cache/gstack-extensions/qa"/*; do
+  [ -d "$_d" ] || continue
+  if [ "$(qpt_writer_is_guarded "$_d/hooks/scripts/qa-plan-stamp.sh")" = "no" ]; then
+    _STALE="$_STALE $(basename "$_d")"
+  fi
+done
+_STALE="${_STALE# }"
+_STALE_WARN=$(qpg_stale_writer_warning "$_STALE" || true)
+
+# The remedy is looked up BY VERDICT, never written inline. Every verdict used to
+# get the same sentence ("Run /qa:plan now"), which is right for `no-stamp` and
+# actively wrong for `unattested`: on 2026-09-03 the operator had already run
+# /qa:plan and approved, a stale writer had left a pre-token stamp on the branch,
+# and re-running /qa:plan could never clear it. The advice he needed, "clear the
+# stamp first", appeared nowhere on screen. See qpg_block_advice.
+REASON="QA-plan gate: this repo requires an approved two-phase QA plan BEFORE building. You are about to edit source (\`$REL\`) on \`$BRANCH\`, and the approval stamp for this branch is [${VERDICT}]. $(qpg_block_advice "$VERDICT") Reading code is NOT gated, so investigate freely first. For a genuine spike/exploration where the plan cannot be written yet, branch as \`spike/<name>\` to bypass this gate. Docs, tests, and config edits are also ungated. $(qpg_override_hint)"
 _BP_REF=$(qpg_build_procedure_ref "$MARKER")
 [ -n "$_BP_REF" ] && REASON="$REASON (This repo also follows your workspace build procedure: $_BP_REF.)"
+[ -n "$_STALE_WARN" ] && REASON="$REASON $_STALE_WARN"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

@@ -32,6 +32,7 @@ tuples() {
     'PreToolUse|Bash|qa-plan-pr-gate.sh' \
     'PreToolUse|Edit|MultiEdit|Write|qa-plan-build-gate.sh' \
     'Stop||qa-status-gate.sh' \
+    'UserPromptSubmit||qa-plan-prompt-override.sh' \
     | sort)
   run tuples
   [ "$status" -eq 0 ]
@@ -42,7 +43,9 @@ tuples() {
   run jq -r '.hooks[][].hooks[].command' "$HOOKS_JSON"
   [ "$status" -eq 0 ]
   while IFS= read -r cmd; do
-    [[ "$cmd" == "\"\${CLAUDE_PLUGIN_ROOT}\""/hooks/scripts/* ]]
+    # case/esac, not `[[ ]]`: a failing `[[ ]]` above another line is a silent
+    # no-op under bats-core 1.13 (errexit does not fire for the keyword there).
+    case "$cmd" in "\"\${CLAUDE_PLUGIN_ROOT}\""/hooks/scripts/*) ;; *) false ;; esac
   done <<< "$output"
 }
 
