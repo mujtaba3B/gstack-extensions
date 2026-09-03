@@ -345,8 +345,8 @@ mc_cr_reviewed_head() {
 
 # mc_status_rate_limited <cr_status_description>
 #   "yes" when a CodeRabbit commit-status description reports a rate limit, in any
-#   state. Matched case-insensitively on "rate limit" so both the observed
-#   "Review rate limited" and any future phrasing around the same words are caught;
+#   state. Matched case-insensitively against rate[ -]?limit, so the observed
+#   "Review rate limited" plus "Rate-limited" and "ratelimit" are all caught;
 #   an empty or unreadable description is "no", which fails toward the previous
 #   behavior rather than toward blocking every green PR.
 mc_status_rate_limited() {
@@ -368,14 +368,29 @@ mc_status_rate_limited() {
 #   as PROOF that CR did not review.
 #
 #   Not to be confused with mc_status_rate_limited above, which is the LOOSE
-#   variant (plain substring, no negation guard). That one only decides whether a
+#   variant: the same rate[ -]?limit pattern, without the negation guard. That one
+#   only decides whether a
 #   green status is worth a second look; this one is what a shape may act on.
 mc_desc_rate_limited() {
   local desc="${1:-}"
   # Positive match, minus negations. grep -i keeps the case-insensitivity without
   # a tr round-trip, and -E gives the optional space/hyphen between the words.
+  #
+  # The negation alternatives are WORD-BOUNDED on both sides. Unbounded, the `no`
+  # branch matched inside ordinary words and silently negated a real rate limit:
+  # "Cannot review: rate limited", "known rate limit", "Diagnostics: rate limit",
+  # "note: rate limit reached" and "another rate limit hit" all read as negated.
+  # That is the worst direction to be wrong in, because the LOOSE predicate still
+  # says yes: mc_cr_reviewed_head then denies the reviewed-head proof while this
+  # one denies the rate-limit escape, wedging the PR with no flag that applies
+  # (--override-cr-failure is failure-only, --skip-review is a different dimension).
+  # Bounded with [^a-zA-Z] rather than \b, which is a GNU extension: this file runs
+  # under BSD grep on the laptop and GNU grep in CI, and must agree on both.
+  # The window stays 20 chars total, one of which the trailing boundary consumes.
+  # The trailing boundary also excludes '.', so a period still ends the window: an
+  # unrelated sentence before a real notice ("no. rate limited") stays a rate limit.
   if printf '%s' "$desc" | grep -qiE 'rate[ -]?limit' \
-     && ! printf '%s' "$desc" | grep -qiE '(not|no|never|isn.t|wasn.t)[^.]{0,20}rate[ -]?limit'; then
+     && ! printf '%s' "$desc" | grep -qiE '(^|[^a-zA-Z])(not|no|never|isn.t|wasn.t)[^a-zA-Z.][^.]{0,19}rate[ -]?limit'; then
     echo "yes"; return 0
   fi
   echo "no"; return 1
@@ -438,19 +453,31 @@ mc_cr_rate_limited() {
 #   text, leaving a PR the gate KNEW was rate-limited ("status=success but RATE
 #   LIMITED") but had no way to clear, with no flag that applied
 #   (--override-cr-failure is failure-only). So the description is the primary proof
-#   here exactly as in shape 3, and the marker is the secondary one.
+#   here, in the same ORDER as shape 3 (the secondary mechanisms differ: shape 3 and
+#   this one both use the hardened _latest marker variant, shape 1 the anywhere one).
 #
-#   Like shapes 1-3 this only RELAXES the reviewed-head dimension, and only when a
-#   current local /eng:cr review backstops it (CR_RL_BACKSTOPPED). It is never a
-#   bare bypass: with no local review the gate still blocks.
+#   Like shapes 1-3 this only ever RELAXES the gate in combination with a current
+#   local /eng:cr review; here specifically the reviewed-head dimension (shape 3
+#   relaxes the failure-status blocker instead, via mc_cr_failure_disposition).
+#   merge-clearance.sh owns that interlock, not this function: mc_cr_rl_backstopped
+#   ANDs this verdict with REVIEW_STATE=current. It is never a bare bypass: with no
+#   local review the gate still blocks.
 mc_cr_success_rate_limited() {
   local state="$1" desc="${2:-}" comments="${3:-[]}"
   [ "$state" = "success" ] || { echo "no"; return 1; }
   if [ "$(mc_desc_rate_limited "$desc")" = "yes" ]; then echo "yes"; return 0; fi
-  # Secondary proof: the marker anywhere in CR's comments. Deliberately the
-  # anywhere variant, not _latest: a success status means CR finished (or gave up),
-  # so there is no in-flight review whose newer comment should win.
-  if [ "$(mc_cr_rate_limited "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  # Secondary proof: the marker as CR's LATEST comment, the same hardened variant
+  # shapes 2 and 3 use. An earlier draft used the anywhere variant, reasoning that a
+  # success status means CR finished so no newer comment should win. That answers
+  # in-flight-vs-settled, which is not what _latest was introduced for: it guards
+  # against a STALE marker from an EARLIER commit making a later, genuine CR verdict
+  # read as a rate limit (pr-watcher/SKILL.md's rule for rows 2 and 3). A resolved
+  # success status is CR demonstrably having run, so shape 4 belongs with those rows.
+  # This matters precisely here: the only way to reach this line is a description
+  # that loose-matched but strict-failed, i.e. CR explicitly DENIED a rate limit
+  # ("not rate limited"). Only its most recent word should be able to contradict
+  # that; a stale marker must not.
+  if [ "$(mc_cr_rate_limited_latest "$comments")" = "yes" ]; then echo "yes"; return 0; fi
   echo "no"; return 1
 }
 
@@ -489,7 +516,7 @@ mc_cr_rate_limited_latest() {
 # mc_cr_failure_rate_limited <cr_status_state> <cr_status_description> [comments_json]
 #   Decide whether a CodeRabbit commit status of "failure" on HEAD is really a RATE
 #   LIMIT rather than a genuine CodeRabbit objection or CR-side error. This is the
-#   third rate-limit shape, and the one the two functions above miss:
+#   third rate-limit shape, and the one the marker-only functions miss:
 #     1. status MISSING  + marker comment  -> mc_cr_rate_limited
 #     2. status PENDING (stuck) + marker as CR's LATEST comment
 #                                          -> mc_cr_rate_limited_latest
@@ -506,7 +533,7 @@ mc_cr_rate_limited_latest() {
 #   cr_status_state:       the already-folded CR commit-status state on HEAD
 #     (state_of "CodeRabbit"): success | failure | pending | missing. Only "failure"
 #     can be a shape-3 rate limit; every other state echoes "no" (the caller handles
-#     missing / pending through the two functions above).
+#     missing / pending / success through the other shapes).
 #   cr_status_description: the description string on that CodeRabbit status
 #     (e.g. "Review rate limited"). Matched case-insensitively against
 #     "rate[ -]?limit", so "Review rate limited", "Rate limit exceeded",
@@ -519,7 +546,7 @@ mc_cr_rate_limited_latest() {
 #     parser: a trailing negation ("rate limit was not the cause") would still
 #     classify as a rate limit. Accepted, and bounded: even then the failure only
 #     degrades from a hard block to "requires a current local /eng:cr review",
-#     which is the same deal the other two shapes get. Widen the guard if CR's
+#     which is the same deal the other shapes get. Widen the guard if CR's
 #     wording ever makes that theoretical case real.
 #   comments_json (optional): the PR's issue comments, SAME shape as
 #     mc_cr_rate_limited. Checked as a SECOND, independent proof, via the STRICT
@@ -538,7 +565,6 @@ mc_cr_rate_limited_latest() {
 #   "no", so a genuine CR failure is never mistaken for a rate limit. Like the other
 #   two shapes this only ever RELAXES the gate in combination with a current local
 #   /eng:cr review; mc_cr_failure_disposition owns that interlock.
-
 mc_cr_failure_rate_limited() {
   local state="$1" desc="${2:-}" comments="${3:-[]}"
   [ "$state" = "failure" ] || { echo "no"; return 1; }
@@ -549,6 +575,31 @@ mc_cr_failure_rate_limited() {
   # returns rc 1 on "no", but it is read here as a string in $(...), so only its
   # stdout token is authoritative.
   if [ "$(mc_cr_rate_limited_latest "$comments")" = "yes" ]; then echo "yes"; return 0; fi
+  echo "no"; return 1
+}
+
+# mc_cr_rl_backstopped <cr_rate_limited> <review_state>
+#   The rate-limit backstop interlock, as one pure function: a rate-limited
+#   CodeRabbit may relax the reviewed-head dimension ONLY when a current local
+#   /eng:cr review stands in for it. Echoes yes | no; rc 0 for yes, 1 for no.
+#
+#   Extracted from an inline `&&` chain in merge-clearance.sh for the same reason
+#   mc_cr_failure_disposition was (see below, and this repo's CLAUDE.md): a decision
+#   that determines whether something may merge belongs in the lib as a pure
+#   function with its truth table in bats. Dropping the REVIEW_STATE conjunct is the
+#   single most catastrophic mutation available in this file, because it would make
+#   EVERY rate-limited PR auto-clear with no review at all. That mutation used to be
+#   caught only by a bats case that grepped the script for the literal line, which a
+#   refactor leaving a `# was: <old line>` comment behind would have defeated: the
+#   pin matched anywhere in the file, comments included. A truth table cannot be
+#   satisfied by a comment.
+#
+#   Fail-closed on anything unrecognized: only the exact pair (yes, current) relaxes.
+mc_cr_rl_backstopped() {
+  local rate_limited="${1:-no}" review="${2:-}"
+  if [ "$rate_limited" = "yes" ] && [ "$review" = "current" ]; then
+    echo "yes"; return 0
+  fi
   echo "no"; return 1
 }
 

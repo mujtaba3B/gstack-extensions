@@ -500,14 +500,14 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
     if [ "$CR_STATUS_STATE" = "success" ]; then
       # Shape 4: green status, rate-limited description. The description is the
       # primary proof (mc_cr_success_rate_limited), because CR edits its marker
-      # comment in place and the marker can vanish mid-PR. Pass the comments only
-      # as the secondary proof, and only when the description did not settle it,
-      # so the common path still costs no extra API call.
-      # Call the SAME function twice, as the failure branch does at its own site.
-      # Passing the description here keeps mc_cr_success_rate_limited's primary arm
-      # live in production rather than exercised only by tests; the second call
-      # supplies the comments as the secondary proof, and only when the first did
-      # not settle it, so the green path still costs no extra API call.
+      # comment in place and the marker can vanish mid-PR; the marker is secondary.
+      # Called twice, as the failure branch does at its own site, for the same
+      # mechanical reason: passing both up front would expand $(cr_issue_comments)
+      # eagerly, so the comments call would always run. Splitting it keeps that API
+      # call lazy. Reaching the second call therefore implies the description
+      # loose-matched but strict-failed, i.e. CR explicitly DENIED a rate limit,
+      # which is why the secondary proof uses the hardened _latest marker variant:
+      # only CR's most recent word may contradict its own denial.
       CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "$CR_STATUS_DESC" '[]')
       [ "$CR_RATE_LIMITED" = "yes" ] \
         || CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "" "$(cr_issue_comments)")
@@ -575,8 +575,7 @@ QA_STATE=$(mc_qa_state "$BODY" "$REQUIRE_QA_PLAN")
 # pass - the last of which can happen on a HEAD CR DID review), fall back to the
 # local /eng:cr review IFF that review is current for this HEAD. Never lose both reviewers - CR down + no local review
 # still blocks. Computed here because it needs REVIEW_STATE (section 3).
-CR_RL_BACKSTOPPED=no
-[ "$CR_RATE_LIMITED" = "yes" ] && [ "$REVIEW_STATE" = "current" ] && CR_RL_BACKSTOPPED=yes
+CR_RL_BACKSTOPPED=$(mc_cr_rl_backstopped "$CR_RATE_LIMITED" "$REVIEW_STATE")
 
 # Operator override for a GENUINE CodeRabbit failure (one with no rate-limit
 # evidence). This is the human-judgment counterpart to the machine-detectable

@@ -1296,15 +1296,29 @@ disp() {
   [ "$status" -eq 0 ]
 }
 
-@test "success rate-limited: marker survives a LATER CR comment (the friendships#6 shape)" {
-  # The whole reason this uses mc_cr_rate_limited (anywhere) and NOT
-  # mc_cr_rate_limited_latest: CR posts the marker and then supersedes it with
-  # walkthrough text. A single-element fixture cannot tell the two apart, so this
-  # pins the decision the function was written to make. _latest would say "no".
+@test "success rate-limited: a STALE marker superseded by a later CR comment does NOT count" {
+  # The secondary proof uses the hardened _latest variant, like shapes 2 and 3. An
+  # earlier draft used the anywhere variant; review caught that it reintroduced the
+  # exact hazard _latest was added for, a stale marker from an EARLIER commit making
+  # a later, genuine CR verdict read as a rate limit. Two elements, so anywhere and
+  # latest are distinguishable: the anywhere variant would say "yes" here.
+  #
+  # Reaching the marker at all means the description loose-matched but strict-failed,
+  # i.e. CR explicitly DENIED a rate limit, so only its most recent word may override.
   marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
   run mc_cr_success_rate_limited "success" "" \
     "$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:$m},
                                   {author:"coderabbitai[bot]", body:"## Walkthrough\nThis PR ..."}]')"
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: the marker AS CR's latest comment still counts" {
+  # The other side of the _latest rule: a marker that is CR's most recent word is
+  # live evidence, not a leftover, even with an earlier unrelated CR comment above it.
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:"## Walkthrough\nThis PR ..."},
+                                  {author:"coderabbitai[bot]", body:$m}]')"
   [ "$output" = "yes" ]
 }
 
@@ -1321,6 +1335,43 @@ disp() {
   [ "$output" = "no" ]
   run mc_cr_success_rate_limited "missing" "Review rate limited" "[]"
   [ "$output" = "no" ]
+}
+
+@test "hardened matcher: the negation words are WORD-BOUNDED, not substrings" {
+  # The negation alternation used to be unanchored, so the `no` branch matched
+  # INSIDE ordinary words and silently negated a real rate limit. Every string here
+  # is a genuine rate-limit notice that read as negated before the fix. That is the
+  # worst direction to be wrong in: the LOOSE predicate still says yes, so
+  # mc_cr_reviewed_head denies the reviewed-head proof while the hardened matcher
+  # denies the escape, wedging the PR with no flag that applies.
+  for desc in "Cannot review: rate limited" \
+              "known rate limit" \
+              "Diagnostics: rate limit" \
+              "note: rate limit reached" \
+              "another rate limit hit" \
+              "nope, rate limited"; do
+    run mc_desc_rate_limited "$desc"
+    [ "$output" = "yes" ]
+  done
+}
+
+@test "hardened matcher: genuine negations are still refused" {
+  # The other side of the boundary fix: these must not regress to "yes".
+  for desc in "not rate limited" \
+              "no rate limit hit" \
+              "never rate limited" \
+              "isn't rate limited" \
+              "wasn't rate limited"; do
+    run mc_desc_rate_limited "$desc"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "hardened matcher: a period still ends the negation window" {
+  # The window is [^.]: a negation in a PRECEDING sentence does not negate a real
+  # notice. The trailing word boundary excludes "." so it cannot swallow the period.
+  run mc_desc_rate_limited "no. rate limited"
+  [ "$output" = "yes" ]
 }
 
 @test "success rate-limited: a negated description is not rescued by an absent marker" {
@@ -1391,13 +1442,50 @@ disp() {
   [ "$output" = "yes" ]
 }
 
-@test "the CR_RL_BACKSTOPPED interlock is still two conditions, not one" {
-  # This is the single most catastrophic mutation in the file: drop the
-  # REVIEW_STATE conjunct and EVERY rate-limited PR across all four shapes
-  # auto-clears with no local review. It lives as inline shell in the I/O script,
-  # so no unit test can reach it; pin the text, in the style of the existing
-  # GraphQL-cap pin above.
-  run grep -qE 'CR_RATE_LIMITED" = "yes" \] && \[ "\$REVIEW_STATE" = "current" \] && CR_RL_BACKSTOPPED=yes' \
+# ---- mc_cr_rl_backstopped ---------------------------------------------------
+#
+# Dropping the REVIEW_STATE conjunct is the single most catastrophic mutation
+# available here: it would make every rate-limited PR auto-clear with no local
+# review. This used to be an inline `&&` chain in merge-clearance.sh pinned by a
+# bats case that grepped the script for the literal line, which review showed was
+# defeatable: the grep matched anywhere in the file, so a refactor that left a
+# `# was: <old line>` comment behind kept the pin green while the code fail-opened.
+# It is now a pure function, and these four rows are its whole truth table.
+
+@test "rl backstopped: rate-limited AND a current local review -> yes" {
+  run mc_cr_rl_backstopped "yes" "current"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "rl backstopped: rate-limited but NO current review -> no (never both reviewers down)" {
+  for state in stale missing n/a ""; do
+    run mc_cr_rl_backstopped "yes" "$state"
+    [ "$output" = "no" ]
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "rl backstopped: a current review does NOT backstop when CR is not rate-limited" {
+  # The backstop is scoped to the rate-limit relaxation; it must not become a
+  # general "a local review is enough" clearance.
+  run mc_cr_rl_backstopped "no" "current"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "rl backstopped: unrecognized inputs fail CLOSED" {
+  run mc_cr_rl_backstopped "" ""
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "YES" "current"
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "yes" "CURRENT"
+  [ "$output" = "no" ]
+}
+
+@test "the caller computes CR_RL_BACKSTOPPED through the pure function" {
+  # Mirrors the real caller: the decision must not drift back into inline shell.
+  run grep -qE '^CR_RL_BACKSTOPPED=\$\(mc_cr_rl_backstopped "\$CR_RATE_LIMITED" "\$REVIEW_STATE"\)$' \
     "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
   [ "$status" -eq 0 ]
 }
