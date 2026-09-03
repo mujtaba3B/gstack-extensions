@@ -550,9 +550,16 @@ case "$VERB" in
     fi
     echo
 
-    echo "  human override routes (neither is reachable by Claude):"
-    echo "    1. send \"$QPT_OVERRIDE_PHRASE\" as a message on its own (needs hooks registered)"
-    echo "    2. run 'qa-plan-stamp.sh override' in a real terminal tab (needs no hooks)"
+    # The two routes are NOT equally strong, and this footer said they were.
+    # Shipped in 3.10.0 as "(neither is reachable by Claude)", which is the exact
+    # claim that PR's own review retracted everywhere else after pty.fork
+    # disproved it, leaving doctor contradicting the block gate three lines of
+    # output away. Missed in that sweep and caught during its production verify.
+    echo "  human override routes (for the HUMAN to run, not Claude):"
+    echo "    1. send \"$QPT_OVERRIDE_PHRASE\" as a message on its own"
+    echo "       needs hooks registered; nothing Claude does can produce that event"
+    echo "    2. run 'qa-plan-stamp.sh override' in a real terminal tab"
+    echo "       needs no hooks; accident-guard only, a process can spawn its own pty"
     ;;
 
   *)

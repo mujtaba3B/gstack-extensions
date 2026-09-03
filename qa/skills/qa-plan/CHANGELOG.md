@@ -1,5 +1,19 @@
 # qa:plan CHANGELOG
 
+## v2.4.1
+
+Correct the one place the 3.10.0 honesty sweep missed.
+
+`doctor`'s override-routes footer still read "(neither is reachable by Claude)",
+the exact claim v2.4.0 retracted from the block message, the skill body and both
+READMEs after `pty.fork` disproved it. It therefore contradicted the build gate
+three lines of output away, in the command someone runs precisely when they are
+trying to work out what is true. The footer now distinguishes the routes by
+strength: the typed phrase is unreachable by an agent (nothing it does produces a
+UserPromptSubmit event), while the terminal route is an accident-guard only. A
+test asserts `doctor` emits neither "Claude cannot" nor "neither is reachable",
+so it cannot regress the way it just did.
+
 ## v2.4.0
 
 Two human overrides, an honest diagnosis, and the removal of a live bypass.
