@@ -38,7 +38,38 @@ recognizably illegitimate act). That is a real improvement and not a solution.
 
 ## Options
 
-### A. Secure Enclave signature (the only true local anchor)
+### A. Secure Enclave signature: ATTEMPTED 2026-09-02, DOES NOT WORK HERE
+
+**Status: built and abandoned on measured evidence.** The spike source is kept at
+`spec/plans/qa-approval-anchor-spike.m` so nobody re-derives it. What happened:
+
+- Swift was unusable: this machine has no Xcode and the CommandLineTools `swiftc`
+  does not match its own SDK (`failed to build module 'CoreFoundation'`).
+  Rewritten in Objective-C, which compiled cleanly, since these APIs are C.
+- `SecKeyCreateRandomKey` with `kSecAttrTokenIDSecureEnclave` failed with
+  **-34018 (`errSecMissingEntitlement`)** when unsigned: the Enclave key was
+  created (`SecKeyRef:('com.apple.setoken')`) but persisting it to the keychain
+  was refused.
+- Signed ad-hoc with a `keychain-access-groups` entitlement, then with the real
+  `Apple Development` identity and the team-prefixed group
+  `NND6SPZ5YR.dev.mujtaba.gstack`. The entitlement embeds correctly (verified
+  with `codesign -d --entitlements`). **No provisioning profile is installed**,
+  which macOS requires for an Apple Development-signed binary to claim a
+  keychain access group.
+- With the real identity, key creation **HANGS** and is killed by timeout
+  (`exit=137`), reproducibly.
+- Controlled test: the same code with `.userPresence` REMOVED also hangs. So the
+  blocker is Secure Enclave key persistence from a headless CLI context, not the
+  Touch ID prompt.
+
+**And the design was weaker than it looked even if it had worked.** A
+presence-free Enclave key anchors nothing against a same-principal agent: the
+agent simply invokes the same helper to sign its own payload. Only the
+presence-gated form is an anchor, and that needs a GUI the hook context does not
+have. Making it real means a provisioned, signed **app bundle**, not a CLI, which
+is a different project than a hook.
+
+### A-original. Secure Enclave signature (the theory)
 
 A small signed helper owns a keypair created with `kSecAttrTokenIDSecureEnclave`
 and an access control of `.privateKeyUsage + .userPresence`. The private key
@@ -81,6 +112,31 @@ is outside the agent's reach.
 - **Works well as a second factor at merge time only:** the local modal keeps
   fast feedback during the build; the GitHub review is the hard anchor at the
   moment that actually matters.
+
+## The finding that changes everything
+
+Working through A produced a conclusion that outranks the option list:
+
+> **On a single-user machine where the agent has full shell access and can invoke
+> any local binary, there is no purely local trust anchor.**
+
+Anything the hook can read, the agent can read. Anything the hook can invoke, the
+agent can invoke. A key the agent cannot extract is still a key the agent can ask
+the helper to USE, unless every use demands physical presence, and physical
+presence needs a GUI that a hook does not have.
+
+Note what this does NOT say. The SIGNAL is sound: `.tool_response.answers` is
+written by the harness from a real click and the model cannot emit it. Only the
+DERIVED RECORD (a file on disk) is forgeable. So the honest framings are:
+
+1. Verify the signal, not a file derived from it (Option B), which bounds the
+   forgery to fabricating a self-consistent harness record.
+2. Anchor off-machine, which needs a second party or a second device. Note the
+   sharp edge for a solo maintainer: GitHub will not let a PR author approve
+   their own PR, and the `gh` CLI here is authenticated AS the author, so
+   "require an approving review" is simultaneously unforgeable by the agent and
+   unsatisfiable by the human. Any Option C design has to solve that, and
+   "require a review" alone does not.
 
 ## Recommendation
 
