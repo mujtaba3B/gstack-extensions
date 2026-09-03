@@ -1245,3 +1245,332 @@ disp() {
   [ "$(echo "$output" | jq 'length')" -eq 2 ]
   [ "$(echo "$output" | jq -r '[.[]|.state]|index("failure")')" != "null" ]
 }
+
+# ---- mc_desc_rate_limited / mc_cr_success_rate_limited -----------------------
+#
+# The FOURTH rate-limit shape: CodeRabbit publishes state=success with the
+# description "Review rate limited". The check reads "pass" while CR never read
+# the code, so anything trusting the check state alone sees a review that did not
+# happen. Keying only on the marker comment is not enough: CR posts that notice and
+# then EDITS THE SAME COMMENT IN PLACE, so it can vanish mid-PR (observed on
+# mujtaba3B/friendships#6, present 01:14 and gone by 01:38) or never appear at all
+# (observed on the fitness pillar's PR #2).
+
+@test "desc rate-limited: the observed 'Review rate limited' phrasing" {
+  run mc_desc_rate_limited "Review rate limited"
+  [ "$output" = "yes" ]
+}
+
+@test "desc rate-limited: hyphenated and spaced spellings" {
+  run mc_desc_rate_limited "Rate-limited"
+  [ "$output" = "yes" ]
+  run mc_desc_rate_limited "Rate limit exceeded"
+  [ "$output" = "yes" ]
+}
+
+@test "desc rate-limited: a NEGATED description does not buy the escape hatch" {
+  run mc_desc_rate_limited "not rate limited, genuine failure"
+  [ "$output" = "no" ]
+  run mc_desc_rate_limited "no rate limit hit"
+  [ "$output" = "no" ]
+}
+
+@test "desc rate-limited: an ordinary green description is not a rate limit" {
+  run mc_desc_rate_limited "1 file reviewed"
+  [ "$output" = "no" ]
+  run mc_desc_rate_limited ""
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: description alone is proof, no marker needed" {
+  # The whole point: CR erased the marker, or never posted one.
+  run mc_cr_success_rate_limited "success" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+}
+
+@test "success rate-limited: marker is the SECONDARY proof when the description is bare" {
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg b "$marker" '[{author:"coderabbitai[bot]", body:$b}]')"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "success rate-limited: a STALE marker superseded by a later CR comment does NOT count" {
+  # The secondary proof uses the hardened _latest variant, like shapes 2 and 3. An
+  # earlier draft used the anywhere variant; review caught that it reintroduced the
+  # exact hazard _latest was added for, a stale marker from an EARLIER commit making
+  # a later, genuine CR verdict read as a rate limit. Two elements, so anywhere and
+  # latest are distinguishable: the anywhere variant would say "yes" here.
+  #
+  # Reaching the marker at all means the description loose-matched but strict-failed,
+  # i.e. CR explicitly DENIED a rate limit, so only its most recent word may override.
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:$m},
+                                  {author:"coderabbitai[bot]", body:"## Walkthrough\nThis PR ..."}]')"
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: the marker AS CR's latest comment still counts" {
+  # The other side of the _latest rule: a marker that is CR's most recent word is
+  # live evidence, not a leftover, even with an earlier unrelated CR comment above it.
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  run mc_cr_success_rate_limited "success" "" \
+    "$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:"## Walkthrough\nThis PR ..."},
+                                  {author:"coderabbitai[bot]", body:$m}]')"
+  [ "$output" = "yes" ]
+}
+
+@test "success rate-limited: a genuinely green review is NOT relaxed" {
+  # The regression that would matter most: every clean PR silently skipping CR.
+  run mc_cr_success_rate_limited "success" "1 file reviewed" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "success rate-limited: only the success state qualifies" {
+  run mc_cr_success_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_success_rate_limited "pending" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_success_rate_limited "missing" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "hardened matcher: the negation words are WORD-BOUNDED, not substrings" {
+  # The negation alternation used to be unanchored, so the `no` branch matched
+  # INSIDE ordinary words and silently negated a real rate limit. Every string here
+  # is a genuine rate-limit notice that read as negated before the fix. That is the
+  # worst direction to be wrong in: the LOOSE predicate still says yes, so
+  # mc_cr_reviewed_head denies the reviewed-head proof while the hardened matcher
+  # denies the escape, wedging the PR with no flag that applies.
+  for desc in "Cannot review: rate limited" \
+              "known rate limit" \
+              "Diagnostics: rate limit" \
+              "note: rate limit reached" \
+              "another rate limit hit" \
+              "nope, rate limited"; do
+    run mc_desc_rate_limited "$desc"
+    [ "$output" = "yes" ]
+  done
+}
+
+@test "hardened matcher: genuine negations are still refused" {
+  # The other side of the boundary fix: these must not regress to "yes".
+  for desc in "not rate limited" \
+              "no rate limit hit" \
+              "never rate limited" \
+              "isn't rate limited" \
+              "wasn't rate limited"; do
+    run mc_desc_rate_limited "$desc"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "hardened matcher: a period still ends the negation window" {
+  # The window is [^.]: a negation in a PRECEDING sentence does not negate a real
+  # notice. The trailing word boundary excludes "." so it cannot swallow the period.
+  run mc_desc_rate_limited "no. rate limited"
+  [ "$output" = "yes" ]
+}
+
+@test "success rate-limited: a negated description is not rescued by an absent marker" {
+  run mc_cr_success_rate_limited "success" "not rate limited" "[]"
+  [ "$output" = "no" ]
+}
+
+@test "failure shape still works after sharing the description test" {
+  run mc_cr_failure_rate_limited "failure" "Review rate limited" "[]"
+  [ "$output" = "yes" ]
+  run mc_cr_failure_rate_limited "failure" "internal error" "[]"
+  [ "$output" = "no" ]
+  run mc_cr_failure_rate_limited "success" "Review rate limited" "[]"
+  [ "$output" = "no" ]
+}
+
+
+# ---- the ENTRY predicate, and the interlock it feeds ------------------------
+#
+# mc_status_rate_limited is the loose gate-entry test AND the thing
+# mc_cr_reviewed_head keys off. It used to match a literal "rate limit" with a
+# SPACE only, so the hyphenated spelling escaped it, mc_cr_reviewed_head reported
+# "CR reviewed this head", and the PR reached a full CLEAR with no CodeRabbit
+# review and no local-review requirement. Fail-OPEN, and strictly worse than the
+# fail-closed wedge the rate-limit shapes exist to remove.
+
+@test "entry predicate: the hyphenated spelling is caught" {
+  run mc_status_rate_limited "Rate-limited"
+  [ "$output" = "yes" ]
+}
+
+@test "entry predicate: the no-separator spelling is caught" {
+  run mc_status_rate_limited "ratelimit exceeded"
+  [ "$output" = "yes" ]
+}
+
+@test "entry predicate: matches the same spellings as the hardened matcher" {
+  # Keeping the two patterns identical is load-bearing: a description the hardened
+  # matcher would act on must first be able to ENTER the branch.
+  for d in "Review rate limited" "Rate-limited" "ratelimit exceeded" "Rate limit exceeded"; do
+    [ "$(mc_status_rate_limited "$d")" = "yes" ] || { echo "entry missed: $d"; return 1; }
+    [ "$(mc_desc_rate_limited "$d")" = "yes" ]   || { echo "hardened missed: $d"; return 1; }
+  done
+}
+
+@test "entry predicate: an ordinary green description is still not a rate limit" {
+  run mc_status_rate_limited "1 file reviewed"
+  [ "$output" = "no" ]
+  run mc_status_rate_limited ""
+  [ "$output" = "no" ]
+}
+
+@test "entry predicate: the loose variant deliberately has NO negation guard" {
+  # Asymmetric on purpose: loose to ENTER, strict to ACT. A negated description
+  # should still get a second look, and mc_desc_rate_limited is what refuses it.
+  [ "$(mc_status_rate_limited "not rate limited")" = "yes" ]
+  [ "$(mc_desc_rate_limited   "not rate limited")" = "no"  ]
+}
+
+@test "reviewed-head: a hyphenated rate limit is NOT proof CR reviewed the head" {
+  # End to end, the false-CLEAR this closes.
+  run mc_cr_reviewed_head '[]' "abc123" "success" "Rate-limited"
+  [ "$output" = "no" ]
+}
+
+@test "reviewed-head: a genuine green status IS proof CR reviewed the head" {
+  run mc_cr_reviewed_head '[]' "abc123" "success" "1 file reviewed"
+  [ "$output" = "yes" ]
+}
+
+# ---- mc_cr_rl_backstopped ---------------------------------------------------
+#
+# Dropping the REVIEW_STATE conjunct is the single most catastrophic mutation
+# available here: it would make every rate-limited PR auto-clear with no local
+# review. This used to be an inline `&&` chain in merge-clearance.sh pinned by a
+# bats case that grepped the script for the literal line, which review showed was
+# defeatable: the grep matched anywhere in the file, so a refactor that left a
+# `# was: <old line>` comment behind kept the pin green while the code fail-opened.
+# It is now a pure function, and these four rows are its whole truth table.
+
+@test "rl backstopped: rate-limited AND a current local review -> yes" {
+  run mc_cr_rl_backstopped "yes" "current"
+  [ "$output" = "yes" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "rl backstopped: rate-limited but NO current review -> no (never both reviewers down)" {
+  for state in stale missing n/a ""; do
+    run mc_cr_rl_backstopped "yes" "$state"
+    [ "$output" = "no" ]
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "rl backstopped: a current review does NOT backstop when CR is not rate-limited" {
+  # The backstop is scoped to the rate-limit relaxation; it must not become a
+  # general "a local review is enough" clearance.
+  run mc_cr_rl_backstopped "no" "current"
+  [ "$output" = "no" ]
+  [ "$status" -eq 1 ]
+}
+
+@test "rl backstopped: an UNREADABLE description is the same backstoppable gap" {
+  # A failed description fetch means "cannot confirm CR reviewed this head", which
+  # is the same gap a rate limit creates and takes the same backstop. It must NOT
+  # be an unclearable wedge: a transient gh failure is not a reason to make a PR
+  # unmergeable by any means.
+  run mc_cr_rl_backstopped "no" "current" "yes"
+  [ "$output" = "yes" ]
+  run mc_cr_rl_backstopped "no" "stale" "yes"
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "no" "missing" "yes"
+  [ "$output" = "no" ]
+}
+
+@test "rl backstopped: the third argument defaults to no" {
+  # Two-argument callers keep their exact meaning.
+  run mc_cr_rl_backstopped "no" "current"
+  [ "$output" = "no" ]
+}
+
+# ---- MC_DESC_UNAVAILABLE ----------------------------------------------------
+
+@test "desc unavailable: only the exact sentinel counts" {
+  run mc_desc_unavailable "$MC_DESC_UNAVAILABLE"
+  [ "$output" = "yes" ]
+  for d in "" "Review rate limited" "1 file reviewed" "__mc_desc_fetch_failed" "x__mc_desc_fetch_failed__"; do
+    run mc_desc_unavailable "$d"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "reviewed-head: an UNREADABLE description is NOT proof CR reviewed the head" {
+  # The fail-open two independent reviewers found: a failed gh fetch used to be
+  # indistinguishable from an empty description, and empty accepts proof 2. So a
+  # transient network failure on a green-but-rate-limited PR cleared it with no
+  # CodeRabbit review and no local-review requirement.
+  run mc_cr_reviewed_head "[]" "abc123" "success" "$MC_DESC_UNAVAILABLE"
+  [ "$output" = "no" ]
+}
+
+@test "reviewed-head: a genuinely EMPTY description still counts as reviewed" {
+  # The other half of the fix, and the reason it is narrow: most green statuses
+  # carry no description at all. Treating empty as unknown would block every clean
+  # PR, so only a FAILED fetch is unknown.
+  run mc_cr_reviewed_head "[]" "abc123" "success" ""
+  [ "$output" = "yes" ]
+}
+
+@test "rl backstopped: unrecognized inputs fail CLOSED" {
+  run mc_cr_rl_backstopped "" ""
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "YES" "current"
+  [ "$output" = "no" ]
+  run mc_cr_rl_backstopped "yes" "CURRENT"
+  [ "$output" = "no" ]
+}
+
+@test "the caller consults the marker ONLY when the description was unreadable" {
+  # CodeRabbit (PR #79) caught this: an old marker must not override a CURRENT
+  # negative status. The commit-status description is HEAD-BOUND (the statuses API
+  # is per-commit); PR comments are not, so even mc_cr_rate_limited_latest cannot
+  # prove its marker belongs to this head. A stale marker was therefore able to
+  # turn an explicit "not rate limited" into rate-limited, demanding a local review
+  # for a head CodeRabbit had actually reviewed. Fail-closed, but wrong.
+  #
+  # The regression is in the CALLER (which proof it consults), so pin the guard.
+  run grep -qE '^[[:space:]]+\[ "\$CR_RATE_LIMITED" = "yes" \] \|\| \[ "\$CR_DESC_UNAVAILABLE" != "yes" \] \\$' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "success rate-limited: a stale marker cannot override an explicit negative description" {
+  # The lib-level half: with the description in hand, the marker is never asked.
+  # This is the input the caller now refuses to forward.
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  comments=$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:"## Walkthrough"},
+                                        {author:"coderabbitai[bot]", body:$m}]')
+  # Passing the real description means the marker cannot rescue it.
+  run mc_cr_success_rate_limited "success" "not rate limited" "$comments"
+  [ "$output" = "no" ]
+}
+
+@test "the caller emits the sentinel when the description fetch FAILS" {
+  # mc_desc_unavailable can only do its job if the I/O layer actually reports the
+  # failure. Reverting cr_status_description to `|| out=""` restores the fail-open
+  # and passes every other test in this file, so pin the emission.
+  #
+  # The pattern is anchored to a real statement: leading whitespace then `||`, so a
+  # commented-out copy (`# || { printf ...`) cannot satisfy it. That is the flaw
+  # that made the old CR_RL_BACKSTOPPED pin defeatable.
+  run grep -qE '^[[:space:]]+\|\| \{ printf '"'"'%s'"'"' "\$MC_DESC_UNAVAILABLE"; return 0; \}$' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "the caller computes CR_RL_BACKSTOPPED through the pure function" {
+  # Mirrors the real caller: the decision must not drift back into inline shell.
+  run grep -qE '^CR_RL_BACKSTOPPED=\$\(mc_cr_rl_backstopped "\$CR_RATE_LIMITED" "\$REVIEW_STATE" "\$CR_DESC_UNAVAILABLE"\)$' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
+}
