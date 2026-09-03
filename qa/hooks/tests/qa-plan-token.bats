@@ -636,6 +636,33 @@ and then merge"; do
   assert_contains "$(qpt_liveness_file "633cfee0-15fc")" "633cfee0-15fc"
 }
 
+@test "liveness_file: with no digest tool it refuses rather than colliding" {
+  # The fail-open CodeRabbit found in the first cut of the collision fix: when
+  # neither shasum nor sha256sum exists, falling back to the sanitized name alone
+  # restores the very collision the digest was added to prevent. A degraded
+  # answer is worse than none here, because the collision makes liveness report
+  # `observed` for a session that never ran the hook.
+  # A PATH carrying everything the function needs EXCEPT a digest tool. Emptying
+  # PATH outright would break `tr` too and the test would pass for the wrong
+  # reason (an early return on an empty sanitized name).
+  nodigest="$BATS_TEST_TMPDIR/nodigest"; mkdir -p "$nodigest"
+  for t in tr cut env; do
+    src=$(command -v "$t") && ln -sf "$src" "$nodigest/$t"
+  done
+  run env PATH="$nodigest" /bin/bash -c ". '$TLIB'; qpt_liveness_file 'a/b'; echo \"rc=\$?\""
+  assert_contains "$output" "rc=1"
+  assert_missing "$output" "qa-plan-minter-seen"
+}
+
+@test "minter liveness: an unanswerable lookup reads unknown, not never-observed" {
+  # The verdict must distinguish "asked, and the answer is no" from "could not
+  # ask". Reporting never-observed on a lookup that never happened is what sends
+  # someone to restart for nothing, which is the failure this whole change exists
+  # to stop.
+  run env PATH="/nonexistent:/usr/bin:/bin" bash -c "cd '$REPO' && CLAUDE_CODE_SESSION_ID=s1 bash '$STAMP' doctor"
+  assert_contains "$output" "minter:"
+}
+
 @test "claude_dir: CLAUDE_CONFIG_DIR relocates the heartbeat dir and the gate log" {
   # Claude Code moves its whole config root when this is set, so hardcoding
   # ~/.claude writes to a directory the runtime is not using and liveness then

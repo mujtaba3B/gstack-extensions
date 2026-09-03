@@ -97,7 +97,12 @@ GLIB="$LIBDIR/qa-plan-gate-lib.sh"
 qp_minter_liveness() {
   local session="$1" hb seen="no" ran="yes"
   hb=$(qpt_liveness_file "$session" 2>/dev/null || echo "")
-  [ -n "$hb" ] && [ -f "$hb" ] && seen="yes"
+  # No heartbeat PATH means the question cannot be answered at all (no digest
+  # tool on this host), which is different from "answered, and the answer is no".
+  # Reporting never-observed there would send someone to restart on the strength
+  # of a lookup that never happened.
+  [ -n "$hb" ] || { qpt_liveness_verdict "" "no" "$ran"; return; }
+  [ -f "$hb" ] && seen="yes"
   [ -d "$(qpt_liveness_dir)" ] || ran="no"
   qpt_liveness_verdict "$session" "$seen" "$ran"
 }
@@ -516,7 +521,15 @@ case "$VERB" in
     # highest and be reported as the installed version, producing a false skew
     # diagnosis in the one command someone runs to find out what is wrong.
     # Raised by CodeRabbit on PR #80.
-    _INST_VER=$(find "$_CACHE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -V | tail -1)
+    # `sort -V` is present on current macOS (verified: Apple sort 2.3-199 orders
+    # 3.10.0 above 3.9.0, where plain sort does not), but older BSD sort lacks it
+    # and would error to an empty result, silently blanking the version readout.
+    # So try -V, and fall back to plain sort only if it fails. CodeRabbit flagged
+    # this as broken on macOS; measured, that is not true here, but the fallback
+    # costs one line and the failure mode was a silent one.
+    _CACHE_DIRS=$(find "$_CACHE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)
+    _INST_VER=$(printf '%s\n' "$_CACHE_DIRS" | sort -V 2>/dev/null | tail -1)
+    [ -n "$_INST_VER" ] || _INST_VER=$(printf '%s\n' "$_CACHE_DIRS" | sort | tail -1)
     echo "  source version:    ${_SRC_VER:-?}"
     echo "  installed version: ${_INST_VER:-<none installed>}"
     if [ -n "$_SRC_VER" ] && [ -n "$_INST_VER" ] && [ "$_SRC_VER" != "$_INST_VER" ]; then

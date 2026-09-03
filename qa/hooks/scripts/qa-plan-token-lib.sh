@@ -581,7 +581,16 @@ qpt_liveness_file() {
   elif command -v sha256sum >/dev/null 2>&1; then
     digest=$(printf '%s' "$raw" | sha256sum | cut -c1-16)
   fi
-  [ -n "$digest" ] && safe="${safe}.${digest}"
+  # NO DIGEST TOOL, NO ANSWER. Falling back to the sanitized name alone would
+  # restore the exact collision this function exists to prevent, and a collision
+  # here is a fail-OPEN: two sessions share a heartbeat and liveness reports
+  # `observed` for a session that never ran the hook. A degraded answer is worse
+  # than no answer on a readout whose only job is to stop a wasted restart, so
+  # this refuses and the caller renders it as `unknown` rather than as a verdict
+  # it did not earn. Raised by CodeRabbit on PR #80 against the first cut, which
+  # kept the lossy fallback.
+  [ -n "$digest" ] || { printf ''; return 1; }
+  safe="${safe}.${digest}"
 
   # A name of only dots would still resolve to a directory entry we do not want.
   case "$safe" in ''|.|..) printf ''; return 1 ;; esac
