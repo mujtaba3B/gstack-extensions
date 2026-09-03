@@ -18,7 +18,7 @@ This directory is a Claude Code plugin named `eng` (installed from this repo's l
 
 ## Hooks (Ernie's enforcement arm)
 
-The plugin ships its PR-lifecycle gates in `hooks/hooks.json`; installing the plugin activates them, uninstalling deactivates them. They are opt-in per repo (`.ship-gate.json` / `.merge-clearance.json` markers at the repo root) and scoped to git repos under `~/dev`; everything else is untouched. All gates fail open on missing dependencies. Path convention: `hooks.json` commands locate entrypoints via `${CLAUDE_PLUGIN_ROOT}`; inside the scripts, sibling libs resolve via `BASH_SOURCE` so the executing copy always binds its own dependencies (the scripts are dual-use: skills, the shim, and the bats suites invoke them without the hook env).
+The plugin ships its PR-lifecycle gates in `hooks/hooks.json`; installing the plugin activates them, uninstalling deactivates them. They are active by DEFAULT for every git repo under `~/dev`, per the tracked `~/dev/gate-policy.json` (the per-repo `.ship-gate.json` / `.merge-clearance.json` opt-in markers were dropped on 2026-09-02, because a git-ignored file that ARMS enforcement meant a fresh worktree or clone was silently un-gated); everything else is untouched. All gates fail open on missing dependencies. Path convention: `hooks.json` commands locate entrypoints via `${CLAUDE_PLUGIN_ROOT}`; inside the scripts, sibling libs resolve via `BASH_SOURCE` so the executing copy always binds its own dependencies (the scripts are dual-use: skills, the shim, and the bats suites invoke them without the hook env).
 
 | Hook | Event | What it enforces |
 |---|---|---|

@@ -1530,6 +1530,31 @@ disp() {
   [ "$output" = "no" ]
 }
 
+@test "the caller consults the marker ONLY when the description was unreadable" {
+  # CodeRabbit (PR #79) caught this: an old marker must not override a CURRENT
+  # negative status. The commit-status description is HEAD-BOUND (the statuses API
+  # is per-commit); PR comments are not, so even mc_cr_rate_limited_latest cannot
+  # prove its marker belongs to this head. A stale marker was therefore able to
+  # turn an explicit "not rate limited" into rate-limited, demanding a local review
+  # for a head CodeRabbit had actually reviewed. Fail-closed, but wrong.
+  #
+  # The regression is in the CALLER (which proof it consults), so pin the guard.
+  run grep -qE '^[[:space:]]+\[ "\$CR_RATE_LIMITED" = "yes" \] \|\| \[ "\$CR_DESC_UNAVAILABLE" != "yes" \] \\$' \
+    "${BATS_TEST_DIRNAME}/../scripts/merge-clearance.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "success rate-limited: a stale marker cannot override an explicit negative description" {
+  # The lib-level half: with the description in hand, the marker is never asked.
+  # This is the input the caller now refuses to forward.
+  marker="<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+  comments=$(jq -nc --arg m "$marker" '[{author:"coderabbitai[bot]", body:"## Walkthrough"},
+                                        {author:"coderabbitai[bot]", body:$m}]')
+  # Passing the real description means the marker cannot rescue it.
+  run mc_cr_success_rate_limited "success" "not rate limited" "$comments"
+  [ "$output" = "no" ]
+}
+
 @test "the caller emits the sentinel when the description fetch FAILS" {
   # mc_desc_unavailable can only do its job if the I/O layer actually reports the
   # failure. Reverting cr_status_description to `|| out=""` restores the fail-open

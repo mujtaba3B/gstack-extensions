@@ -491,6 +491,13 @@ mc_cr_success_rate_limited() {
   local state="$1" desc="${2:-}" comments="${3:-[]}"
   [ "$state" = "success" ] || { echo "no"; return 1; }
   if [ "$(mc_desc_rate_limited "$desc")" = "yes" ]; then echo "yes"; return 0; fi
+  # A description we actually READ, and which does not say "rate limited", is
+  # CodeRabbit's current word about THIS head: the commit-status API is per-commit,
+  # so that description is HEAD-BOUND. No marker is. Even the LATEST marker may
+  # belong to an earlier head, so it must never override a description we hold.
+  # Consult the marker only when there is NO description evidence: empty (never
+  # fetched, the caller only fetches for success) or the unavailable sentinel.
+  if [ -n "$desc" ] && [ "$(mc_desc_unavailable "$desc")" != "yes" ]; then echo "no"; return 1; fi
   # Secondary proof: the marker as CR's LATEST comment, the same hardened variant
   # shapes 2 and 3 use. An earlier draft used the anywhere variant, reasoning that a
   # success status means CR finished so no newer comment should win. That answers

@@ -523,7 +523,14 @@ if [ "$CR_STATUS_STATE" != "pending" ] && [ "$CR_REVIEWED_HEAD" = "no" ] \
       # which is why the secondary proof uses the hardened _latest marker variant:
       # only CR's most recent word may contradict its own denial.
       CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "$CR_STATUS_DESC" '[]')
-      [ "$CR_RATE_LIMITED" = "yes" ] \
+      # The marker is consulted ONLY when the description could not be READ. The
+      # commit-status description is HEAD-BOUND (the statuses API is per-commit),
+      # so a description we did read is CodeRabbit's current word about THIS head.
+      # PR comments carry no commit binding, so even the LATEST marker may belong
+      # to an earlier head: letting it override an explicit "not rate limited"
+      # demanded a local review for a head CR had actually reviewed. _latest
+      # narrows that window but cannot close it, because no marker is HEAD-bound.
+      [ "$CR_RATE_LIMITED" = "yes" ] || [ "$CR_DESC_UNAVAILABLE" != "yes" ] \
         || CR_RATE_LIMITED=$(mc_cr_success_rate_limited "$CR_STATUS_STATE" "" "$(cr_issue_comments)")
     else
       CR_RATE_LIMITED=$(mc_cr_rate_limited "$(cr_issue_comments)")
