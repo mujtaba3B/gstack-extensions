@@ -34,11 +34,11 @@ recognizably illegitimate act). That is a real improvement and not a solution.
 | macOS Keychain generic password | A plain shell read the secret back with no prompt | **No.** Default items carry no ACL; an ACL binds to a signed application, and a hook script is not one. |
 | Claude Code transcript | Harness writes `toolUseResult` with `questions` / `answers` / `annotations`, inside a `uuid` + `parentUuid` + `sessionId` chain | **Partially.** A witness, not a lock: it is a file the agent can append to. |
 | `pam_tid` for `sudo` | Not enabled (`/etc/pam.d/sudo_local` carries no `pam_tid`) | Not today. One line would enable it. |
-| Secure Enclave | Apple M4; `LocalAuthentication.framework` present; `swiftc` available | **Yes.** The only measured option a shell genuinely cannot satisfy. |
+| Secure Enclave | Apple M4; `LocalAuthentication.framework` present | **Not from a headless hook.** The key cannot be persisted from a CLI in this context (see A below). A provisioned, signed GUI helper with user presence WOULD be a real local anchor; that is a different artifact than a hook. |
 
 ## Options
 
-### A. Secure Enclave signature: ATTEMPTED 2026-09-02, DOES NOT WORK HERE
+### A. Secure Enclave signature: ATTEMPTED 2026-09-02, UNUSABLE FROM A HEADLESS HOOK
 
 **Status: built and abandoned on measured evidence.** The spike source is kept at
 `spec/plans/qa-approval-anchor-spike.m` so nobody re-derives it. What happened:
@@ -105,7 +105,10 @@ Make the merge-time claim a GitHub artifact the local agent cannot forge: the
 maintainer's own PR review approval, verified by a required check. GitHub auth
 is outside the agent's reach.
 
-- **Strong and needs no local crypto.**
+- **Strong and needs no local crypto**, but for a precise reason: not because
+  GitHub auth is beyond the agent (it holds the author's `gh` session), but
+  because GitHub refuses to count an author's own approval as the independent
+  review a protection rule requires.
 - **Changes the UX the maintainer explicitly asked for**, which is the
   in-terminal modal ("I got a question with options ... that was a block"), so
   it cannot REPLACE the local flow.
@@ -117,13 +120,18 @@ is outside the agent's reach.
 
 Working through A produced a conclusion that outranks the option list:
 
-> **On a single-user machine where the agent has full shell access and can invoke
-> any local binary, there is no purely local trust anchor.**
+> **No purely local trust anchor is reachable FROM THE HEADLESS HOOK CONTEXT on a
+> single-user machine where the agent has full shell access.**
 
-Anything the hook can read, the agent can read. Anything the hook can invoke, the
-agent can invoke. A key the agent cannot extract is still a key the agent can ask
-the helper to USE, unless every use demands physical presence, and physical
-presence needs a GUI that a hook does not have.
+Stated precisely, because the unqualified version is false. Anything the hook can
+read, the agent can read; anything the hook can invoke, the agent can invoke. A
+key the agent cannot extract is still a key the agent can ask the helper to USE,
+unless every use demands physical presence. Physical presence needs a GUI, and a
+hook has none, which is where this dead-ends.
+
+What that leaves standing: a provisioned, signed GUI helper that demands user
+presence per signature IS a genuine local anchor. It is simply not a hook, and
+building one is a different project from the gate this document serves.
 
 Note what this does NOT say. The SIGNAL is sound: `.tool_response.answers` is
 written by the harness from a real click and the model cannot emit it. Only the
@@ -131,12 +139,16 @@ DERIVED RECORD (a file on disk) is forgeable. So the honest framings are:
 
 1. Verify the signal, not a file derived from it (Option B), which bounds the
    forgery to fabricating a self-consistent harness record.
-2. Anchor off-machine, which needs a second party or a second device. Note the
-   sharp edge for a solo maintainer: GitHub will not let a PR author approve
-   their own PR, and the `gh` CLI here is authenticated AS the author, so
-   "require an approving review" is simultaneously unforgeable by the agent and
-   unsatisfiable by the human. Any Option C design has to solve that, and
-   "require a review" alone does not.
+2. Anchor off-machine, which needs a second party or a second device. Be exact
+   about WHY this works, because the tempting shorthand is wrong: GitHub
+   authentication is NOT outside the agent's reach, since the agent uses the
+   existing `gh` session authenticated as the author. The actual boundary is that
+   GitHub does not count an author's approval as the required independent review,
+   so the agent holding the author's credentials cannot manufacture one. The
+   sharp edge for a solo maintainer follows directly: there is no second
+   identity, so "require an approving review" is simultaneously unforgeable by
+   the agent and unsatisfiable by the human. Any Option C design has to solve
+   that, and "require a review" alone does not.
 
 ## Recommendation
 
