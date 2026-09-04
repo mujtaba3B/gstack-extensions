@@ -591,3 +591,123 @@ qpg_base_in_scope() {
   if printf '%s\n' "$bases" | grep -qxF "$base"; then echo "in"; return 0; fi
   echo "out"; return 1
 }
+
+# ---------------------------------------------------------------------------
+# Gate 1b: the Bash build path. See qa-plan-bash-build-gate.sh for the hook.
+#
+# WHY A SECOND BUILD GATE EXISTS. Gate 1 matches Edit|MultiEdit|Write, so source
+# written through Bash never reached it. That is not a corner case: under
+# bypass-permissions mode the harness instructs agents to prefer heredocs and
+# `sed` over the edit tools, which makes the ungated path the DEFAULT path. On
+# 2026-09-04 in ~/dev/tooling/local-bin an agent wrote three tracked source files
+# with `python3 - <<'PY'` heredocs and nothing fired; the gate spoke up only on
+# the fourth edit, which happened to use Write. Its message was accurate and its
+# coverage was not.
+#
+# WHY THESE FUNCTIONS TAKE OBSERVED STATE RATHER THAN A COMMAND STRING. Deciding
+# "does this shell command write tracked source" requires parsing arbitrary shell
+# AND the source text of whatever interpreter it feeds. The observed case is
+# exactly the undecidable one: the write lives inside Python, at a path that may
+# be computed. A shell-shape matcher would have caught `sed -i` and `tee`, which
+# we have no incident for, and missed the heredoc, which we do. So the decision
+# is made from what the VCS observed instead, which is exact and blind to the
+# write mechanism: heredocs, `-c`, `-e`, `eval`, base64, xargs, and a script the
+# command merely invoked all land the same way.
+# ---------------------------------------------------------------------------
+
+# qpg_unquote_path <token>
+#   The porcelain status format wraps a path in double quotes when it contains
+#   `"`, `\`, or a control character (and any non-ASCII byte unless
+#   core.quotePath is off, which the hook sets). Strip the wrapper and undo the
+#   two escapes that can change WHICH FILE a token names. Every other escape is
+#   left exactly as written: the token stays stable across calls, which is all
+#   the snapshot comparison needs, and nothing here can crash on a hostile name.
+qpg_unquote_path() {
+  local p="$1"
+  case "$p" in
+    \"*\")
+      p=${p#\"}; p=${p%\"}
+      # Protect escaped backslashes FIRST, or a trailing `\\` followed by `"`
+      # would be read as an escaped quote and silently drop a backslash.
+      p=${p//\\\\/$'\001'}
+      p=${p//\\\"/\"}
+      p=${p//$'\001'/\\}
+      ;;
+  esac
+  printf '%s' "$p"
+}
+
+# qpg_status_source_paths <porcelain-text>
+#   Print, one per line, the paths in porcelain status output that classify as
+#   application SOURCE.
+#
+#   Reuses qpg_path_needs_plan deliberately: the Bash path and the Edit path have
+#   to agree about what "source" means, and a second classifier would drift from
+#   the first. That reuse is also what buys the whole false-positive carve-out
+#   list for free (docs, config, tests, fixtures, `.git/`), on top of the ones
+#   the VCS itself supplies (anything ignored, and anything outside the repo:
+#   /tmp, the session scratchpad, ~/.claude, ~/.gstack).
+qpg_status_source_paths() {
+  local line xy path
+  while IFS= read -r line; do
+    # "XY PATH": two status columns, a space, then at least one path character.
+    [ ${#line} -gt 3 ] || continue
+    xy=${line:0:2}
+    # `!!` only appears under --ignored, and an ignored file is never gated.
+    [ "$xy" = '!!' ] && continue
+    path=${line:3}
+    # Rename / copy entries read "ORIG -> DEST"; DEST is the file that now
+    # differs. Gated on the status column so an ordinary filename that happens to
+    # contain " -> " is not truncated.
+    case "$xy" in
+      [RC]*|?[RC]) case "$path" in *" -> "*) path=${path##* -> } ;; esac ;;
+    esac
+    path=$(qpg_unquote_path "$path")
+    qpg_path_needs_plan "$path" >/dev/null && printf '%s\n' "$path"
+  done <<QPG_STATUS_EOF
+$1
+QPG_STATUS_EOF
+}
+
+# qpg_snapshot_delta <prev-snapshot> <curr-snapshot>
+#   Print the lines of <curr> that do not appear VERBATIM in <prev>.
+#
+#   A snapshot line is "<content-digest> <path>", and that shape is doing real
+#   work. Comparing PATH LISTS alone would miss a second write to a file that was
+#   already dirty, which is the common shape of an agent iterating on one file.
+#   Comparing digests catches it. A file edited back to clean simply drops out of
+#   <curr>, so it is correctly not a delta rather than being reported as one.
+qpg_snapshot_delta() {
+  local prev="$1" line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s\n' "$prev" | grep -qxF -- "$line" && continue
+    printf '%s\n' "$line"
+  done <<QPG_DELTA_EOF
+$2
+QPG_DELTA_EOF
+}
+
+# qpg_bash_build_disposition <stamp-verdict> <baseline-state> <delta>
+#   The entire allow/block decision for the Bash build path, as one token.
+#
+#     <stamp-verdict>  : qpg_stamp_valid's output for this branch.
+#     <baseline-state> : "have" when a snapshot for THIS branch already existed;
+#                        anything else means this call is establishing the first.
+#     <delta>          : qpg_snapshot_delta's output ("" = nothing changed).
+#
+#   Tokens: allow-stamped | allow-baseline | allow-no-delta | block.
+#   Returns 0 ONLY for block, matching qpg_path_needs_plan's convention.
+#
+#   The baseline arm is not a nicety, it is what makes the gate usable at all.
+#   Judging ABSOLUTE dirty state would block every single Bash call on an
+#   already-dirty branch, a status listing and `ls` included, which is a gate the
+#   human rips out on day one. Only a change THIS call introduced is
+#   attributable to it.
+qpg_bash_build_disposition() {
+  local verdict="$1" baseline="$2" delta="$3"
+  [ "$verdict" = "valid" ] && { echo "allow-stamped";  return 1; }
+  [ "$baseline" = "have" ] || { echo "allow-baseline"; return 1; }
+  [ -n "$delta" ]          || { echo "allow-no-delta"; return 1; }
+  echo "block"; return 0
+}

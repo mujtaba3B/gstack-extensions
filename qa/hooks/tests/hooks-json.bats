@@ -28,6 +28,7 @@ tuples() {
 @test "wiring matches the golden tuple set exactly" {
   expected=$(printf '%s\n' \
     'PostToolUse|AskUserQuestion|qa-plan-approval-token.sh' \
+    'PostToolUse|Bash|qa-plan-bash-build-gate.sh' \
     'PreToolUse|AskUserQuestion|qa-plan-present-gate.sh' \
     'PreToolUse|Bash|qa-plan-pr-gate.sh' \
     'PreToolUse|Edit|MultiEdit|Write|qa-plan-build-gate.sh' \
