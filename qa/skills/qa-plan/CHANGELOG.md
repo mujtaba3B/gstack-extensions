@@ -1,5 +1,66 @@
 # qa:plan CHANGELOG
 
+## v2.5.0
+
+Two coupled defects in the approval path, and one fix for both.
+
+**The companion artifact is now REQUIRED.** Step 4b published "when it seemed
+worth it", because the skill kept telling the reader the artifact was a companion
+that no gate reads. An agent optimizing for what is load-bearing drew the obvious
+conclusion: on 2026-09-04 one skipped the artifact on a 7-line docs change as
+disproportionate, disclosed the skip, and the human had to ask where it went.
+That was not the first time. This machine's transcripts hold at least five
+QA-plan approval modals whose recorded ANSWER is the human asking for the missing
+artifact ("Where is the artifact for the QA plan?", "where's the artifact link?",
+"why do you keep forgetting to do this?"). Step 4b now states it runs on every
+run at every change size, separates the two source-of-truth claims that were
+being collapsed (the PR body is authoritative for the GATES, the artifact is
+authoritative for the HUMAN at approval time), and narrows the escape hatch to a
+genuinely headless run where the `Artifact` tool does not exist, which is the same
+run that cannot fire `AskUserQuestion` and therefore cannot be approved at all.
+
+**The approval modal now opens in the same turn as the plan.** Step 6 used to
+require the plan render to be turn-final with the `AskUserQuestion` on the
+following turn. A turn ends by handing control back, so the modal could not open
+until the human sent a message: they saw a plan, no picker, and had to type
+something to be asked for the approval the skill had just requested.
+
+The two-turn rule was not superstition and its cause is NOT fixed: the terminal
+still drops assistant text sitting mid-turn before an in-turn tool call
+(`anthropics/claude-code` #67470 and #75182, both still open, re-checked against
+CLI 2.1.260 on 2026-09-04). It was removed only because the first fix supplies a
+strictly better guarantee. The artifact is now mandatory, so a durable rendered
+copy of the plan exists at a URL before the modal opens, and that URL is carried
+in the question text, which is modal content and always renders. If the prose
+render is swallowed, the human opens the link from the modal. The URL in the
+question is therefore load-bearing: dropping it means restoring the two-turn
+split, not slimming the modal.
+
+Two hardenings came out of reviewing this change itself. The artifact is now
+the copy the human is pointed at, while the digest still hashes the PR body, so
+Step 4b states that the two must carry the same rows and that the page is
+refreshed BEFORE the digest is recomputed. And a publish that FAILS (as opposed
+to a tool that does not exist) is now an explicit blocked run rather than an
+undefined state that could fall through to a modal with no URL.
+
+CodeRabbit caught two things in the first cut. The artifact-alignment rule
+contradicted the template's own contract (the page carries NO checkboxes by
+design, so it could never literally match the digest input); alignment is now
+defined as presentation-only normalization with the checkbox differences named,
+and everything else called substance. And the frontmatter promised an artifact
+on every run while Step 4b permits a headless run to publish nothing, so the
+description now carries that exception.
+
+Verified against the mint path rather than assumed: `.tool_response.answers` is
+keyed by the question's full text byte for byte, digest marker included, so the
+extra URL line does not disturb the PostToolUse token minter
+(`qpt_digest_from_question` matches per line; the answer lookup uses the whole
+question string, newlines included). `qa-plan-present-gate.sh` has been an
+unconditional allow since v1.8.0, so it does not object to the one-turn shape
+either. No hook or lib change was needed.
+
+qa plugin 3.10.1 -> 3.11.0.
+
 ## v2.4.1
 
 Correct the one place the 3.10.0 honesty sweep missed.
