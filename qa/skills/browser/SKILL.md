@@ -765,6 +765,8 @@ RECIPE="$ROOT/.gstack/qa-quincey/recipe.yml"
   python3 "$VALIDATOR" "$RECIPE"
   ```
 
+  The validator's own unit tests ship beside it at `scripts/test_validate_recipe.py` (14 cases covering the secret, absolute-path and unscoped-teardown rejections). Run them with `pytest qa/skills/browser/scripts/test_validate_recipe.py -q` when you change the validation rules. Use the `pytest` entrypoint, NOT `python3 -m pytest`: `python3` may resolve to an interpreter without pytest installed even when the `pytest` binary is on PATH, which is the case on this machine.
+
   On a non-zero exit, STOP and surface the flagged field; do not boot or seed with an invalid recipe. Then confirm the recipe is tracked, not git-ignored: `git -C "$ROOT" check-ignore -q "$RECIPE" && echo IGNORED`. If IGNORED, warn and offer to un-ignore `.gstack/qa-quincey/`, else the recipe will not travel to CI / MuTwo.
 
 ### 5b. Boot the app
