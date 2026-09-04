@@ -131,7 +131,16 @@ qp_stray_token_report() {
     [ "$gd" = "$mine" ] && continue
     [ -f "$gd/qa-plan-approval-token" ] || continue
     tb=$(jq -r '.branch // "?"' "$gd/qa-plan-approval-token" 2>/dev/null || echo "?")
-    printf '  - a token minted for branch %s is sitting in %s\n' "$tb" "$gd"
+    # Report the WORKTREE path, because that is what --worktree accepts. An
+    # earlier cut printed $gd (the git dir), which is where the token FILE lives
+    # but is not a path this tool takes, so the output looked actionable and was
+    # not. The git dir still appears, parenthesised, since it is where to look.
+    # Both are %q-quoted: a path containing a space or shell syntax would
+    # otherwise produce a line that fails or runs something else when pasted.
+    printf '  - branch %s, approved in worktree %s\n' "$tb" "$(printf '%q' "$wt")"
+    printf '      token file: %s\n' "$(printf '%q' "$gd/qa-plan-approval-token")"
+    printf '      spend it:   %s write --worktree %s\n' \
+      "$(printf '%q' "$QP_SELF")" "$(printf '%q' "$wt")"
     found=0
   done <<STRAY_EOF
 $(git -C "$target" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
@@ -271,9 +280,6 @@ case "$VERB" in
           echo "DIAGNOSIS: the approval WAS minted. It is not missing, it is in the wrong"
           echo "place, so nothing about the hook needs fixing and a restart would not help:"
           printf '%s\n' "$_STRAY"
-          echo
-          echo "Spend it by pointing this command at that checkout:"
-          echo "  qa-plan-stamp.sh write --worktree <path-of-that-worktree>"
           echo
           echo "Why it landed there: both minters resolve the repo from the SESSION cwd,"
           echo "not from the checkout being shipped."
@@ -477,7 +483,9 @@ case "$VERB" in
         echo "(the Bash tool and the ! prefix are both non-TTY). Open a terminal tab and"
         echo "run this, which needs no cd and is copy-pasteable as-is:"
         echo
-        echo "  $QP_SELF override --worktree $(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || echo "$TARGET")"
+        printf '  %s override --worktree %s\n' \
+          "$(printf '%q' "$QP_SELF")" \
+          "$(printf '%q' "$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || echo "$TARGET")")" >&2
       } >&2
       exit 1
     fi
@@ -591,7 +599,7 @@ case "$VERB" in
       if [ -n "$_DSTRAY" ]; then
         echo "           but a token exists elsewhere:"
         printf '%s\n' "$_DSTRAY" | sed 's/^  - /           - /'
-        echo "           spend it with: --worktree <that worktree>"
+        echo "           (each line above carries the exact command to run)"
       fi
     fi
 

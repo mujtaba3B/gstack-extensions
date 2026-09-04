@@ -1060,8 +1060,13 @@ _mint_token_for() {  # <gitdir> <branch>
   run bash -c "cd '$WT' && '$STAMP' write 2>&1"
   [ "$status" -ne 0 ]
   assert_contains "$output" "the approval WAS minted"
-  assert_contains "$output" "$GITDIR"
-  assert_contains "$output" "--worktree"
+  # Pin the WORKTREE path, not the git dir: --worktree takes the former, and an
+  # earlier cut printed only the latter, so the output read as actionable while
+  # being un-pasteable. Also pin a CONCRETE command, never the bare flag name.
+  assert_contains "$output" "approved in worktree"
+  assert_contains "$output" "$REPO"
+  assert_contains "$output" "write --worktree"
+  assert_contains "$output" "token file:"
   # The liveness paragraph claims the hook "declined to mint". That is FALSE when
   # we can see the token, so a stray hit must suppress it entirely.
   assert_missing "$output" "declined to"
@@ -1088,4 +1093,39 @@ _mint_token_for() {  # <gitdir> <branch>
   run bash -c "cd '$REPO' && '$STAMP' status --worktree /nonexistent/xyz 2>&1"
   [ "$status" -eq 2 ]
   assert_contains "$output" "not a directory"
+}
+
+@test "worktree: clear and doctor honour --worktree (target-specific paths)" {
+  WT=$(_wt_setup)
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  _mint_token_for "$WGD" "feat/wt"
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ -f "$WGD/qa-plan-approved" ]
+
+  # doctor reads the TARGET, so it must report the target's branch, not the cwd's.
+  run bash -c "cd '$REPO' && '$STAMP' doctor --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  assert_contains "$output" "feat/wt"
+  assert_contains "$output" "$WGD"
+
+  # clear removes the TARGET's stamp and leaves the cwd repo alone.
+  run bash -c "cd '$REPO' && '$STAMP' clear --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$WGD/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: override --worktree still refuses without a controlling terminal" {
+  WT=$(_wt_setup)
+  # The TTY requirement is the human-presence guard. Targeting is orthogonal to
+  # it, so the flag must not become a way to reach the break-glass path from a
+  # non-TTY caller. This is the one place a targeting flag could have weakened
+  # something, so it gets its own test rather than an argument in a comment.
+  run bash -c "cd '$REPO' && '$STAMP' override --worktree '$WT' 2>&1 </dev/null"
+  [ "$status" -ne 0 ]
+  assert_contains "$output" "non-TTY"
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  [ ! -f "$WGD/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
 }

@@ -36,6 +36,15 @@ worktrees, that the minters key off the session cwd which may be a different rep
 and where to look. That limit is real and stated rather than papered over: no
 worktree walk can see a token minted into an unrelated repo.
 
+CodeRabbit caught that the first cut was not actually pasteable, which was the
+whole point of the change. `qp_stray_token_report` printed the GIT DIR while
+`--worktree` takes the WORKTREE path, and the recovery line was a `<placeholder>`
+rather than a command, so the output read as actionable and was not. It now names
+the worktree, the token file, and a concrete command, all `%q`-quoted so a path
+containing a space or shell syntax cannot break or execute something else when
+pasted. Verified by extracting the emitted line from a fixture whose path
+contains a space and running it verbatim.
+
 **The break-glass command is now copy-pasteable.** The refusal told the human to
 "cd to this repo" and run `qa-plan-stamp.sh`, a bare name on no PATH: the only
 runnable copies are the source tree and the versioned plugin cache, so following
