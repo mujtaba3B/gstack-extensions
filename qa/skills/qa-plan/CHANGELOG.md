@@ -43,6 +43,14 @@ refreshed BEFORE the digest is recomputed. And a publish that FAILS (as opposed
 to a tool that does not exist) is now an explicit blocked run rather than an
 undefined state that could fall through to a modal with no URL.
 
+CodeRabbit caught two things in the first cut. The artifact-alignment rule
+contradicted the template's own contract (the page carries NO checkboxes by
+design, so it could never literally match the digest input); alignment is now
+defined as presentation-only normalization with the checkbox differences named,
+and everything else called substance. And the frontmatter promised an artifact
+on every run while Step 4b permits a headless run to publish nothing, so the
+description now carries that exception.
+
 Verified against the mint path rather than assumed: `.tool_response.answers` is
 keyed by the question's full text byte for byte, digest marker included, so the
 extra URL line does not disturb the PostToolUse token minter
