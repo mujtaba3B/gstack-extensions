@@ -1,5 +1,52 @@
 # qa:plan CHANGELOG
 
+## v2.6.0 (qa plugin 3.12.0)
+
+`qa-plan-stamp.sh` can address a worktree other than the process cwd, and a
+mis-targeted approval now says where it went.
+
+**The bug.** Every verb resolved the git dir and branch from the PROCESS cwd,
+with no way to point it elsewhere, while both minters resolve theirs from the
+SESSION cwd. On 2026-09-04 those disagreed: an approval given for a plan in a
+linked worktree minted a token keyed to the SESSION's repo and branch, carrying
+the other plan's question and digest. `write` in the target found nothing, and
+its DIAGNOSIS said the hook "saw a question and declined to mint", which was
+false in every clause: the hook had minted successfully, just somewhere else.
+The only way to spend the approval was a terminal override run from inside the
+target, so `cd` was load-bearing and nothing said so. A second session hit the
+same thing independently the same night and misdiagnosed it as a total mint
+failure.
+
+**`--worktree <path>`** on `write`, `status`, `clear`, `doctor` and `override`.
+It changes WHICH checkout is addressed and grants nothing: per-worktree keying is
+unchanged (`--absolute-git-dir`, never the common dir, so linked worktrees still
+do not share an approval), and `qpt_token_valid` still requires the token's own
+`branch` field to equal the resolved branch. A bats test pins that, and it was
+mutation-tested: deleting the branch guard turns it red, restoring it turns it
+green. So the flag cannot launder an approval from one branch onto another, which
+is the only property worth worrying about here.
+
+**The diagnosis, which is arguably the bigger half.** On `no-token`, the writer
+scans sibling worktrees and NAMES the one holding a stray token, then prints the
+exact `--worktree` command to spend it. A hit SUPPRESSES the liveness paragraph
+entirely, because "the hook declined to mint" is false when the token is visible
+and printing both put a confident wrong explanation three lines above the right
+one. When no stray is found it says plainly that the scan covers only THIS repo's
+worktrees, that the minters key off the session cwd which may be a different repo,
+and where to look. That limit is real and stated rather than papered over: no
+worktree walk can see a token minted into an unrelated repo.
+
+**The break-glass command is now copy-pasteable.** The refusal told the human to
+"cd to this repo" and run `qa-plan-stamp.sh`, a bare name on no PATH: the only
+runnable copies are the source tree and the versioned plugin cache, so following
+the advice produced `command not found` at the exact moment they were blocked. It
+now prints the absolute path of the running copy plus `--worktree <toplevel>`, and
+no cd is needed.
+
+Not fixed here: the minters themselves still key off the session cwd. Making them
+target the repo a plan is FOR is a larger change to a hook that must fail closed,
+and it is not needed to unblock the case that keeps occurring.
+
 ## v2.5.0
 
 Two coupled defects in the approval path, and one fix for both.
