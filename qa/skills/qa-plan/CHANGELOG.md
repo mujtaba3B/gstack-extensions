@@ -1,5 +1,40 @@
 # qa:plan CHANGELOG
 
+## v2.7.0 (qa plugin 3.13.0)
+
+The build gate now covers source written through Bash, which it never did.
+
+**The bug.** `qa-plan-build-gate.sh` was registered on `Edit|MultiEdit|Write`
+only. The one Bash-matched hook was `qa-plan-pr-gate.sh`, which guards
+`gh pr create`, a different moment entirely. So an agent writing source through
+the shell built with no approved plan and nothing fired. Observed 2026-09-04 in
+`~/dev/tooling/local-bin`: three tracked source files written with
+`python3 - <<'PY'` heredocs, silent; the gate spoke up only on the fourth edit,
+which happened to use `Write`. Not an exotic route either, since under
+bypass-permissions mode the harness tells agents to prefer heredocs and `sed`
+over the edit tools.
+
+**The fix, and why it is not a matcher change.** Deciding whether arbitrary shell
+writes tracked source is undecidable from the command string: the observed write
+lived inside an interpreter's source text at a path that may be computed, and
+`PreToolUse` cannot even expand `"$VAR"`. A shell-shape matcher would have caught
+`sed -i` and `tee`, for which there is no incident, and missed the heredoc, for
+which there is. So `qa-plan-bash-build-gate.sh` is a `PostToolUse` `Bash` hook
+that compares observed dirty source against a per-branch snapshot. That is exact
+and blind to mechanism: heredocs, `-c`, `-e`, `eval`, `xargs`, `cp`, deletions
+and a script the command merely invoked all land identically.
+
+**What it costs, stated rather than implied.** `PostToolUse` runs after the tool,
+so this INTERRUPTS and never prevents or reverts. The hard invariant is
+unchanged (the PR gate still refuses an unstamped `gh pr create`); the soft one
+goes from nothing firing to an immediate interrupt naming the files, which on the
+2026-09-04 incident is a block at file #1 instead of file #4.
+`qa/docs/build-gate-coverage.md` is the full statement of coverage and limits.
+
+Decisions are pure functions with a truth table (`qpg_status_source_paths`,
+`qpg_snapshot_delta`, `qpg_bash_build_disposition`), mutation-controlled: each
+guard deleted makes the suite go red.
+
 ## v2.6.0 (qa plugin 3.12.0)
 
 `qa-plan-stamp.sh` can address a worktree other than the process cwd, and a
