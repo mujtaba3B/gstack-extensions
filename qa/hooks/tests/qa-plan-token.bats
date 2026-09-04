@@ -989,3 +989,143 @@ PTY_RUN() {  # <shell-command-line> <line-to-type>
   assert_contains "$output" "nothing Claude does can produce that event"
   assert_contains "$output" "accident-guard only"
 }
+
+# ---- --worktree targeting ---------------------------------------------------
+#
+# The property: --worktree changes WHICH checkout is addressed and grants
+# nothing. Per-worktree keying is unchanged, and qpt_token_valid still requires
+# token.branch == resolved branch, so the flag cannot move an approval from one
+# branch onto another. The bypass test below is the load-bearing one.
+#
+# Added after 2026-09-04, when an approval given for a plan in a linked worktree
+# minted into the SESSION's repo and could only be spent via a terminal override
+# run from inside the target. `cd` was load-bearing and nothing said so.
+
+_wt_setup() {  # adds a linked worktree on branch feat/wt; echoes its path
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" branch -q feat/wt 2>/dev/null || true
+  git -C "$REPO" worktree add -q "$REPO-wt" feat/wt 2>/dev/null
+  echo "$REPO-wt"
+}
+
+_mint_token_for() {  # <gitdir> <branch>
+  printf '{"branch":"%s","approved_at_epoch":%s,"approver":"Real Human (via AskUserQuestion)","plan_digest":"deadbeef","source":"AskUserQuestion"}' \
+    "$2" "$(date +%s)" > "$1/qa-plan-approval-token"
+}
+
+@test "worktree: --worktree stamps the TARGET git dir, not the process cwd's" {
+  WT=$(_wt_setup)
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  _mint_token_for "$WGD" "feat/wt"
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ -f "$WGD/qa-plan-approved" ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+  run jq -r .branch "$WGD/qa-plan-approved"
+  assert_contains "$output" "feat/wt"
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: the token is CONSUMED from the target, so one approval is one stamp" {
+  WT=$(_wt_setup)
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  _mint_token_for "$WGD" "feat/wt"
+  # `run`, not a bare subshell: under bats errexit a command EXPECTED to fail
+  # aborts the test at that line, so `cmd; st=$?` never reaches the assertion.
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$WGD/qa-plan-approval-token" ]
+  rm -f "$WGD/qa-plan-approved"
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT' 2>&1"
+  [ "$status" -ne 0 ]
+  [ ! -f "$WGD/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: NO BYPASS - a token minted for another branch cannot stamp the target" {
+  WT=$(_wt_setup)
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  _mint_token_for "$WGD" "main"          # target is on feat/wt, token says main
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT' 2>&1"
+  [ "$status" -ne 0 ]
+  assert_contains "$output" "different branch"
+  [ ! -f "$WGD/qa-plan-approved" ]
+  [ ! -f "$GITDIR/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: a stray token in a sibling is NAMED, and the false hook guess is suppressed" {
+  WT=$(_wt_setup)
+  _mint_token_for "$GITDIR" "main"       # token in the PRIMARY, not the worktree
+  run bash -c "cd '$WT' && '$STAMP' write 2>&1"
+  [ "$status" -ne 0 ]
+  assert_contains "$output" "the approval WAS minted"
+  # Pin the WORKTREE path, not the git dir: --worktree takes the former, and an
+  # earlier cut printed only the latter, so the output read as actionable while
+  # being un-pasteable. Also pin a CONCRETE command, never the bare flag name.
+  assert_contains "$output" "approved in worktree"
+  assert_contains "$output" "$REPO"
+  assert_contains "$output" "write --worktree"
+  assert_contains "$output" "token file:"
+  # The liveness paragraph claims the hook "declined to mint". That is FALSE when
+  # we can see the token, so a stray hit must suppress it entirely.
+  assert_missing "$output" "declined to"
+  rm -f "$GITDIR/qa-plan-approval-token"
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: with no stray found, the cross-repo session-cwd note is shown instead" {
+  run bash -c "cd '$REPO' && '$STAMP' write 2>&1"
+  [ "$status" -ne 0 ]
+  assert_contains "$output" "SESSION cwd"
+  assert_missing "$output" "the approval WAS minted"
+}
+
+@test "worktree: the flag is additive - no flag behaves as before, junk args still rejected" {
+  run bash -c "cd '$REPO' && '$STAMP' status 2>&1"
+  [ "$status" -eq 0 ]
+  run bash -c "cd '$REPO' && '$STAMP' status --bogus 2>&1"
+  [ "$status" -eq 2 ]
+  assert_contains "$output" "only --worktree"
+  run bash -c "cd '$REPO' && '$STAMP' status --worktree 2>&1"
+  [ "$status" -eq 2 ]
+  assert_contains "$output" "needs a path argument"
+  run bash -c "cd '$REPO' && '$STAMP' status --worktree /nonexistent/xyz 2>&1"
+  [ "$status" -eq 2 ]
+  assert_contains "$output" "not a directory"
+}
+
+@test "worktree: clear and doctor honour --worktree (target-specific paths)" {
+  WT=$(_wt_setup)
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  _mint_token_for "$WGD" "feat/wt"
+  run bash -c "cd '$REPO' && '$STAMP' write --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ -f "$WGD/qa-plan-approved" ]
+
+  # doctor reads the TARGET, so it must report the target's branch, not the cwd's.
+  run bash -c "cd '$REPO' && '$STAMP' doctor --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  assert_contains "$output" "feat/wt"
+  assert_contains "$output" "$WGD"
+
+  # clear removes the TARGET's stamp and leaves the cwd repo alone.
+  run bash -c "cd '$REPO' && '$STAMP' clear --worktree '$WT'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$WGD/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}
+
+@test "worktree: override --worktree still refuses without a controlling terminal" {
+  WT=$(_wt_setup)
+  # The TTY requirement is the human-presence guard. Targeting is orthogonal to
+  # it, so the flag must not become a way to reach the break-glass path from a
+  # non-TTY caller. This is the one place a targeting flag could have weakened
+  # something, so it gets its own test rather than an argument in a comment.
+  run bash -c "cd '$REPO' && '$STAMP' override --worktree '$WT' 2>&1 </dev/null"
+  [ "$status" -ne 0 ]
+  assert_contains "$output" "non-TTY"
+  WGD=$(git -C "$WT" rev-parse --absolute-git-dir)
+  [ ! -f "$WGD/qa-plan-approved" ]
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+}

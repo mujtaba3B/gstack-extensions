@@ -107,20 +107,100 @@ qp_minter_liveness() {
   qpt_liveness_verdict "$session" "$seen" "$ran"
 }
 
+# qp_stray_token_report <target> <this-gitdir>
+#   Print any approval token found in a SIBLING worktree of <target>, one line
+#   each, and return 0 if it printed anything.
+#
+#   WHY. A mis-targeted token is otherwise INVISIBLE from the checkout that needs
+#   it: `status` reports "none" and `write` reports that the hook declined to
+#   mint. Both are false when the hook minted successfully into a different
+#   worktree, and that wrong diagnosis is what sends someone to restart Claude
+#   Code for a problem no restart can fix. Naming the holder converts "nothing
+#   happened" into "it went there".
+#
+#   LIMIT, stated because it matters: this scans sibling worktrees of ONE repo.
+#   The minters key off the SESSION cwd, which may be an entirely different repo,
+#   and no worktree walk can see that. The caller therefore prints the session-cwd
+#   hint unconditionally, and this scan is the part that can be precise.
+qp_stray_token_report() {
+  local target="$1" mine="$2" wt gd tb found=1
+  command -v jq >/dev/null 2>&1 || return 1
+  while IFS= read -r wt; do
+    [ -n "$wt" ] || continue
+    gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || continue
+    [ "$gd" = "$mine" ] && continue
+    [ -f "$gd/qa-plan-approval-token" ] || continue
+    tb=$(jq -r '.branch // "?"' "$gd/qa-plan-approval-token" 2>/dev/null || echo "?")
+    # Report the WORKTREE path, because that is what --worktree accepts. An
+    # earlier cut printed $gd (the git dir), which is where the token FILE lives
+    # but is not a path this tool takes, so the output looked actionable and was
+    # not. The git dir still appears, parenthesised, since it is where to look.
+    # Both are %q-quoted: a path containing a space or shell syntax would
+    # otherwise produce a line that fails or runs something else when pasted.
+    printf '  - branch %s, approved in worktree %s\n' "$tb" "$(printf '%q' "$wt")"
+    printf '      token file: %s\n' "$(printf '%q' "$gd/qa-plan-approval-token")"
+    printf '      spend it:   %s write --worktree %s\n' \
+      "$(printf '%q' "$QP_SELF")" "$(printf '%q' "$wt")"
+    found=0
+  done <<STRAY_EOF
+$(git -C "$target" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+STRAY_EOF
+  return $found
+}
+
+# The ABSOLUTE path of the running copy. The refusal messages used to name the
+# bare command, which is on no PATH: the only runnable copies are this source
+# tree and the versioned plugin cache, so a human following the advice got
+# "command not found" at the exact moment they were already blocked.
+QP_SELF="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
 VERB="${1:-status}"; shift || true
 
-# `digest` takes an optional path; `write` and the rest take no options at all.
+# `digest` takes an optional path. The other verbs take exactly one option,
+# `--worktree <path>`.
+#
+# WHY --worktree EXISTS. Every verb used to resolve the git dir and branch from
+# the PROCESS cwd, with no way to point it elsewhere, and the minters resolve
+# theirs from the SESSION cwd. On 2026-09-04 those two disagreed: an approval
+# given for a plan in a linked worktree minted a token keyed to the session's own
+# repo and branch, and the only way to spend the approval was a terminal override
+# run from inside the target worktree. `cd` was load-bearing and nothing said so.
+#
+# WHY IT GRANTS NOTHING. It changes WHICH checkout is addressed, never what is
+# permitted. Per-worktree keying is unchanged (`--absolute-git-dir`, never the
+# common dir, so linked worktrees still do not share an approval), and
+# `qpt_token_valid` still requires the token's own `branch` field to equal the
+# resolved branch. So targeting a worktree whose token was minted for a different
+# branch is refused exactly as it is today: the flag cannot launder an approval
+# from one branch onto another. That is the property the bats truth table pins.
 DIGEST_PATH="${1:-}"
+TARGET="."
 case "$VERB" in
   write|status|clear|override|doctor)
-    [ $# -eq 0 ] || { echo "qa-plan-stamp.sh: '$VERB' takes no arguments (got: $*). --approver and --digest were removed; both come from the approval token." >&2; exit 2; } ;;
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --worktree)
+          [ -n "${2:-}" ] || { echo "qa-plan-stamp.sh: --worktree needs a path argument" >&2; exit 2; }
+          TARGET="$2"; shift 2 ;;
+        --worktree=*)
+          TARGET="${1#--worktree=}"
+          [ -n "$TARGET" ] || { echo "qa-plan-stamp.sh: --worktree needs a path argument" >&2; exit 2; }
+          shift ;;
+        *)
+          echo "qa-plan-stamp.sh: '$VERB' accepts only --worktree <path> (got: $*). --approver and --digest were removed; both come from the approval token." >&2
+          exit 2 ;;
+      esac
+    done ;;
 esac
 
-GITDIR=$(git rev-parse --absolute-git-dir 2>/dev/null) || {
-  echo "qa-plan-stamp.sh: not inside a git repo" >&2; exit 1; }
+[ -d "$TARGET" ] || {
+  echo "qa-plan-stamp.sh: --worktree path is not a directory: $TARGET" >&2; exit 2; }
+
+GITDIR=$(git -C "$TARGET" rev-parse --absolute-git-dir 2>/dev/null) || {
+  echo "qa-plan-stamp.sh: not inside a git repo ($TARGET)" >&2; exit 1; }
 STAMP="$GITDIR/qa-plan-approved"
 TOKEN="$GITDIR/qa-plan-approval-token"
-BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+BRANCH=$(git -C "$TARGET" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 case "$VERB" in
   status)
@@ -186,6 +266,24 @@ case "$VERB" in
         # to restart for a problem a restart could not solve. The minter now drops
         # a heartbeat for every AskUserQuestion it sees, so this reports what was
         # observed instead of what is likely.
+        # ORDER MATTERS. The stray scan runs BEFORE the liveness guess, and a hit
+        # SUPPRESSES it. The liveness paragraph says the hook "saw a question and
+        # declined to mint"; when a token is sitting in a sibling worktree that
+        # sentence is false, and printing both put a confident wrong explanation
+        # three lines above the right one. An observation beats an inference, so
+        # when we can see where the approval went we say only that.
+        _STRAY=""
+        if [ "$TVERDICT" = "no-token" ]; then
+          _STRAY=$(qp_stray_token_report "$TARGET" "$GITDIR") || _STRAY=""
+        fi
+        if [ -n "$_STRAY" ]; then
+          echo "DIAGNOSIS: the approval WAS minted. It is not missing, it is in the wrong"
+          echo "place, so nothing about the hook needs fixing and a restart would not help:"
+          printf '%s\n' "$_STRAY"
+          echo
+          echo "Why it landed there: both minters resolve the repo from the SESSION cwd,"
+          echo "not from the checkout being shipped."
+        else
         case "$_LIVENESS" in
           never-observed)
             echo "DIAGNOSIS: the token-minting hook has NOT run at all in this session"
@@ -217,11 +315,21 @@ case "$VERB" in
             echo "id in the environment). Check ~/.claude/qa-plan-gate.log for"
             echo "approval-token lines." ;;
         esac
+        if [ "$TVERDICT" = "no-token" ]; then
+          echo
+          echo "NOTE: no stray token was found in a sibling worktree of this repo, but the"
+          echo "scan only covers THIS repo's worktrees. The minters key off the SESSION cwd,"
+          echo "which may be a different repo entirely; a token minted there is invisible"
+          echo "from here. Check \$(git -C <session-cwd> rev-parse --absolute-git-dir)/qa-plan-approval-token."
+        fi
+        fi
         echo
         echo "IF YOU ARE THE HUMAN and you have already approved this plan, you can override"
         echo "without restarting. Neither route below is reachable by Claude:"
         echo "  1. Send \"$QPT_OVERRIDE_PHRASE\" as a message on its own."
-        echo "  2. Run 'qa-plan-stamp.sh override' in a real terminal tab."
+        echo "  2. Run 'qa-plan-stamp.sh override' in a real terminal tab (add"
+        echo "     --worktree $(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || echo "$TARGET")"
+        echo "     if you run it from somewhere else; cd is no longer load-bearing)."
         echo "Route 1 needs the hooks to be registered; route 2 needs nothing but a terminal."
         echo "Run 'qa-plan-stamp.sh doctor' for the full state."
       } >&2
@@ -257,7 +365,7 @@ case "$VERB" in
       exit 1
     fi
 
-    HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+    HEAD=$(git -C "$TARGET" rev-parse HEAD 2>/dev/null || echo "")
     NOW_EPOCH=$(date +%s)
     NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -372,8 +480,12 @@ case "$VERB" in
         echo "message on its own, or running this command themselves in a terminal tab."
         echo
         echo "If you are the human: you are seeing this because you ran it through Claude"
-        echo "(the Bash tool and the ! prefix are both non-TTY). Open a terminal tab, cd to"
-        echo "this repo, and run it there."
+        echo "(the Bash tool and the ! prefix are both non-TTY). Open a terminal tab and"
+        echo "run this, which needs no cd and is copy-pasteable as-is:"
+        echo
+        printf '  %s override --worktree %s\n' \
+          "$(printf '%q' "$QP_SELF")" \
+          "$(printf '%q' "$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || echo "$TARGET")")" >&2
       } >&2
       exit 1
     fi
@@ -410,7 +522,7 @@ case "$VERB" in
     [ -n "$APPROVER" ] && APPROVER="$APPROVER (via terminal override)"
     [ -n "$APPROVER" ] || APPROVER="human (via terminal override)"
 
-    HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+    HEAD=$(git -C "$TARGET" rev-parse HEAD 2>/dev/null || echo "")
     NOW_EPOCH=$(date +%s)
     NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     NONCE=$( { head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n'; } || echo "" )
@@ -459,7 +571,7 @@ case "$VERB" in
     # fixes that, whether the minting hook is alive, and whether the copy of the
     # plugin that the runtime loads matches this source tree.
     echo "qa-plan doctor"
-    echo "  repo:    $(git rev-parse --show-toplevel 2>/dev/null || echo '?')"
+    echo "  repo:    $(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || echo '?')"
     echo "  branch:  ${BRANCH:-<detached>}"
     echo "  git dir: $GITDIR"
     echo
@@ -479,6 +591,16 @@ case "$VERB" in
       echo "  token:   present [$(qpt_token_valid "$(cat "$TOKEN" 2>/dev/null || echo "")" "$BRANCH" "$(date +%s)")]"            "source=$(jq -r '.source // "<none>"' "$TOKEN" 2>/dev/null || echo '?')"
     else
       echo "  token:   none"
+      # doctor is THE diagnostic verb, so it gets the same stray scan `write`
+      # does. Reporting a bare "none" here while `write` can name the holder
+      # would make the two commands disagree about the same state, and doctor
+      # is the one someone runs precisely when they are confused.
+      _DSTRAY=$(qp_stray_token_report "$TARGET" "$GITDIR") || _DSTRAY=""
+      if [ -n "$_DSTRAY" ]; then
+        echo "           but a token exists elsewhere:"
+        printf '%s\n' "$_DSTRAY" | sed 's/^  - /           - /'
+        echo "           (each line above carries the exact command to run)"
+      fi
     fi
 
     _SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
