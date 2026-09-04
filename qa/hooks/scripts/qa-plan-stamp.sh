@@ -583,6 +583,16 @@ case "$VERB" in
       echo "  token:   present [$(qpt_token_valid "$(cat "$TOKEN" 2>/dev/null || echo "")" "$BRANCH" "$(date +%s)")]"            "source=$(jq -r '.source // "<none>"' "$TOKEN" 2>/dev/null || echo '?')"
     else
       echo "  token:   none"
+      # doctor is THE diagnostic verb, so it gets the same stray scan `write`
+      # does. Reporting a bare "none" here while `write` can name the holder
+      # would make the two commands disagree about the same state, and doctor
+      # is the one someone runs precisely when they are confused.
+      _DSTRAY=$(qp_stray_token_report "$TARGET" "$GITDIR") || _DSTRAY=""
+      if [ -n "$_DSTRAY" ]; then
+        echo "           but a token exists elsewhere:"
+        printf '%s\n' "$_DSTRAY" | sed 's/^  - /           - /'
+        echo "           spend it with: --worktree <that worktree>"
+      fi
     fi
 
     _SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
