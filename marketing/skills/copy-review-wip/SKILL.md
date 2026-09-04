@@ -1,6 +1,7 @@
 ---
 name: copy-review-wip
-description: Review and polish EXISTING marketing copy in one pass. The single "review" front door for Marketing Mindy: it runs the copy-editing pass and the stop-slop AI-tell pass over copy you already have, and hands back the polished result with a quality score. Use when the user says "review this copy", "polish this", "clean up this copy", "edit and de-slop this", "is this copy any good", "tighten this draft", "give this a once-over", or "/marketing:copy-review-wip". For writing NEW copy from a brief, use copywriting instead (this skill reviews existing text, it does not generate). WORK IN PROGRESS (-wip): today it wires in copy-editing + stop-slop; more review passes may be added as it hardens.
+description: >-
+  Review and polish EXISTING marketing copy in one pass. The single "review" front door for Marketing Mindy: it runs the copy-editing pass and the stop-slop AI-tell pass over copy you already have, and hands back the polished result with a quality score. Use when the user says "review this copy", "polish this", "clean up this copy", "edit and de-slop this", "is this copy any good", "tighten this draft", "give this a once-over", or "/marketing:copy-review-wip". For writing NEW copy from a brief, use copywriting instead (this skill reviews existing text, it does not generate). WORK IN PROGRESS (-wip): today it wires in copy-editing + stop-slop; more review passes may be added as it hardens.
 metadata:
   version: 0.1.0
   status: wip
