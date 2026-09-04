@@ -36,6 +36,13 @@ render is swallowed, the human opens the link from the modal. The URL in the
 question is therefore load-bearing: dropping it means restoring the two-turn
 split, not slimming the modal.
 
+Two hardenings came out of reviewing this change itself. The artifact is now
+the copy the human is pointed at, while the digest still hashes the PR body, so
+Step 4b states that the two must carry the same rows and that the page is
+refreshed BEFORE the digest is recomputed. And a publish that FAILS (as opposed
+to a tool that does not exist) is now an explicit blocked run rather than an
+undefined state that could fall through to a modal with no URL.
+
 Verified against the mint path rather than assumed: `.tool_response.answers` is
 keyed by the question's full text byte for byte, digest marker included, so the
 extra URL line does not disturb the PostToolUse token minter
