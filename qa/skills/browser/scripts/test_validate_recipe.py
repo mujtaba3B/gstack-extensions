@@ -1,7 +1,11 @@
 """Unit tests for the qa:browser recipe validator.
 
 Run a single file (machine-resource rule: never the whole suite):
-    python3 -m pytest qa/skills/browser/scripts/test_validate_recipe.py -q
+    pytest qa/skills/browser/scripts/test_validate_recipe.py -q
+
+Use the `pytest` entrypoint, not `python3 -m pytest`. `python3` can resolve to an
+interpreter that has no pytest installed even while the `pytest` binary is on
+PATH, in which case the module form fails with "No module named pytest".
 """
 import importlib.util
 import pathlib

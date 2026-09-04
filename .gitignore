@@ -26,6 +26,15 @@
 # Agent-doc, local-only (untracked 2026-06-21)
 PLAYBOOK.md
 
+# Python bytecode from running a skill's bundled tests. `pytest <file>` is a
+# documented step in qa:browser (the validator's unit tests), and running it
+# leaves __pycache__ next to the script. `.pytest_cache/` writes its own
+# self-ignoring .gitignore, but __pycache__ does not, so it would otherwise show
+# up as untracked noise in every status after anyone follows the documented
+# command. Added with the change that documents that command.
+__pycache__/
+*.py[cod]
+
 # Repo-local gstack state stays untracked EXCEPT the QA recipe, which the
 # qa:browser recipe schema requires committed (see
 # qa/skills/browser/references/recipe-schema.md). The leading `!.gstack/`
