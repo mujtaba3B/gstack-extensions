@@ -1,8 +1,8 @@
 ---
 name: qa-plan
-version: 2.4.0
+version: 2.5.0
 description: >-
-  QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Also publishes a companion Claude artifact rendering the same plan (the PR body stays the machine source of truth the gates read). It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
+  QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Always publishes a companion Claude artifact rendering the same plan, on every run and at every change size, and links it from the approval modal (the PR body stays the machine source of truth the gates read). It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
 allowed-tools:
   - Bash
   - Read
@@ -121,7 +121,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 ```
 
 Format rules the gates depend on:
-- The **`📄 Plan view:` line** carries the companion artifact URL (Step 4b). It is a plain link; leave it out on the first pass if the artifact is not published yet, then add it once you have the URL. The PR-body section, not the artifact, is the source of truth.
+- The **`📄 Plan view:` line** carries the companion artifact URL (Step 4b). It is a plain link. It may be absent only on the first pass, before Step 4b has run; by the time Step 6 presents the plan it is always populated, because Step 4b is required and Step 6 needs the URL. The PR-body section, not the artifact, is the source of truth.
 - The **QA driver** line names who is on the hook to run the Dev QA, recommended by /qa:plan and approved by the human (roster: the qa plugin's `qa-roster.json`). It carries the driver's handle for the @-mention; for the agent (`claude`) write "the building agent (this session)" with no handle.
 - The **`Tester` column uses simple names**: `claude`, `mutwo`, `mujtaba` (or `muthree` / `mufour`), the roster `id`s. No handles or verbose phrasing in the cell: the handle lives once in the QA-driver line above.
 - **`Check` and `Expect` are one line each**; the **`Notes` column** holds any longer detail (setup, gotchas, exact URLs, data). Notes may be blank.
@@ -138,9 +138,13 @@ Mechanics:
 - No PR yet: print the block and tell the user `/ship` will fold it into the PR body, or they can paste it.
 - Keep posture lines free of `<` and `|` on any line that could be mistaken for a bare keyword: the strict CI qa-gate rejects the menu form. The real posture keyword is emitted at done-time, not here.
 
-## Step 4b: Publish the companion artifact (pointable plan view)
+## Step 4b: Publish the companion artifact (REQUIRED)
 
-Publish a rendered, always-linked view of the same plan as a Claude **artifact**, so there is one pretty page to point at. The artifact is a **companion**, not the source of truth: the gates only ever read the PR-body `## QA` section (Step 4). The artifact can carry the full mechanics that would bloat the table.
+Publish a rendered view of the same plan as a Claude **artifact**. This runs on **every** `/qa:plan`, with **no size threshold**: a one-line docs change gets one exactly as a migration does. Step 6 cannot fire its approval modal without the URL this step returns, so treat it as a precondition of the gate rather than a nicety.
+
+**Two things are true at once, and collapsing them into one is what causes the skip.** The PR-body `## QA` section is the *machine* source of truth: it is the only thing the merge gates read, and the artifact gates nothing. The artifact is the *human* source of truth at approval time: it is the one rendered copy of the plan guaranteed to be reachable when the human clicks Approve, because chat prose sitting before an in-turn tool call can still be dropped by the terminal (Step 6 carries the evidence). "Not what the gates read" therefore does NOT license "skippable". The artifact can also carry the full mechanics that would bloat the table.
+
+**Do not re-derive proportionality here.** On 2026-09-04 an agent holding a working `Artifact` tool skipped this step on a 7-line docs change, reasoning that a rendered page was disproportionate and that the PR body was authoritative regardless. Both premises were true and the conclusion was still wrong. This is not a one-off: the QA-plan approval modals recorded in this machine's transcripts contain at least five separate answers that are the human asking where the artifact went ("Where is the artifact for the QA plan?", "where's the artifact link?", "why do you keep forgetting to do this?", "Aren't you supposed to show me the QA plan in the browser?"). Each of those is a plan the human would not approve until the page existed, so skipping the step does not save the work, it just spends a round trip first.
 
 1. **Build the HTML.** Copy `references/artifact-template.html` (this skill's base directory) to the session scratchpad and swap the content between the `FILL:` markers: the **title**, the story-first **context blocks** (STORY / SOLUTION / PROOF, below), the **Development** ELI5 + rows, the **Production** ELI5 + rows, the **Production artifacts**, and the **Definition of Done**. The artifact is the leaner companion view: it deliberately drops the QA-driver line, the `Standard (all green)` line, and the QA-posture line (those live in the PR body, the source of truth).
 
@@ -161,29 +165,35 @@ Publish a rendered, always-linked view of the same plan as a Claude **artifact**
 
 3. **Tell the user it is private.** Artifacts are private by default. If a reviewer or teammate needs to open the plan view, the user shares it from the artifact page's share menu; the PR body link works for anyone who can see the PR regardless. Note that the artifact is a **snapshot at plan-authoring time** and deliberately carries no checkboxes; the live checkbox state is in the PR body's `## QA` section. Re-running `/qa:plan` refreshes the artifact.
 
-If the `Artifact` tool is unavailable (non-interactive / headless run), skip this step, keep the PR-body section (the source of truth) intact, and note that the companion artifact was not published.
+The ONE case that skips this step is a genuinely headless run where the `Artifact` tool **does not exist**. That same run cannot fire `AskUserQuestion` either, so Step 6's approval path is moot in the same breath and no stamp can be written: keep the PR-body section intact, say plainly that the artifact was not published and the plan is therefore **unapproved**, and stop there. "The tool is available but this change feels too small to deserve a page" is NOT this case, and neither is "the PR body already has the plan".
 
 ## Step 5: State what the plan enables
 
 Tell the user, in one tight readout:
 - The **Dev QA `✓` checkboxes** gate the merge: while any is unchecked, the merge-clearance QA dimension blocks (it reads both the Dev QA table checkboxes and the Definition-of-Done bullets). Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
 - The **Prod QA rows** are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
-- The **`📄 Plan view:` link** is the pointable companion artifact (Step 4b); point them at it.
+- The **`📄 Plan view:` link** is the companion artifact (Step 4b), published on every run; point them at it. It is also the link carried in the approval modal, so it is the copy of the plan the human is guaranteed to be able to open.
 - Point at the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
 The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
 
-1. **Render the plan in chat, THEN ask.** Present the plan in two parts, in this order:
+1. **Render the plan and ask in ONE turn.** Do not end the turn between them, and do not wait for the human to say anything first.
 
-   1. **Render the full plan as a turn-final chat message.** Print the entire `## QA` section (the `📄 Plan view:` link, the `Standard (all green)` line, both the **Dev QA and Prod QA tables**, the Production-artifacts block, Definition of Done, and the QA posture line) as a normal message the human reads full-width. This is the plan; do not compress it into a modal preview. Make it the last thing in the turn so it is on screen when the modal opens.
-   2. **Then fire one slim `AskUserQuestion`** (header `"QA plan"`, single-select). Do NOT cram the plan into an option preview; a one-line option description is all each option needs. Options:
+   1. **Print the full plan as a chat message.** The entire `## QA` section (the `📄 Plan view:` link, the `Standard (all green)` line, both the **Dev QA and Prod QA tables**, the Production-artifacts block, Definition of Done, and the QA posture line), full-width. This is the plan; do not compress it into a modal preview.
+   2. **Immediately fire one slim `AskUserQuestion` in the SAME turn** (header `"QA plan"`, single-select). Do NOT cram the plan into an option preview; a one-line option description is all each option needs. Options:
       - **Approve** (recommended): the plan and driver above are right, build against it.
       - **Rework it**: capture the changes (to the plan and/or the QA driver), edit the tables / driver line (back to Step 3 / Step 4), refresh the companion artifact in place (Step 4b), re-render the plan in chat, re-ask. Do NOT stamp.
       - **Skip the gate**: the human chooses to build without an approved plan. Do NOT stamp; note that a `spike/` branch bypasses the build gate and the deploy gate still requires QA to pass.
 
    The canonical plan lives in the PR body (Step 4); the chat render is the approval-time copy the human reads. If the human refines the driver, update the `**QA driver:**` line in the PR body to the chosen roster entity + handle before stamping.
+
+   **Why one turn, when this used to be two.** The old rule made the plan render turn-final and pushed the modal into the NEXT turn. A turn ends by handing control back, so the modal could not open until the human sent a message: they got a plan, no picker, and had to type something to be asked for the approval the skill had just told them it wanted. That is the bug; do not reintroduce it.
+
+   The two-turn rule was not superstition, and its cause is still live. The terminal drops assistant text that sits mid-turn before an in-turn tool call (`anthropics/claude-code` #67470 and #75182, both still OPEN, re-checked against CLI 2.1.260 on 2026-09-04; reproduced on `claude-fable-5`, not reproduced on Opus / Sonnet). So the chat render above CAN be swallowed, and on an affected model the human would be approving a plan they never saw. What changed is that the guarantee no longer rides on that render: **Step 4b is now mandatory**, so a durable rendered copy of the plan already exists at a URL before the modal opens, and that URL travels in the question text, which is modal content and always displays. Worst case the prose is swallowed and the human opens the link from the modal itself.
+
+   That makes the URL in the question **load-bearing, not decoration**. If you ever find yourself dropping it to slim the modal, you are removing the only thing standing in for the two-turn split, and the correct move is to restore the split instead.
 
 2. **Embed the plan digest in the question.** Before firing the modal, compute the canonical digest of the `## QA` section and put the marker in the question text. Never hand-roll the hash: the stamp script computes it through the same functions the gates use, which is the only way the two can agree.
 
@@ -192,7 +202,15 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
    DIGEST=$("$STAMP" digest <path-to-the-PR-body-or-plan-file>)   # or pipe the body on stdin
    ```
 
-   Then the question text ends with `<qa-plan-digest:$DIGEST>`. It DOES render in the modal, so put it last, on its own, and treat it as a visible fingerprint of the plan being approved rather than hidden metadata. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
+   The question text carries both the plan link and the digest, in this order, each on its own line:
+
+   ```text
+   Approve this QA plan?
+   📄 Full plan: <artifact-url-from-step-4b>
+   <qa-plan-digest:$DIGEST>
+   ```
+
+   The **artifact URL is required** and is what makes the one-turn gate safe (see above). The **digest marker goes last, on its own line**. It DOES render in the modal, so treat it as a visible fingerprint of the plan being approved rather than hidden metadata. Extra lines above the marker are safe: `qpt_digest_from_question` matches per line, and the minter looks the answer up by the question's full text, newlines included. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
 
    An earlier version told you to run `shasum` over your own slice of the section. That produced a digest of RAW text while the gate hashed NORMALIZED text, so one stray trailing newline created a stamp whose digest could never match and a `gh pr create` that blocked forever with no way to satisfy it. Use the `digest` verb.
 
