@@ -64,7 +64,9 @@ set -u
 # the transcript AND loses the line. That bug was fixed in glog() and left behind
 # in these two.
 early_log() {
-  local d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  # Nested default: with BOTH CLAUDE_CONFIG_DIR and HOME unset, `${X:-$HOME/...}`
+  # aborts the whole hook under `set -u`, turning a log call into a crash.
+  local d="${CLAUDE_CONFIG_DIR:-${HOME:-/tmp}/.claude}"
   mkdir -p "$d" 2>/dev/null
   { printf '%s bash-build-gate %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$d/qa-plan-gate.log"; } 2>/dev/null || true
 }
@@ -180,8 +182,15 @@ glog() { { printf '%s bash-build-gate %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*
 # the logging that way and reintroduced the exact blind spot this script removes
 # elsewhere: a governed worktree parked outside ~/dev (a worktree of the ~/dev
 # repo itself has to live outside it) would have been silently ungated.
-if ! GITINFO=$(git -C "$WORKDIR" rev-parse --show-toplevel --absolute-git-dir --abbrev-ref HEAD 2>&1); then
-  case "$GITINFO" in
+# stderr is DISCARDED on the success path and re-read only on failure. An earlier
+# revision used `2>&1` to classify the error, which contaminated the success path:
+# git warns on stdout's neighbour for plenty of benign reasons (a fsmonitor
+# notice, an advice.* hint), and any such line would shift this three-line
+# protocol so TOP, GITDIR or BRANCH silently held the wrong value. A second spawn
+# on the rare failure path is far cheaper than a wrong repo on the common one.
+if ! GITINFO=$(git -C "$WORKDIR" rev-parse --show-toplevel --absolute-git-dir --abbrev-ref HEAD 2>/dev/null); then
+  _gerr=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>&1 >/dev/null)
+  case "$_gerr" in
     *"dubious ownership"*|*"detected dubious"*)
       glog "FAIL-OPEN(safe-directory-refusal) workdir=$WORKDIR" ;;
     *)
@@ -224,8 +233,17 @@ qpg_is_spike "$BRANCH" >/dev/null && exit 0
 # rather than hashed because no hasher is guaranteed here. Two ids colliding
 # after sanitising degrade to sharing one snapshot, which is the old behavior:
 # noisier, never unsafe.
+# Sanitised AND disambiguated. Truncation alone lets two ids sharing a 64-char
+# prefix share one snapshot, and sanitising alone maps `a/b` and `a_b` together;
+# either recreates the cross-session inversion this keying exists to prevent, so
+# "noisier, never unsafe" would have been wrong. A cksum of the RAW id is
+# appended whenever sanitising or truncating actually changed something, which
+# for an ordinary UUID session id is never, so the common path costs no spawn.
 SESSION_KEY=$(printf '%s' "${SESSION:-nosession}" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-64)
 [ -n "$SESSION_KEY" ] || SESSION_KEY="nosession"
+if [ -n "$SESSION" ] && [ "$SESSION_KEY" != "$SESSION" ]; then
+  SESSION_KEY="${SESSION_KEY}-$(printf '%s' "$SESSION" | cksum | tr -cd '0-9')"
+fi
 # A payload with no session_id collapses every session onto one key, which
 # silently restores the cross-session inversion this keying exists to fix. Say so
 # rather than letting a harness change reintroduce it quietly.
@@ -236,8 +254,12 @@ SNAP="$GITDIR/qa-plan-bash-snapshot-$SESSION_KEY"
 # git dir so two repos cannot collide. Read here as well as written below: a
 # fallback that is written but never read leaves BASELINE="none" on every call,
 # which is the gate silently off.
-_SNAPKEY=$(printf '%s' "$GITDIR" | tr -c 'A-Za-z0-9' '_' | cut -c1-100)
-SNAP_FALLBACK="${TMPDIR:-/tmp}/qa-plan-bash-snapshot-${_SNAPKEY}-${SESSION_KEY}"
+# The key carries a cksum of the FULL git dir, because sanitising alone collides
+# readily: `/a/repo-b/.git` and `/a/repo/b/.git` both flatten to `_a_repo_b__git`,
+# and a colliding fallback would then be read as another repo's baseline.
+_SNAPKEY=$(printf '%s' "$GITDIR" | tr -c 'A-Za-z0-9' '_' | cut -c1-80)
+_SNAPSUM=$(printf '%s' "$GITDIR" | cksum | tr -cd '0-9')
+SNAP_FALLBACK="${TMPDIR:-/tmp}/qa-plan-bash-snapshot-${_SNAPKEY}-${_SNAPSUM}-${SESSION_KEY}"
 # IF A FALLBACK EXISTS IT WINS, unconditionally. Two wrong versions preceded
 # this, both caught by the regression test rather than by reading:
 #   - "primary if readable" kept reading a FROZEN baseline, because `chmod a-w`
@@ -246,11 +268,15 @@ SNAP_FALLBACK="${TMPDIR:-/tmp}/qa-plan-bash-snapshot-${_SNAPKEY}-${SESSION_KEY}"
 #     survived the fallback entirely.
 #   - "newer wins" via `-nt` failed too: both files are written in the same
 #     second, mtime compares equal, and `-nt` is false.
-# A fallback is only ever created when a primary write FAILED, so its existence
-# is the signal, and it needs no timestamp. If the git dir later becomes writable
-# the fallback keeps being used until the 30-day sweep removes it, which costs
-# nothing but a file in TMPDIR.
-[ -r "$SNAP_FALLBACK" ] && SNAP="$SNAP_FALLBACK"
+# The condition is "the git dir cannot be written", not "a fallback file exists".
+# Existence alone let a stale or colliding fallback win even when the primary was
+# perfectly writable. `-w` is one stat and is the actual thing being asked.
+#
+# Cost of being precise: when a git dir becomes writable again the primary is
+# preferred immediately, and it is stale, so that one call can report a delta the
+# fallback had already accounted for. A single spurious interrupt during a
+# permissions recovery beats reading another repo's baseline indefinitely.
+if [ ! -w "$GITDIR" ] && [ -r "$SNAP_FALLBACK" ]; then SNAP="$SNAP_FALLBACK"; fi
 
 # ---- observe ---------------------------------------------------------------
 # -uall so a new untracked source FILE is seen individually; the default -unormal
@@ -292,6 +318,7 @@ MODE="digest"; [ -n "$DEGRADED" ] && MODE="paths"
 # `gp_warn_once` cannot help: it keys on $$ and every hook run is a new process.
 
 CURR=""
+HASH_SKIPPED=""
 if [ -n "$PATHS" ]; then
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -318,7 +345,12 @@ if [ -n "$PATHS" ]; then
       # a second genuine write to that same already-dirty file produces a
       # byte-identical line, and the delta reports nothing. Reproduced with
       # `chmod 000`: block on the first write, ALLOW on the second.
-      glog "hash-skipped path=$p branch=$BRANCH reason=unreadable-or-not-regular"
+      #
+      # ACCUMULATED, not logged here. Logging inside the loop wrote a line per
+      # unreadable path per Bash call for as long as the condition lasted, which
+      # is the unbounded growth just removed from the degrade path. Emitted once
+      # below, on the baseline or block line.
+      HASH_SKIPPED="${HASH_SKIPPED:+$HASH_SKIPPED,}$p"
     fi
     CURR="${CURR}${d} ${p}
 "
@@ -429,13 +461,17 @@ fi
 # which is the one line an operator reads as "the gate is working". It also ran
 # both find sweeps per call in that state.
 if [ "$BASELINE" = "none" ] && [ "$SNAP_OK" = 1 ]; then
-  glog "baseline-established branch=$BRANCH session=$SESSION_KEY n=$NPATHS mode=$MODE${DEGRADED:+ delta-degraded=$DEGRADED}"
+  glog "baseline-established branch=$BRANCH session=$SESSION_KEY n=$NPATHS mode=$MODE${DEGRADED:+ delta-degraded=$DEGRADED}${HASH_SKIPPED:+ hash-skipped=$HASH_SKIPPED}"
   # 30 days, not 7: a session can sit open without making a Bash call, and
   # deleting its still-valid snapshot hands it a free baseline on its next write.
   # Scoped to one directory level and to these two reserved prefixes, so it
   # cannot wander the repo or touch the approval stamp.
   find "$GITDIR" -maxdepth 1 -name 'qa-plan-bash-snapshot-*' -mtime +30 -delete 2>/dev/null
   find "$GITDIR" -maxdepth 1 -name '.qa-plan-bash-snapshot.*' -mtime +1 -delete 2>/dev/null
+  # The fallbacks live in TMPDIR, so the git-dir sweep never saw them and the
+  # comment claiming they were swept was simply wrong. Same prefixes, same depth.
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'qa-plan-bash-snapshot-*' -mtime +30 -delete 2>/dev/null
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.qa-plan-bash-snapshot.*' -mtime +1 -delete 2>/dev/null
 fi
 
 [ "$DISPOSITION" = "block" ] || exit 0
@@ -445,7 +481,7 @@ NCHANGED=$(printf '%s\n' "$DELTA" | grep -c '')
 NAMES=$(printf '%s\n' "$DELTA" | cut -d' ' -f2- | head -12 | tr '\n' ',' | sed 's/,$//; s/,/, /g')
 [ "$NCHANGED" -gt 12 ] && NAMES="$NAMES, and $((NCHANGED - 12)) more"
 
-glog "BLOCK branch=$BRANCH verdict=$VERDICT n=$NCHANGED files=$NAMES"
+glog "BLOCK branch=$BRANCH verdict=$VERDICT n=$NCHANGED files=$NAMES${HASH_SKIPPED:+ hash-skipped=$HASH_SKIPPED}"
 
 # The wording says only what the gate KNOWS. It used to assert "a Bash command
 # just modified application source", which the mechanism cannot establish, and
