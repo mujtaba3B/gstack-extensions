@@ -407,33 +407,42 @@ qpg_path_needs_plan() {
       echo "carveout"; return 1 ;;
   esac
 
-  # DATA AND BUILD ARTIFACTS. Not application source: nobody "builds" by writing a
-  # PNG or a scraped CSV, and the QA plan a gate is protecting is about behavior.
-  #
-  # This arm exists because of gate 1b, and the difference in INPUT is the whole
-  # reason. Gate 1's input is a file the agent deliberately named in an Edit; a
-  # stray artifact never appears there. Gate 1b's input is every path the working
-  # tree reports, so it sees whatever a command happened to leave behind. Without
-  # this, measured against the real ~/dev: `businesses/unbound/data-collection`
-  # has 15 dirty paths that are all scraped `.html` / `.csv`, `tooling/nanoclaw`
-  # gates on `assets/mufour.jpg`, and `python3 report.py > out.csv`,
-  # `screencapture shot.png` and `make | tee run.log` each drew a block reading
-  # "a Bash command just modified application source". That is the false-positive
-  # class that gets a gate deleted.
-  #
-  # Shared with gate 1 deliberately: one classifier is the property that stops the
-  # two halves drifting, and it is worth more than the marginal gating of an Edit
-  # to a CSV.
-  case "$base" in
-    *.csv|*.tsv|*.parquet|*.db|*.sqlite|*.sqlite3) echo "carveout"; return 1 ;;
-    *.png|*.jpg|*.jpeg|*.gif|*.svg|*.ico|*.webp|*.pdf) echo "carveout"; return 1 ;;
-    *.mp4|*.mov|*.wav|*.mp3|*.woff|*.woff2|*.ttf|*.otf) echo "carveout"; return 1 ;;
-    *.log|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.bin|*.pyc|*.class|*.o|*.a|*.so|*.dylib)
-      echo "carveout"; return 1 ;;
-    .DS_Store) echo "carveout"; return 1 ;;
-  esac
-
   echo "source"; return 0
+}
+
+# qpg_is_bulk_artifact <path>
+#   Data and build artifacts: `yes` (and return 0) for a path that a command
+#   plausibly LEFT BEHIND rather than authored as behavior.
+#
+#   DELIBERATELY NOT PART OF qpg_path_needs_plan, and the difference in INPUT is
+#   the entire reason. Gate 1's input is a file the agent deliberately NAMED in an
+#   Edit or Write; if someone edits an `.svg` icon, a bundled `.sqlite` catalog,
+#   or a shipped `.png`, that is real product work and gate 1 should still gate
+#   it. Gate 1b's input is every path the working tree reports, so it sees
+#   whatever a command happened to drop on the floor.
+#
+#   Putting this list in the shared classifier was a real regression: it silently
+#   stopped gate 1 gating deliberate edits to assets that ARE source for games,
+#   design tools, content products and anything shipping seed data. So only the
+#   observation gate consults it.
+#
+#   What it costs on the gate 1b side, without it, measured against the real
+#   ~/dev: one repo had 15 dirty paths that were all scraped `.html`/`.csv`,
+#   another gated on `assets/mufour.jpg`, and `python3 report.py > out.csv`,
+#   `screencapture shot.png` and `make | tee run.log` each drew a block claiming
+#   application source had changed. That is the false-positive class that gets a
+#   gate deleted, which is why the suppression exists at all.
+qpg_is_bulk_artifact() {
+  local base="${1##*/}"
+  case "$base" in
+    *.csv|*.tsv|*.parquet|*.db|*.sqlite|*.sqlite3) echo "yes"; return 0 ;;
+    *.png|*.jpg|*.jpeg|*.gif|*.svg|*.ico|*.webp|*.pdf) echo "yes"; return 0 ;;
+    *.mp4|*.mov|*.wav|*.mp3|*.woff|*.woff2|*.ttf|*.otf) echo "yes"; return 0 ;;
+    *.log|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.bin|*.pyc|*.class|*.o|*.a|*.so|*.dylib)
+      echo "yes"; return 0 ;;
+    .DS_Store) echo "yes"; return 0 ;;
+  esac
+  echo "no"; return 1
 }
 
 # qpg_is_bookkeeping <newline-separated-paths>
@@ -713,8 +722,13 @@ qpg_status_source_paths() {
     esac
     if [ -n "$orig" ]; then
       orig=$(qpg_unquote_path "$orig")
-      case "$orig" in */) ;; *)
-        qpg_path_needs_plan "$orig" >/dev/null && printf '%s\n' "$orig" ;;
+      # NOT `... && continue`: continuing here would skip the DESTINATION too,
+      # which is the half that always matters.
+      case "$orig" in
+        */) ;;
+        *) if [ "$(qpg_is_bulk_artifact "$orig")" = "no" ]; then
+             qpg_path_needs_plan "$orig" >/dev/null && printf '%s\n' "$orig"
+           fi ;;
       esac
     fi
     path=$(qpg_unquote_path "$path")
@@ -732,6 +746,10 @@ qpg_status_source_paths() {
     # The next Bash call in the main checkout then blocked on a directory.
     # Verified against real `status --porcelain -uall` output, not reasoned about.
     case "$path" in */) continue ;; esac
+    # Bulk artifacts are suppressed HERE, on the observation path only, never in
+    # the shared classifier. See qpg_is_bulk_artifact for why that distinction is
+    # load-bearing: gate 1 must keep gating a deliberate edit to a shipped asset.
+    [ "$(qpg_is_bulk_artifact "$path")" = "yes" ] && continue
     qpg_path_needs_plan "$path" >/dev/null && printf '%s\n' "$path"
   done <<QPG_STATUS_EOF
 $1
@@ -757,10 +775,16 @@ QPG_STATUS_EOF
 #   at ~5s with 50 dirty files and ~14s with 200. `grep -vxF -f` does the same
 #   job in one process. An empty <prev> is a pattern file that matches nothing,
 #   so -v correctly emits all of <curr>, which is the baseline case.
+#   RETURN CODE IS MEANINGFUL: 0 for a clean comparison, 2 when grep itself
+#   FAILED. Swallowing that produced an empty delta indistinguishable from
+#   "nothing changed", which is a fail-open the caller could not see and so could
+#   not log. grep exits 0 with matches, 1 with none, and >1 only on a real error.
 qpg_snapshot_delta() {
-  local prev="$1" curr="$2"
+  local prev="$1" curr="$2" st
   [ -n "$curr" ] || return 0
   printf '%s\n' "$curr" | grep -vxF -f <(printf '%s\n' "$prev") 2>/dev/null
+  st=${PIPESTATUS[1]}
+  [ "${st:-0}" -gt 1 ] && return 2
   return 0
 }
 

@@ -55,8 +55,27 @@
 
 set -u
 
+# Logging BEFORE the libs are sourced. The paths that fail earliest (no jq, a
+# half-populated plugin cache, an unparseable payload) are exactly the ones worth
+# recording, and they cannot use qpt_gate_log because it lives in a lib they have
+# not reached. Note the shapes: the directory is created first, and the append is
+# GROUPED before `2>/dev/null`. Ungrouped, the redirection order opens the file
+# while stderr is still real, so a missing directory leaks a raw bash error into
+# the transcript AND loses the line. That bug was fixed in glog() and left behind
+# in these two.
+early_log() {
+  local d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  mkdir -p "$d" 2>/dev/null
+  { printf '%s bash-build-gate %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$d/qa-plan-gate.log"; } 2>/dev/null || true
+}
+
 PAYLOAD=$(cat)
-command -v jq >/dev/null 2>&1 || exit 0
+if ! command -v jq >/dev/null 2>&1; then
+  # The header promises no dependency turns into a silent allow. jq was the one
+  # exception, and a raw printf needs no library, so there was no reason for it.
+  early_log "FAIL-OPEN(jq-missing)"
+  exit 0
+fi
 
 # ONE jq call for the scalars, and the command's FIRST LINE only. Four separate
 # jq spawns plus three git spawns was most of this hook's per-call cost, and it
@@ -69,7 +88,10 @@ command -v jq >/dev/null 2>&1 || exit 0
   IFS= read -r CMDLINE1
 } < <(printf '%s' "$PAYLOAD" | jq -r '
   [ (.hook_event_name // ""), (.tool_name // ""), (.cwd // ""), (.session_id // ""),
-    ((.tool_input.command // "") | split("\n")[0] // "") ] | .[]')
+    ((.tool_input.command // "") | split("\n")[0] // "") ] | .[]' 2>/dev/null)
+# stderr suppressed deliberately: on a malformed payload jq would otherwise print
+# a raw parse error into the agent's transcript on every Bash call. The failure
+# is not swallowed, it is detected below and logged.
 
 # PostToolUseFailure is registered too, and that is load-bearing rather than
 # defensive. PostToolUse fires only for a SUCCESSFUL tool call, so
@@ -77,6 +99,16 @@ command -v jq >/dev/null 2>&1 || exit 0
 # hook never ran. Verified on CLI 2.1.261 by registering a probe on both events:
 # a Bash call exiting non-zero fires PostToolUseFailure and not PostToolUse.
 case "$EVENT" in PostToolUse|PostToolUseFailure|"") ;; *) exit 0 ;; esac
+
+# A TOOL that came back empty means the parse produced nothing, not that some
+# other tool ran: jq failed, or the payload was malformed. `read` fills absent
+# fields with empty strings, so this exits quietly rather than crashing under
+# `set -u`, and that quiet exit is exactly the unlogged fail-open worth catching.
+# Logged before the libs are sourced, so without the helper.
+if [ -z "$TOOL" ]; then
+  early_log "FAIL-OPEN(payload-parse) event=${EVENT:-none}"
+  exit 0
+fi
 [ "$TOOL" = "Bash" ] || exit 0
 
 # Resolve the repo the command targeted, honoring a leading `cd <dir>`.
@@ -93,7 +125,14 @@ case "$EVENT" in PostToolUse|PostToolUseFailure|"") ;; *) exit 0 ;; esac
 # that reads it, which stops at the first newline regardless. Mutation-tested:
 # removing either one alone does not change behavior, so do not read a green
 # suite as licence to delete the surviving one. Removing BOTH reopens the hole.
-WORKDIR=$(printf '%s' "$CMDLINE1" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p')
+# QUOTED OPERANDS TOO. The bare-token pattern captured `"/path/repo` from
+# `cd "/path/repo B" && ...`, so the directory test failed and the gate silently
+# fell back to the session cwd, inspecting the wrong repo. One sed with an
+# alternation rather than three passes, because this runs on every Bash call:
+# exactly one of the three groups can match, so concatenating them yields the
+# operand. The command text is matched, never evaluated.
+_SQ=\'
+WORKDIR=$(printf '%s' "$CMDLINE1" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"([^\"]*)\"|${_SQ}([^${_SQ}]*)${_SQ}|([^[:space:];&|]+)).*/\2\3\4/p")
 case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
 # A relative `cd` resolves against the SESSION cwd, not this hook process's cwd.
 case "$WORKDIR" in
@@ -110,10 +149,8 @@ GPLIB="$LIBDIR/gate-policy-lib.sh"
 { [ -f "$LIB" ] && [ -f "$TLIB" ] && [ -f "$GPLIB" ]; } || {
   # A half-populated plugin cache version dir is an INSTALL error, not a routine
   # not-applicable, and this repo's own memory flags the cache as the thing that
-  # actually executes. Log it without the library that is missing.
-  printf '%s bash-build-gate FAIL-OPEN(libs-missing) dir=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LIBDIR" \
-    >> "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/qa-plan-gate.log" 2>/dev/null
+  # actually executes.
+  early_log "FAIL-OPEN(libs-missing) dir=$LIBDIR"
   exit 0
 }
 # shellcheck source=/dev/null
@@ -133,7 +170,25 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null
 glog() { { printf '%s bash-build-gate %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG"; } 2>/dev/null || true; }
 
 # ONE rev-parse for all three values instead of three spawns.
-GITINFO=$(git -C "$WORKDIR" rev-parse --show-toplevel --absolute-git-dir --abbrev-ref HEAD 2>/dev/null) || exit 0
+# stderr is CAPTURED rather than discarded, so two very different causes can be
+# told apart with no temp file and no second spawn. "not a git repository" is
+# routine and must stay quiet, or every Bash call outside a repo writes a line.
+# A missing `git`, or a `safe.directory` refusal, is a TOTAL and PERSISTENT loss
+# of gating and must never be invisible.
+#
+# Deliberately NOT gated on a `$HOME/dev` path test. An earlier revision filtered
+# the logging that way and reintroduced the exact blind spot this script removes
+# elsewhere: a governed worktree parked outside ~/dev (a worktree of the ~/dev
+# repo itself has to live outside it) would have been silently ungated.
+if ! GITINFO=$(git -C "$WORKDIR" rev-parse --show-toplevel --absolute-git-dir --abbrev-ref HEAD 2>&1); then
+  case "$GITINFO" in
+    *"dubious ownership"*|*"detected dubious"*)
+      glog "FAIL-OPEN(safe-directory-refusal) workdir=$WORKDIR" ;;
+    *)
+      command -v git >/dev/null 2>&1 || glog "FAIL-OPEN(git-missing) workdir=$WORKDIR" ;;
+  esac
+  exit 0
+fi
 { IFS= read -r TOP; IFS= read -r GITDIR; IFS= read -r BRANCH; } <<GITEOF
 $GITINFO
 GITEOF
@@ -142,8 +197,12 @@ GITEOF
 
 STAMPFILE="$GITDIR/qa-plan-approved"
 # An existing-but-unreadable stamp collapses to "" and is then reported as
-# "no stamp exists", whose remedy (run /qa:plan) can never clear it. Say so.
+# "no stamp exists", whose remedy (approve a plan) can never clear it: the file
+# is already there. Logging it was not enough, because the person who needs to
+# know is reading the BLOCK, so it is carried into the reason as well.
+STAMP_UNREADABLE=0
 if [ -e "$STAMPFILE" ] && [ ! -r "$STAMPFILE" ]; then
+  STAMP_UNREADABLE=1
   glog "stamp-unreadable path=$STAMPFILE branch=$BRANCH"
 fi
 STAMP=$(cat "$STAMPFILE" 2>/dev/null || echo "")
@@ -160,9 +219,38 @@ qpg_is_spike "$BRANCH" >/dev/null && exit 0
 # Keyed by the per-worktree git dir AND the session. See the header: sharing one
 # file across sessions made the gate block the wrong session and miss the right
 # one. Sanitized because the id is payload-supplied.
-SESSION_KEY=$(printf '%s' "${SESSION:-nosession}" | tr -c 'A-Za-z0-9_.-' '_')
+# BOUNDED. The id is payload-supplied, and an overlong one would exceed NAME_MAX,
+# making every snapshot write fail, which is the block-storm condition. Truncated
+# rather than hashed because no hasher is guaranteed here. Two ids colliding
+# after sanitising degrade to sharing one snapshot, which is the old behavior:
+# noisier, never unsafe.
+SESSION_KEY=$(printf '%s' "${SESSION:-nosession}" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-64)
 [ -n "$SESSION_KEY" ] || SESSION_KEY="nosession"
+# A payload with no session_id collapses every session onto one key, which
+# silently restores the cross-session inversion this keying exists to fix. Say so
+# rather than letting a harness change reintroduce it quietly.
+[ -n "$SESSION" ] || glog "no-session-id branch=$BRANCH (snapshot shared across sessions)"
+
 SNAP="$GITDIR/qa-plan-bash-snapshot-$SESSION_KEY"
+# Fallback location, used only when the git dir cannot be written. Keyed by the
+# git dir so two repos cannot collide. Read here as well as written below: a
+# fallback that is written but never read leaves BASELINE="none" on every call,
+# which is the gate silently off.
+_SNAPKEY=$(printf '%s' "$GITDIR" | tr -c 'A-Za-z0-9' '_' | cut -c1-100)
+SNAP_FALLBACK="${TMPDIR:-/tmp}/qa-plan-bash-snapshot-${_SNAPKEY}-${SESSION_KEY}"
+# IF A FALLBACK EXISTS IT WINS, unconditionally. Two wrong versions preceded
+# this, both caught by the regression test rather than by reading:
+#   - "primary if readable" kept reading a FROZEN baseline, because `chmod a-w`
+#     on the git dir leaves the old snapshot perfectly readable while every new
+#     write goes to the fallback. The same delta replayed forever, so the storm
+#     survived the fallback entirely.
+#   - "newer wins" via `-nt` failed too: both files are written in the same
+#     second, mtime compares equal, and `-nt` is false.
+# A fallback is only ever created when a primary write FAILED, so its existence
+# is the signal, and it needs no timestamp. If the git dir later becomes writable
+# the fallback keeps being used until the 30-day sweep removes it, which costs
+# nothing but a file in TMPDIR.
+[ -r "$SNAP_FALLBACK" ] && SNAP="$SNAP_FALLBACK"
 
 # ---- observe ---------------------------------------------------------------
 # -uall so a new untracked source FILE is seen individually; the default -unormal
@@ -197,7 +285,11 @@ DEGRADED=""
 # fired a block naming 200 files on a bare `ls`. A mode change is treated as "no
 # baseline" below, which re-baselines quietly instead.
 MODE="digest"; [ -n "$DEGRADED" ] && MODE="paths"
-[ -n "$DEGRADED" ] && glog "delta-degraded($DEGRADED) branch=$BRANCH"
+# NOT logged here. Written unconditionally it emitted one line per Bash call for
+# as long as the repo stayed above the cap, growing an unrotated log at ~100x the
+# rate of the Edit gate. It is emitted below instead, on the TRANSITION and when a
+# baseline is established, which is once per state change rather than per call.
+# `gp_warn_once` cannot help: it keys on $$ and every hook run is a new process.
 
 CURR=""
 if [ -n "$PATHS" ]; then
@@ -219,6 +311,14 @@ if [ -n "$PATHS" ]; then
         d="-"
         glog "hash-failed path=$p branch=$BRANCH"
       fi
+    elif [ -z "$DEGRADED" ]; then
+      # NOT readable, or not a regular file (a broken symlink, a fifo, a file
+      # inside a directory a build step chmod'd). This arm was silent, and its
+      # silence defeats the whole point of digests: the entry records `- <path>`,
+      # a second genuine write to that same already-dirty file produces a
+      # byte-identical line, and the delta reports nothing. Reproduced with
+      # `chmod 000`: block on the first write, ALLOW on the second.
+      glog "hash-skipped path=$p branch=$BRANCH reason=unreadable-or-not-regular"
     fi
     CURR="${CURR}${d} ${p}
 "
@@ -232,14 +332,36 @@ CURR=${CURR%$'\n'}
 HEADER="#branch $BRANCH mode=$MODE"
 BASELINE="none"
 PREV=""
+CMP_CURR="$CURR"
 if [ -r "$SNAP" ]; then
-  if [ "$(head -1 "$SNAP" 2>/dev/null)" = "$HEADER" ]; then
+  _hdr=$(head -1 "$SNAP" 2>/dev/null)
+  _prev_branch=${_hdr#\#branch }; _prev_branch=${_prev_branch%% mode=*}
+  _prev_mode=${_hdr##* mode=}
+  if [ "$_prev_branch" = "$BRANCH" ]; then
     BASELINE="have"
     PREV=$(tail -n +2 "$SNAP" 2>/dev/null)
+    # A MODE CHANGE MUST NOT DISCARD THE BASELINE. Treating it as "no baseline"
+    # re-baselined quietly, which meant the very write that crossed the 200-path
+    # threshold (or the call where a hasher went missing) was itself allowed. The
+    # earlier code blocked there, noisily and wrongly; discarding the baseline
+    # swapped a false positive for a false negative, which is the worse trade in
+    # a gate. Instead, normalize BOTH sides to path-only and keep comparing: a
+    # newly dirty path is still a delta, and only content-change detection is
+    # lost for that one call.
+    if [ "$_prev_mode" != "$MODE" ]; then
+      PREV=$(printf '%s\n' "$PREV" | sed -E 's/^[^ ]+ /- /')
+      CMP_CURR=$(printf '%s\n' "$CURR" | sed -E 's/^[^ ]+ /- /')
+      glog "mode-transition from=$_prev_mode to=$MODE branch=$BRANCH${DEGRADED:+ degraded=$DEGRADED} (comparing on paths for this call)"
+    fi
   fi
 fi
 
-DELTA=$(qpg_snapshot_delta "$PREV" "$CURR")
+DELTA=$(qpg_snapshot_delta "$PREV" "$CMP_CURR")
+if [ $? -eq 2 ]; then
+  # grep itself failed, so the empty delta means "could not tell", not "nothing
+  # changed". Never let that read as an allow without a record.
+  glog "FAIL-OPEN(delta-compare-failed) branch=$BRANCH"
+fi
 DISPOSITION=$(qpg_bash_build_disposition "$VERDICT" "$BASELINE" "$DELTA")
 
 # Record the new state. UNCONDITIONALLY, including on the block path (otherwise
@@ -254,10 +376,23 @@ DISPOSITION=$(qpg_bash_build_disposition "$VERDICT" "$BASELINE" "$DELTA")
 # with no clue why. A truncated write under ENOSPC is just as bad in the other
 # direction. So a failure is logged AND surfaced in the block reason, which is the
 # one moment anyone is looking.
+# NO `:` TERMINATOR. An earlier revision ended the group with `:` to stop the
+# `[ -n "$CURR" ]` test leaking its status as the group's. That fixed one bug and
+# created a worse one: `:` also masks a FAILING printf, so a write truncated by
+# ENOSPC was installed as the baseline and reported as success. A truncated
+# snapshot is worse than none, because missing lines read as a delta and produce
+# a false block sourced from a partial write nobody logged.
+#
+# The shape below needs no terminator: with CURR empty the `[ -z ]` test is TRUE
+# so the `||` short-circuits at status 0, and with CURR set the group's status is
+# the second printf's. A failing first printf short-circuits the `&&`.
 snap_write() {
   local tmp
-  tmp=$(mktemp "$GITDIR/.qa-plan-bash-snapshot.XXXXXX" 2>/dev/null) || return 1
-  if { printf '%s\n' "$HEADER"; [ -n "$CURR" ] && printf '%s\n' "$CURR"; : ; } > "$tmp" 2>/dev/null \
+  # mktemp beside the TARGET, not in $GITDIR: the fallback path below lives
+  # elsewhere, and a temp file on a different filesystem would make `mv` a copy
+  # (or fail), defeating the atomic replace.
+  tmp=$(mktemp "$(dirname "$SNAP")/.qa-plan-bash-snapshot.XXXXXX" 2>/dev/null) || return 1
+  if { printf '%s\n' "$HEADER" && { [ -z "$CURR" ] || printf '%s\n' "$CURR"; }; } > "$tmp" 2>/dev/null \
      && mv -f "$tmp" "$SNAP" 2>/dev/null; then
     return 0
   fi
@@ -265,16 +400,41 @@ snap_write() {
   return 1
 }
 SNAP_OK=1
-snap_write || SNAP_OK=0
-[ "$SNAP_OK" = 1 ] || glog "snapshot-write-failed snap=$SNAP branch=$BRANCH"
+if ! snap_write; then
+  # FALL BACK RATHER THAN GIVE UP. Checking the write stopped it lying, but left
+  # an unwritable git dir with two failure shapes, both bad and opposite:
+  #   - a snapshot already exists -> the same delta replays on every call, so
+  #     `ls` blocks forever. That is the block storm, with a note attached.
+  #   - no snapshot yet -> BASELINE is "none" every call, so every write is
+  #     allowed. The gate is silently and completely OFF.
+  # Both reproduced. Neither is acceptable, and the cause (an unwritable .git) is
+  # not something this hook can fix. So state moves to a writable place instead:
+  # keyed by the git dir so two repos cannot collide, and it is only a cache, so
+  # losing it on reboot costs one baseline.
+  SNAP="$SNAP_FALLBACK"
+  if snap_write; then
+    glog "snapshot-fallback gitdir-unwritable using=$SNAP branch=$BRANCH"
+  else
+    SNAP_OK=0
+    glog "snapshot-write-failed snap=$SNAP branch=$BRANCH"
+  fi
+fi
 
 # A session establishing its first baseline is the one ALLOW worth recording: it
 # can mean "source just changed and I am declining to attribute it". Also the
 # natural moment to sweep this git dir's abandoned session snapshots, since it
 # happens once per session per branch rather than per call.
-if [ "$BASELINE" = "none" ]; then
-  glog "baseline-established branch=$BRANCH session=$SESSION_KEY n=$NPATHS mode=$MODE"
-  find "$GITDIR" -maxdepth 1 -name 'qa-plan-bash-snapshot-*' -mtime +7 -delete 2>/dev/null
+# Guarded on SNAP_OK, not just on BASELINE: with the write failing, this arm
+# logged "baseline-established" on every single call while establishing nothing,
+# which is the one line an operator reads as "the gate is working". It also ran
+# both find sweeps per call in that state.
+if [ "$BASELINE" = "none" ] && [ "$SNAP_OK" = 1 ]; then
+  glog "baseline-established branch=$BRANCH session=$SESSION_KEY n=$NPATHS mode=$MODE${DEGRADED:+ delta-degraded=$DEGRADED}"
+  # 30 days, not 7: a session can sit open without making a Bash call, and
+  # deleting its still-valid snapshot hands it a free baseline on its next write.
+  # Scoped to one directory level and to these two reserved prefixes, so it
+  # cannot wander the repo or touch the approval stamp.
+  find "$GITDIR" -maxdepth 1 -name 'qa-plan-bash-snapshot-*' -mtime +30 -delete 2>/dev/null
   find "$GITDIR" -maxdepth 1 -name '.qa-plan-bash-snapshot.*' -mtime +1 -delete 2>/dev/null
 fi
 
@@ -295,8 +455,9 @@ glog "BLOCK branch=$BRANCH verdict=$VERDICT n=$NCHANGED files=$NAMES"
 # No cached-stale-writer scan, unlike gates 1 and 2: that walk is already
 # duplicated between those two and `qa-plan-stamp.sh doctor` reports the same
 # thing on demand. Pointing at doctor beats a third copy.
-REASON="QA-plan gate (Bash path): application source on \`$BRANCH\` changed since this session's previous Bash call, and the approval stamp for this branch is [${VERDICT}]. Changed: ${NAMES}. This gate reads what the repo observed rather than the command text, so source written through a heredoc, \`sed -i\`, \`tee\`, \`python3 -c\`, \`node -e\` or any other shell mechanism reaches it exactly as an Edit does. TWO THINGS IT CANNOT TELL YOU: it fires AFTER the write, so nothing was prevented and NOTHING HAS BEEN REVERTED for you; and it does not know that the command you just ran is what changed these files, only that they differ from the previous observation. If a \`git\` tree operation (stash pop, merge, rebase, cherry-pick, apply) or an edit made outside this session produced them, this is a false alarm and you should NOT undo anything. Otherwise: (1) run \`/qa:plan\` now, get the plan approved, and carry on; or (2) if that write was not meant to be part of this change, undo it yourself. $(qpg_block_advice "$VERDICT") Reading is not gated, and neither are docs, tests, config, data and build artifacts, ignored files, or anything outside the repo. For a genuine spike, branch as \`spike/<name>\`. $(qpg_override_hint)"
+REASON="QA-plan gate (Bash path): application source on \`$BRANCH\` changed since this session's previous Bash call, and the approval stamp for this branch is [${VERDICT}]. Changed: ${NAMES}. This gate reads what the repo observed rather than the command text, so source written through a heredoc, \`sed -i\`, \`tee\`, \`python3 -c\`, \`node -e\` or any other shell mechanism reaches it exactly as an Edit does. TWO THINGS IT CANNOT TELL YOU: it fires AFTER the write, so nothing was prevented and NOTHING HAS BEEN REVERTED for you; and it does not know that the command you just ran is what changed these files, only that they differ from the previous observation. If a \`git\` tree operation (stash pop, merge, rebase, cherry-pick, apply) or an edit made outside this session produced them, this is a false alarm and you should NOT undo anything. Otherwise: (1) run \`/qa:qa-plan\` now, get the plan approved, and carry on; or (2) if that write was not meant to be part of this change, undo it yourself. $(qpg_block_advice "$VERDICT") Reading is not gated, and neither are docs, tests, config, data and build artifacts, ignored files, or anything outside the repo. For a genuine spike, branch as \`spike/<name>\`. $(qpg_override_hint)"
 [ "$SNAP_OK" = 1 ] || REASON="$REASON WARNING: this gate could not record state at \`$SNAP\`, so it will repeat this message on every Bash call until that path is writable."
+[ "$STAMP_UNREADABLE" = 1 ] && REASON="$REASON NOTE: an approval stamp FILE exists at \`$STAMPFILE\` but could not be read (permissions, or a truncated write), which is why the verdict above reads as though none exists. Approving a new plan will not clear this; fix the file's readability or remove it first."
 _BP_REF=$(qpg_build_procedure_ref "$MARKER")
 [ -n "$_BP_REF" ] && REASON="$REASON (This repo also follows your workspace build procedure: $_BP_REF.)"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'

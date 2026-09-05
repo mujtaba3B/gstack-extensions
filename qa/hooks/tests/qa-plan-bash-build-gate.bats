@@ -334,6 +334,24 @@ src/two.sh" ]
   [ "$output" = "" ]
 }
 
+@test "delta: matching is WHOLE-LINE, so a path that extends another is still a delta" {
+  # Pins the `-x` in `grep -vxF`. Without it the prev line is a SUBSTRING of the
+  # new one, `-v` drops it, and the delta comes back empty: a real write reported
+  # as "nothing changed". One character, entirely load-bearing.
+  run qpg_snapshot_delta "aaa src/app.py" "aaa src/app.py
+aaa src/app.py.bak"
+  [ "$output" = "aaa src/app.py.bak" ]
+}
+
+@test "delta: an empty baseline reports everything rather than nothing" {
+  # The other half of `-x`: with an empty pattern file, `grep -vxF` emits all of
+  # curr. Dropping `-x` here makes it emit NOTHING, i.e. "no delta" forever.
+  run qpg_snapshot_delta "" "aaa src/one.py
+bbb src/two.py"
+  [ "$output" = "aaa src/one.py
+bbb src/two.py" ]
+}
+
 @test "delta: only the new entries are reported when others are unchanged" {
   run qpg_snapshot_delta "aaa src/one.py
 bbb src/two.py" "aaa src/one.py
@@ -722,32 +740,129 @@ make_many_source_files() {  # <n>
   for ((i = 0; i < $1; i++)); do printf 'x\n' > "$REPO/src/bulk/f$i.py"; done
 }
 
-@test "e2e REGRESSION: a degrade-mode flip re-baselines instead of blocking on everything" {
+@test "e2e REGRESSION: a degrade-mode flip does not report every dirty path" {
   # Degraded lines are `- <path>` and normal lines are `<digest> <path>`, so when
   # the mode flips EVERY line differs verbatim and the delta reported every dirty
-  # path at once. Reproduced: a bare `ls` blocked naming 200 files. The mode now
-  # lives in the snapshot header, so a flip reads as "no baseline".
+  # path at once. Reproduced: a bare `ls` blocked naming 200 files. Both sides are
+  # now normalized to path-only for the transition call.
   opt_in
-  printf 'print(2)\n' > "$REPO/src/app.py"
-  baseline                                   # digest-mode snapshot
-  run cat "$SNAP"
-  assert_contains "$output" "mode=digest"
-  make_many_source_files 205                 # crosses the cap -> paths mode
-  run fire "ls"                              # a READ-ONLY command
-  assert_missing "$output" '"decision":"block"'
+  make_many_source_files 205                 # already dirty, digest mode
+  baseline
   run cat "$SNAP"
   assert_contains "$output" "mode=paths"
+  # Drop back under the cap so the mode flips the other way, with NO new path.
+  rm -f "$REPO/src/bulk/f204.py" "$REPO/src/bulk/f203.py" "$REPO/src/bulk/f202.py"
+  rm -f "$REPO/src/bulk/f201.py" "$REPO/src/bulk/f200.py" "$REPO/src/bulk/f199.py"
+  run fire "ls"
+  # Deleting 6 tracked-but-untracked scratch files is a real change, so a block
+  # here is legitimate; what must NOT happen is a report naming all ~200.
+  case "$output" in
+    *'"decision":"block"'*) assert_missing "$output" "and 1" ;;
+  esac
+  run cat "$SNAP"
+  assert_contains "$output" "mode=digest"
+}
+
+@test "e2e REGRESSION: the write that CAUSES a mode flip is still caught" {
+  # Treating a mode change as "no baseline" re-baselined quietly, so the very
+  # write that crossed the threshold was allowed. That swapped a false positive
+  # for a false negative, which is the worse trade in a gate.
+  opt_in
+  make_many_source_files 199                 # under the cap, digest mode
+  baseline
+  run cat "$SNAP"
+  assert_contains "$output" "mode=digest"
+  printf 'x\n' > "$REPO/src/bulk/crosser.py" # 200 -> ... crosses to paths mode
+  make_many_source_files 205
+  run fire "cat > src/bulk/crosser.py"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/bulk/crosser.py"
 }
 
 @test "e2e: the degrade is LOGGED, never silent" {
   # The PR's whole answer to "we never no-op silently" had zero coverage: the
-  # logging could be deleted outright and the suite stayed green.
+  # logging could be deleted outright and the suite stayed green. It rides on the
+  # baseline / transition lines rather than firing per call, because written
+  # unconditionally it grew an unrotated log at one line per Bash call.
   opt_in
   make_many_source_files 205
   run fire "ls"
   run cat "$GATELOG"
   assert_contains "$output" "delta-degraded"
   assert_contains "$output" "too-many-paths=20"
+}
+
+@test "e2e: the degrade line does not repeat on every call" {
+  opt_in
+  make_many_source_files 205
+  fire "ls" >/dev/null 2>&1 || true      # baseline, logs the degrade once
+  : > "$GATELOG"
+  fire "ls" >/dev/null 2>&1 || true
+  fire "ls" >/dev/null 2>&1 || true
+  run cat "$GATELOG"
+  assert_missing "$output" "delta-degraded"
+}
+
+@test "e2e: an unwritable git dir falls back rather than disabling the gate" {
+  # With NO prior snapshot and an unwritable git dir, BASELINE was "none" on
+  # every call, so every write was allowed: the gate silently and completely OFF.
+  # Reproduced across four consecutive writes before the fallback existed.
+  opt_in
+  chmod a-w "$GITDIR"
+  fire "ls" >/dev/null 2>&1 || true               # baseline goes to the fallback
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "cat > src/app.py"
+  chmod u+w "$GITDIR"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/app.py"
+  run cat "$GATELOG"
+  assert_contains "$output" "snapshot-fallback"
+}
+
+@test "e2e: an unreadable stamp is named in the block, not just logged" {
+  opt_in
+  stamp_for "feat/thing"
+  chmod 000 "$GITDIR/qa-plan-approved"
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "cat > src/app.py"
+  chmod 644 "$GITDIR/qa-plan-approved"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "could not be read"
+}
+
+@test "e2e: an unreadable dirty source file logs rather than silently downgrading" {
+  # `- <path>` records identically on every later write, so the second genuine
+  # write to that file produced no delta at all. Silent before.
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  chmod 000 "$REPO/src/app.py"
+  run fire "cat > src/app.py"
+  chmod 644 "$REPO/src/app.py"
+  run cat "$GATELOG"
+  assert_contains "$output" "hash-skipped"
+}
+
+@test "e2e: a missing jq is logged rather than silently ungating" {
+  opt_in
+  run bash -c 'mkdir -p "$1/nojq"; for t in git sed grep printf date cat head tail cut tr find mktemp mv rm chmod; do \
+      p=$(command -v $t 2>/dev/null) && ln -sf "$p" "$1/nojq/$t" 2>/dev/null; done; \
+      PATH="$1/nojq"; export PATH; CLAUDE_CONFIG_DIR="$2"; export CLAUDE_CONFIG_DIR; \
+      printf "%s" "{}" | /bin/bash "$3"' _ "$BATS_TEST_TMPDIR" "$CLAUDE_CONFIG_DIR" "$GATE"
+  run cat "$GATELOG"
+  assert_contains "$output" "FAIL-OPEN(jq-missing)"
+}
+
+@test "e2e: an unparseable payload is logged rather than silently ungating" {
+  # `read` fills absent fields with empty strings, so a jq failure or a malformed
+  # payload exits quietly under `set -u` instead of crashing. That quiet exit is
+  # the fail-open worth catching.
+  opt_in
+  run bash -c 'printf "%s" "not json at all" | bash "$1"' _ "$GATE"
+  [ "$output" = "" ]
+  run cat "$GATELOG"
+  assert_contains "$output" "FAIL-OPEN(payload-parse)"
 }
 
 @test "e2e: a failing git status is logged rather than silently ungating" {
@@ -765,19 +880,20 @@ make_many_source_files() {  # <n>
 
 @test "e2e REGRESSION: an unwritable git dir does not cause a block storm" {
   # Reproduced before the fix: call 1 blocked correctly and EVERY later call,
-  # `ls` included, reblocked forever with no explanation. That is the exact
-  # failure the unconditional snapshot write exists to prevent.
+  # `ls` included, reblocked forever with no explanation, because state could not
+  # advance. The fix is to advance it somewhere writable rather than to explain
+  # the wall, so the assertion is that the SECOND call is quiet.
   opt_in
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   chmod a-w "$GITDIR"
   run fire "cat > src/app.py"
-  chmod u+w "$GITDIR"
   assert_contains "$output" '"decision":"block"'
-  # The block must say WHY it will repeat, instead of leaving it inexplicable.
-  assert_contains "$output" "could not record state"
+  run fire "ls"                      # nothing further changed
+  chmod u+w "$GITDIR"
+  assert_missing "$output" '"decision":"block"'
   run cat "$GATELOG"
-  assert_contains "$output" "snapshot-write-failed"
+  assert_contains "$output" "snapshot-fallback"
 }
 
 @test "e2e: two sessions in one checkout do not consume each other's delta" {
@@ -809,6 +925,21 @@ cd /tmp
 EOF"
   assert_contains "$output" '"decision":"block"'
   assert_contains "$output" "src/deploy.sh"
+}
+
+@test "e2e: a quoted cd operand containing a space resolves to the right repo" {
+  # The bare-token pattern captured `"/path/repo` from `cd "/path/repo B" && ...`,
+  # so the directory test failed and the gate silently inspected the session cwd
+  # instead of the repo the command targeted.
+  opt_in
+  SPACED="$ROOT/repo with space"
+  cp -R "$REPO" "$SPACED"
+  fire "ls" "$SPACED" >/dev/null 2>&1 || true            # baseline over there
+  printf 'print(2)\n' > "$SPACED/src/app.py"
+  # cwd is the OTHER repo, so only correct `cd` parsing can find this change.
+  run fire "cd \"$SPACED\" && cat > src/app.py" "$REPO"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/app.py"
 }
 
 @test "e2e: a non-default verdict reaches the message (not only no-stamp)" {
@@ -873,16 +1004,34 @@ EOF"
 # Classifier: data / build artifacts (shared with gate 1)
 # ============================================================================
 
-@test "path: data and build artifacts are carved out" {
+@test "artifact: data and build artifacts are recognised" {
   for f in out.csv data.tsv db.sqlite3 shot.png logo.svg run.log bundle.tar.gz .DS_Store; do
-    run qpg_path_needs_plan "some/dir/$f"
-    [ "$output" = "carveout" ]
+    run qpg_is_bulk_artifact "some/dir/$f"
+    [ "$output" = "yes" ]
   done
 }
 
-@test "path: real source is still source after the artifact carve-out" {
+@test "artifact: real source is not an artifact" {
   for f in main.py app.ts server.go lib.rs Makefile deploy.sh; do
-    run qpg_path_needs_plan "src/$f"
+    run qpg_is_bulk_artifact "src/$f"
+    [ "$output" = "no" ]
+  done
+}
+
+@test "artifact: the carve-out is NOT in the shared classifier (gate 1 still gates assets)" {
+  # Putting it in qpg_path_needs_plan silently stopped the PreToolUse Edit/Write
+  # gate from gating deliberate edits to shipped assets, which ARE source for
+  # games, design tools and anything bundling seed data. Gate 1's input is a file
+  # the agent NAMED; only the observation gate needs the suppression.
+  for f in logo.svg catalog.sqlite3 sprite.png seed.csv; do
+    run qpg_path_needs_plan "assets/$f"
     [ "$output" = "source" ]
   done
+}
+
+@test "artifact: the observation path still suppresses them" {
+  run qpg_status_source_paths " M assets/sprite.png
+ M data/out.csv
+ M src/real.py"
+  [ "$output" = "src/real.py" ]
 }

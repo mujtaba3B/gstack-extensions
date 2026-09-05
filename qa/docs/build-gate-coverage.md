@@ -2,7 +2,10 @@
 
 The build gate enforces one rule: **approve the plan, then build.** On a feature
 branch in a governed repo, application source must not be written until
-`/qa:plan` has produced a human-approved stamp.
+`/qa:qa-plan` has produced a human-approved stamp. (That is the registered skill
+name. Much of this plugin's older prose, including `qpg_block_advice`'s remedy
+strings, still says `/qa:plan`, which does not resolve; fixing that everywhere is
+a separate change rather than something to bury in this one.)
 
 It is implemented as **two hooks**, because one event class was never enough.
 This page is the exact statement of their combined coverage, including the parts
@@ -139,29 +142,57 @@ itself:
 9. **Concurrent sessions.** State is keyed per session, so one session no longer
    eats another's delta (that inversion blocked the innocent session and never
    blocked the writer). Each session is told once about a change any of them
-   made, which is intended: a shared checkout is shared.
-10. **Neither gate is adversary-proof, and neither claims to be.** Both fail open
+   made, which is intended: a shared checkout is shared. The cost of that keying,
+   stated plainly: a NEW session's first Bash call baselines against whatever it
+   finds, so a write made in that first call is allowed where a single shared
+   snapshot would have caught it. That trade is deliberate (the inversion was
+   worse than the window) but it is a widening of limit 4, not free.
+10. **An unwritable git dir degrades to a temp-directory snapshot.** If `$GITDIR`
+    cannot be written, state moves to `$TMPDIR` so it can still advance. Without
+    that, one unwritable directory produced either an infinite block storm (with
+    a prior snapshot) or a completely disabled gate (without one), depending on a
+    file that may or may not exist. Both were reproduced. Once a fallback exists
+    it is preferred until swept, so the gate keeps working; losing `$TMPDIR` on
+    reboot costs one baseline.
+11. **Neither gate is adversary-proof, and neither claims to be.** Both fail open
     on a missing dependency, and a shell outside Claude Code is invisible to any
     hook. These are accident-guards for agents doing ordinary work. Every
-    fail-open path is logged, so a gate that has silently stopped gating is
-    visible in `~/.claude/qa-plan-gate.log` rather than merely absent.
+    fail-open path this hook controls is logged, so a gate that has stopped
+    gating is visible rather than merely absent. Look in **both**
+    `~/.claude/qa-plan-gate.log` (this gate: `FAIL-OPEN(jq-missing)`,
+    `(payload-parse)`, `(libs-missing)`, `(status-failed)`,
+    `(safe-directory-refusal)`, `(git-missing)`, `(delta-compare-failed)`, plus
+    `snapshot-write-failed`, `snapshot-fallback`, `hash-skipped`,
+    `stamp-unreadable`) and `~/.claude/gate-policy.log` (policy-level fail-opens,
+    which disable every gate at once and are written by `gate-policy-lib.sh`).
+    Two exceptions cannot log by construction: a hook killed by its own timeout,
+    and a machine with no writable config directory at all.
 
 ## Cost
 
-Measured on this laptop, per Bash tool call, at the 2026-09-05 implementation:
+Measured on this laptop, per Bash tool call, at the 2026-09-05 implementation.
+**The cost tracks the number of dirty source files, not the stamp**:
 
-| situation | cost |
-|---|---|
-| clean branch, or stamped branch | ~100 ms |
-| 25 dirty source files | ~370 ms |
-| 50 dirty source files | ~655 ms |
-| 200 dirty source files (the degrade cap) | ~2.3 s |
+| dirty source files | unstamped | stamped |
+|---|---|---|
+| 0 (clean tree) | ~104 ms | ~115 ms |
+| 25 | ~370 ms | (same) |
+| 50 | ~633 ms | ~652 ms |
+| 200 (the degrade cap) | ~2.3 s | (same) |
 
 An earlier revision was roughly 7x worse (~4.9 s at 50 files, ~14 s at 200)
 because the delta forked two processes per dirty path. Do not restore the
-per-line `grep`. An earlier version of this page claimed an approved branch
-"pays almost nothing per call"; that was contradicted by measurement, which is
-why real figures are here instead of an adjective.
+per-line `grep`.
+
+**A stamped branch is NOT cheaper, and this page has now been wrong about that
+twice.** First it said an approved branch "pays almost nothing per call", which
+measurement contradicted. The replacement table then said `clean branch, or
+stamped branch | ~100 ms`, which measurement contradicted the same way: the
+100 ms figure was a CLEAN tree, and the two were conflated. The short-circuit
+that once made a stamped branch cheap was deliberately removed, because skipping
+the snapshot left it stale for the whole approved window and an expiring stamp
+then dumped that entire window as one block. Keeping the snapshot fresh is worth
+the cost; pretending the cost is not there is not.
 
 ## Turning it off
 
@@ -189,11 +220,25 @@ end-to-end tests rather than truth tables: the baseline header match (branch and
 mode), the degrade policy (hasher selection and the 200-path threshold), and the
 `cd` workdir resolution.
 
-The suite is mutation-controlled: 17 guards were deleted one at a time and the
-suite required to go red. The PR that introduced this file carries the table.
+The suite is mutation-controlled: 21 guards were deleted one at a time and the
+suite required to go red. 20 do. The PR that introduced this file carries the
+table.
 
-Two honest exceptions, recorded because a green suite is otherwise misread as
-proof:
+**A warning about the harness itself.** `perl -0pi -e 's/x/y/'` without `/g`
+replaces the FIRST match, and in a file whose comments quote the code (this one
+does, deliberately) that match is often the COMMENT. Such a run reports a
+cheerful GREEN while the code was never touched. It happened here: the `-x` in
+`grep -vxF` looked unpinned until the mutation was anchored on the piped code
+line, at which point it went red across 25 tests. Same shape as the grep-based
+test pin this repo was bitten by twice. Verify that a mutation edited code before
+believing its verdict.
+
+Honest exceptions, recorded because a green suite is otherwise misread as proof:
+
+- **`qpg_snapshot_delta`'s grep-error return (`return 2`) is NOT pinned.** No
+  test makes `grep` fail, so deleting that arm keeps the suite green. It only
+  affects whether `FAIL-OPEN(delta-compare-failed)` is logged, never the
+  allow/block decision.
 
 - The **first-line-only `cd` extraction** is enforced twice (the jq `split`, and
   the `read` that stops at a newline anyway), so removing either alone changes
