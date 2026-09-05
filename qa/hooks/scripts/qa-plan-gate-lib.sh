@@ -1,22 +1,31 @@
 #!/bin/bash
 # Pure, side-effect-free decision logic for the QA-plan approval gates, extracted
-# so it can be unit tested (tests/qa-plan-gate.bats) without a live repo, a
-# transcript, or any hook plumbing. Every function takes everything it needs as
-# arguments and writes only to stdout.
+# so it can be unit tested (tests/qa-plan-gate.bats, and for the Bash build path
+# tests/qa-plan-bash-build-gate.bats) without a live repo, a transcript, or any
+# hook plumbing. Every function takes everything it needs as arguments and writes
+# only to stdout.
 #
 # Policy (the two-phase QA-plan approval policy): the two-phase QA plan must be
 # PRESENTED to and APPROVED by the human BEFORE building, BEFORE the PR goes up,
 # and verified-passed BEFORE deploy. /qa:plan ends with an AskUserQuestion
-# approval gate that writes an approval stamp; these helpers are what the three
-# gates use to read it.
+# approval gate that writes an approval stamp; these helpers are what the gates
+# use to read it.
 #
 # Consumers:
-#   scripts/qa-plan-build-gate.sh - PreToolUse Edit|Write: block source edits
-#                                   until the branch has an approval stamp.
-#   scripts/qa-plan-pr-gate.sh    - PreToolUse Bash: block `gh pr create` until
-#                                   the branch has an approval stamp.
-#   scripts/qa-plan-stamp.sh      - writes the stamp in the canonical shape.
-#   scripts/merge-clearance.sh    - reads the marker to require QA-passed at merge.
+#   scripts/qa-plan-build-gate.sh      - PreToolUse Edit|Write: block source edits
+#                                        until the branch has an approval stamp.
+#   scripts/qa-plan-bash-build-gate.sh - PostToolUse + PostToolUseFailure Bash:
+#                                        the same rule for source written through
+#                                        the shell, decided from observed repo
+#                                        state. Sole consumer of
+#                                        qpg_status_source_paths,
+#                                        qpg_unquote_path, qpg_snapshot_delta and
+#                                        qpg_bash_build_disposition.
+#   scripts/qa-plan-pr-gate.sh         - PreToolUse Bash: block `gh pr create`
+#                                        until the branch has an approval stamp.
+#   scripts/qa-plan-stamp.sh           - writes the stamp in the canonical shape.
+#   scripts/merge-clearance.sh         - reads the marker to require QA-passed at
+#                                        merge.
 #
 # Requires jq for the JSON helpers. Every gate fails OPEN (allowing the action)
 # before sourcing this when jq is absent, so a jq-less host never reaches here.
@@ -401,6 +410,41 @@ qpg_path_needs_plan() {
   echo "source"; return 0
 }
 
+# qpg_is_bulk_artifact <path>
+#   Data and build artifacts: `yes` (and return 0) for a path that a command
+#   plausibly LEFT BEHIND rather than authored as behavior.
+#
+#   DELIBERATELY NOT PART OF qpg_path_needs_plan, and the difference in INPUT is
+#   the entire reason. Gate 1's input is a file the agent deliberately NAMED in an
+#   Edit or Write; if someone edits an `.svg` icon, a bundled `.sqlite` catalog,
+#   or a shipped `.png`, that is real product work and gate 1 should still gate
+#   it. Gate 1b's input is every path the working tree reports, so it sees
+#   whatever a command happened to drop on the floor.
+#
+#   Putting this list in the shared classifier was a real regression: it silently
+#   stopped gate 1 gating deliberate edits to assets that ARE source for games,
+#   design tools, content products and anything shipping seed data. So only the
+#   observation gate consults it.
+#
+#   What it costs on the gate 1b side, without it, measured against the real
+#   ~/dev: one repo had 15 dirty paths that were all scraped `.html`/`.csv`,
+#   another gated on `assets/mufour.jpg`, and `python3 report.py > out.csv`,
+#   `screencapture shot.png` and `make | tee run.log` each drew a block claiming
+#   application source had changed. That is the false-positive class that gets a
+#   gate deleted, which is why the suppression exists at all.
+qpg_is_bulk_artifact() {
+  local base="${1##*/}"
+  case "$base" in
+    *.csv|*.tsv|*.parquet|*.db|*.sqlite|*.sqlite3) echo "yes"; return 0 ;;
+    *.png|*.jpg|*.jpeg|*.gif|*.svg|*.ico|*.webp|*.pdf) echo "yes"; return 0 ;;
+    *.mp4|*.mov|*.wav|*.mp3|*.woff|*.woff2|*.ttf|*.otf) echo "yes"; return 0 ;;
+    *.log|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.bin|*.pyc|*.class|*.o|*.a|*.so|*.dylib)
+      echo "yes"; return 0 ;;
+    .DS_Store) echo "yes"; return 0 ;;
+  esac
+  echo "no"; return 1
+}
+
 # qpg_is_bookkeeping <newline-separated-paths>
 #   Echo "yes" iff the changeset is NON-EMPTY and EVERY path is a "bookkeeping"
 #   file: documentation or the cross-host service inventory. These are zero-risk,
@@ -590,4 +634,180 @@ qpg_base_in_scope() {
     || { echo "in"; return 0; }
   if printf '%s\n' "$bases" | grep -qxF "$base"; then echo "in"; return 0; fi
   echo "out"; return 1
+}
+
+# ---------------------------------------------------------------------------
+# Gate 1b: the Bash build path. See qa-plan-bash-build-gate.sh for the hook.
+#
+# WHY A SECOND BUILD GATE EXISTS. Gate 1 matches Edit|MultiEdit|Write, so source
+# written through Bash never reached it. That is not a corner case: under
+# bypass-permissions mode the harness instructs agents to prefer heredocs and
+# `sed` over the edit tools, which makes the ungated path the DEFAULT path. On
+# 2026-09-04 in ~/dev/tooling/local-bin an agent wrote three tracked source files
+# with `python3 - <<'PY'` heredocs and nothing fired; the gate spoke up only on
+# the fourth edit, which happened to use Write. Its message was accurate and its
+# coverage was not.
+#
+# WHY THESE FUNCTIONS TAKE OBSERVED STATE RATHER THAN A COMMAND STRING. Deciding
+# "does this shell command write tracked source" requires parsing arbitrary shell
+# AND the source text of whatever interpreter it feeds. The observed case is
+# exactly the undecidable one: the write lives inside Python, at a path that may
+# be computed. A shell-shape matcher would have caught `sed -i` and `tee`, which
+# we have no incident for, and missed the heredoc, which we do. So the decision
+# is made from what the VCS observed instead, which is exact and blind to the
+# write mechanism: heredocs, `-c`, `-e`, `eval`, base64, xargs, and a script the
+# command merely invoked all land the same way.
+# ---------------------------------------------------------------------------
+
+# qpg_unquote_path <token>
+#   The porcelain status format wraps a path in double quotes when it contains
+#   `"`, `\`, or a control character (and any non-ASCII byte unless
+#   core.quotePath is off, which the hook sets). Strip the wrapper and undo the
+#   two escapes that can change WHICH FILE a token names. Every other escape is
+#   left exactly as written: the token stays stable across calls, which is all
+#   the snapshot comparison needs, and nothing here can crash on a hostile name.
+qpg_unquote_path() {
+  local p="$1"
+  case "$p" in
+    \"*\")
+      p=${p#\"}; p=${p%\"}
+      # Protect escaped backslashes FIRST, or a trailing `\\` followed by `"`
+      # would be read as an escaped quote and silently drop a backslash.
+      p=${p//\\\\/$'\001'}
+      p=${p//\\\"/\"}
+      p=${p//$'\001'/\\}
+      ;;
+  esac
+  printf '%s' "$p"
+}
+
+# qpg_status_source_paths <porcelain-text>
+#   Print, one per line, the paths in porcelain status output that classify as
+#   application SOURCE.
+#
+#   Reuses qpg_path_needs_plan deliberately: the Bash path and the Edit path have
+#   to agree about what "source" means, and a second classifier would drift from
+#   the first. That reuse is also what buys the whole false-positive carve-out
+#   list for free (docs, config, tests, fixtures, `.git/`), on top of the ones
+#   the VCS itself supplies (anything ignored, and anything outside the repo:
+#   /tmp, the session scratchpad, ~/.claude, ~/.gstack).
+qpg_status_source_paths() {
+  local line xy path orig
+  while IFS= read -r line; do
+    # "XY PATH": two status columns, a space, then at least one path character.
+    [ ${#line} -gt 3 ] || continue
+    xy=${line:0:2}
+    # `!!` only appears under --ignored, and an ignored file is never gated.
+    [ "$xy" = '!!' ] && continue
+    path=${line:3}
+    # Rename / copy entries read "ORIG -> DEST". Gated on the status column so an
+    # ordinary filename that happens to contain " -> " is not truncated.
+    #
+    # BOTH SIDES MATTER for a RENAME, and taking only DEST was a real miss:
+    # `git mv src/engine.py tests/engine_helper.py` has a destination that is a
+    # test carve-out, so the whole entry vanished even though application source
+    # was removed. A deletion of source is a mutation (this file says so
+    # elsewhere), and a rename out of the source tree is exactly that. A COPY
+    # leaves ORIG untouched, so only DEST is judged there.
+    orig=""
+    case "$xy" in
+      [RC]*|?[RC])
+        case "$path" in
+          *" -> "*)
+            case "$xy" in [R]*|?[R]) orig=${path%% -> *} ;; esac
+            path=${path##* -> }
+            ;;
+        esac
+        ;;
+    esac
+    if [ -n "$orig" ]; then
+      orig=$(qpg_unquote_path "$orig")
+      # NOT `... && continue`: continuing here would skip the DESTINATION too,
+      # which is the half that always matters.
+      case "$orig" in
+        */) ;;
+        *) if [ "$(qpg_is_bulk_artifact "$orig")" = "no" ]; then
+             qpg_path_needs_plan "$orig" >/dev/null && printf '%s\n' "$orig"
+           fi ;;
+      esac
+    fi
+    path=$(qpg_unquote_path "$path")
+    # A TRAILING SLASH means the VCS reported a DIRECTORY rather than a file, and
+    # a directory is never application source. `-uall` descends ordinary
+    # untracked directories, so the only thing that still arrives collapsed is a
+    # NESTED REPOSITORY: a linked worktree (this repo puts them under
+    # `.claude/worktrees/`), a submodule, or an unrelated clone someone parked in
+    # the tree. Whatever source lives inside belongs to THAT repo and is gated by
+    # that repo's own hook, so claiming it here is both wrong and noisy.
+    #
+    # Without this, creating a worktree made the main checkout report
+    # `?? .claude/worktrees/<name>/`, whose basename after the last slash is
+    # EMPTY, which matches none of the carve-outs and fell through to "source".
+    # The next Bash call in the main checkout then blocked on a directory.
+    # Verified against real `status --porcelain -uall` output, not reasoned about.
+    case "$path" in */) continue ;; esac
+    # Bulk artifacts are suppressed HERE, on the observation path only, never in
+    # the shared classifier. See qpg_is_bulk_artifact for why that distinction is
+    # load-bearing: gate 1 must keep gating a deliberate edit to a shipped asset.
+    [ "$(qpg_is_bulk_artifact "$path")" = "yes" ] && continue
+    qpg_path_needs_plan "$path" >/dev/null && printf '%s\n' "$path"
+  done <<QPG_STATUS_EOF
+$1
+QPG_STATUS_EOF
+  # EXPLICIT. Without it the function's status is the last `&&` in the loop body,
+  # so a run whose final entry is a carve-out returns 1. Nothing depends on that
+  # today (the caller only captures stdout, and there is no `set -e`), which is
+  # precisely why it would rot into a real bug the first time someone writes
+  # `qpg_status_source_paths "$x" && ...`.
+  return 0
+}
+
+# qpg_snapshot_delta <prev-snapshot> <curr-snapshot>
+#   Print the lines of <curr> that do not appear VERBATIM in <prev>.
+#
+#   A snapshot line is "<content-digest> <path>", and that shape is doing real
+#   work. Comparing PATH LISTS alone would miss a second write to a file that was
+#   already dirty, which is the common shape of an agent iterating on one file.
+#   Comparing digests catches it. A file edited back to clean simply drops out of
+#   <curr>, so it is correctly not a delta rather than being reported as one.
+#   SINGLE PASS, not a grep per line. The naive shape forked two processes for
+#   every dirty source path on every Bash tool call; measured, that put the hook
+#   at ~5s with 50 dirty files and ~14s with 200. `grep -vxF -f` does the same
+#   job in one process. An empty <prev> is a pattern file that matches nothing,
+#   so -v correctly emits all of <curr>, which is the baseline case.
+#   RETURN CODE IS MEANINGFUL: 0 for a clean comparison, 2 when grep itself
+#   FAILED. Swallowing that produced an empty delta indistinguishable from
+#   "nothing changed", which is a fail-open the caller could not see and so could
+#   not log. grep exits 0 with matches, 1 with none, and >1 only on a real error.
+qpg_snapshot_delta() {
+  local prev="$1" curr="$2" st
+  [ -n "$curr" ] || return 0
+  printf '%s\n' "$curr" | grep -vxF -f <(printf '%s\n' "$prev") 2>/dev/null
+  st=${PIPESTATUS[1]}
+  [ "${st:-0}" -gt 1 ] && return 2
+  return 0
+}
+
+# qpg_bash_build_disposition <stamp-verdict> <baseline-state> <delta>
+#   The entire allow/block decision for the Bash build path, as one token.
+#
+#     <stamp-verdict>  : qpg_stamp_valid's output for this branch.
+#     <baseline-state> : "have" when a snapshot for THIS branch already existed;
+#                        anything else means this call is establishing the first.
+#     <delta>          : qpg_snapshot_delta's output ("" = nothing changed).
+#
+#   Tokens: allow-stamped | allow-baseline | allow-no-delta | block.
+#   Returns 0 ONLY for block, matching qpg_path_needs_plan's convention.
+#
+#   The baseline arm is not a nicety, it is what makes the gate usable at all.
+#   Judging ABSOLUTE dirty state would block every single Bash call on an
+#   already-dirty branch, a status listing and `ls` included, which is a gate the
+#   human rips out on day one. Only a change THIS call introduced is
+#   attributable to it.
+qpg_bash_build_disposition() {
+  local verdict="$1" baseline="$2" delta="$3"
+  [ "$verdict" = "valid" ] && { echo "allow-stamped";  return 1; }
+  [ "$baseline" = "have" ] || { echo "allow-baseline"; return 1; }
+  [ -n "$delta" ]          || { echo "allow-no-delta"; return 1; }
+  echo "block"; return 0
 }

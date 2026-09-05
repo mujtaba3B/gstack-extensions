@@ -20,6 +20,28 @@ tuples() {
   ' "$HOOKS_JSON" | sort
 }
 
+@test "the Bash build gate is wired to BOTH PostToolUse and PostToolUseFailure" {
+  # PostToolUse fires only for a SUCCESSFUL tool call, verified on CLI 2.1.261.
+  # Without the failure event, `sed -i src/app.py && npm test` with a failing test
+  # writes source and the gate never runs. This pins both registrations so the
+  # bypass cannot come back by someone deleting the one that looks redundant.
+  for ev in PostToolUse PostToolUseFailure; do
+    run jq -e --arg e "$ev" '
+      .hooks[$e] | map(select(.matcher == "Bash")
+      | .hooks[] | select(.command | endswith("qa-plan-bash-build-gate.sh"))) | length == 1
+    ' "$HOOKS_JSON"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the Bash build gate declares a timeout (it shells out on every Bash call)" {
+  run jq -e '[.hooks.PostToolUse[], .hooks.PostToolUseFailure[]]
+             | map(select(.matcher == "Bash") | .hooks[]
+             | select(.command | endswith("qa-plan-bash-build-gate.sh")))
+             | length > 0 and all(.timeout != null)' "$HOOKS_JSON"
+  [ "$status" -eq 0 ]
+}
+
 @test "hooks.json is valid JSON with a top-level hooks object" {
   run jq -e '.hooks | type == "object"' "$HOOKS_JSON"
   [ "$status" -eq 0 ]
@@ -28,6 +50,8 @@ tuples() {
 @test "wiring matches the golden tuple set exactly" {
   expected=$(printf '%s\n' \
     'PostToolUse|AskUserQuestion|qa-plan-approval-token.sh' \
+    'PostToolUse|Bash|qa-plan-bash-build-gate.sh' \
+    'PostToolUseFailure|Bash|qa-plan-bash-build-gate.sh' \
     'PreToolUse|AskUserQuestion|qa-plan-present-gate.sh' \
     'PreToolUse|Bash|qa-plan-pr-gate.sh' \
     'PreToolUse|Edit|MultiEdit|Write|qa-plan-build-gate.sh' \

@@ -185,7 +185,7 @@ Tell the user, in one tight readout:
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
-The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp.
+The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-bash-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp. Source written through **Bash** (a heredoc-fed interpreter, `sed -i`, `tee`, `python3 -c`) is covered too, as of qa 3.13.0, but by a `PostToolUse` hook that fires AFTER the write and interrupts rather than preventing; it never reverts anything for you. `qa/docs/build-gate-coverage.md` states the full coverage and its limits.
 
 1. **Render the plan and ask in ONE turn.** Do not end the turn between them, and do not wait for the human to say anything first.
 

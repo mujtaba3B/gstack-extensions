@@ -1,5 +1,74 @@
 # qa:plan CHANGELOG
 
+## v2.7.0 (qa plugin 3.13.0)
+
+The build gate now covers source written through Bash, which it never did.
+
+**The bug.** `qa-plan-build-gate.sh` was registered on `Edit|MultiEdit|Write`
+only. The one Bash-matched hook was `qa-plan-pr-gate.sh`, which guards
+`gh pr create`, a different moment entirely. So an agent writing source through
+the shell built with no approved plan and nothing fired. Observed 2026-09-04 in
+`~/dev/tooling/local-bin`: three tracked source files written with
+`python3 - <<'PY'` heredocs, silent; the gate spoke up only on the fourth edit,
+which happened to use `Write`. Not an exotic route either, since under
+bypass-permissions mode the harness tells agents to prefer heredocs and `sed`
+over the edit tools.
+
+**The fix, and why it is not a matcher change.** Deciding whether arbitrary shell
+writes tracked source is undecidable from the command string: the observed write
+lived inside an interpreter's source text at a path that may be computed, and
+`PreToolUse` cannot even expand `"$VAR"`. A shell-shape matcher would have caught
+`sed -i` and `tee`, for which there is no incident, and missed the heredoc, for
+which there is. So `qa-plan-bash-build-gate.sh` is a `PostToolUse` `Bash` hook
+that compares observed dirty source against a per-branch snapshot. That is exact
+and blind to mechanism: heredocs, `-c`, `-e`, `eval`, `xargs`, `cp`, deletions
+and a script the command merely invoked all land identically.
+
+**What it costs, stated rather than implied.** `PostToolUse` runs after the tool,
+so this INTERRUPTS and never prevents or reverts. The hard invariant is
+unchanged (the PR gate still refuses an unstamped `gh pr create`); the soft one
+goes from nothing firing to an immediate interrupt naming the files, which on the
+2026-09-04 incident is a block at file #1 instead of file #4.
+`qa/docs/build-gate-coverage.md` is the full statement of coverage and limits.
+
+Decisions are pure functions with a truth table (`qpg_status_source_paths`,
+`qpg_unquote_path`, `qpg_snapshot_delta`, `qpg_bash_build_disposition`),
+mutation-controlled: each guard deleted makes the suite go red.
+
+**What review changed, because the first cut was not shippable.** A six-lens
+pass plus a cross-model pass reproduced, live, a set of defects worth listing so
+nobody reintroduces them:
+
+- `PostToolUse` fires only for a SUCCESSFUL tool call, so
+  `sed -i src/app.py && npm test` with a failing test wrote source and the gate
+  never ran. `PostToolUseFailure` is registered too (verified on CLI 2.1.261).
+- An unwritable git dir made the snapshot write fail silently, so every later
+  call replayed the same delta: `ls` blocked forever. The write is checked, the
+  failure is logged, and the block says why it will repeat.
+- A failing `git status` (corrupt index, a `safe.directory` refusal, which is
+  PERSISTENT) turned the gate off permanently and silently. Now logged.
+- Crossing the degrade threshold flipped every snapshot line's shape at once, so
+  a bare `ls` blocked naming 200 files. The mode is in the snapshot header and a
+  flip re-baselines.
+- The stamped short-circuit skipped the snapshot write, so an expiring stamp
+  dumped the whole approved window as a block advising the human to undo work
+  they had approved.
+- One shared snapshot across sessions blocked the INNOCENT session and never
+  blocked the writer. State is keyed per session.
+- The `cd` extraction matched any line, so a heredoc writing a script containing
+  `cd /tmp` disabled the check. First line only now.
+- `.csv`, `.png`, `.log`, `.db` counted as source, so a scraping repo blocked on
+  every run. Data and build artifacts are carved out.
+- `git mv src/engine.py tests/helper.py` was invisible, because only the rename
+  destination was classified and that destination is a carve-out.
+- The delta forked two processes per dirty path: ~4.9 s per Bash call at 50
+  dirty files, ~14 s at 200. Single-pass now, measured at ~655 ms and ~2.3 s.
+- The block message asserted "a Bash command just modified", which the mechanism
+  cannot know, and advised "undo it yourself", which destroys work after a
+  `git stash pop`. Both fixed.
+- A nested worktree reported one collapsed directory entry that classified as
+  source, so the main checkout blocked on a directory.
+
 ## v2.6.0 (qa plugin 3.12.0)
 
 `qa-plan-stamp.sh` can address a worktree other than the process cwd, and a

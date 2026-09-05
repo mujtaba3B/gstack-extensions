@@ -4,7 +4,8 @@
 # The stamp records that a human PRESENTED-AND-APPROVED the two-phase QA plan for
 # the current branch (the two-phase QA-plan approval policy). /qa:plan calls
 # `write` at the end of its AskUserQuestion approval step; the build and PR gates
-# (qa-plan-build-gate.sh / qa-plan-pr-gate.sh) read it via qpg_stamp_valid.
+# (qa-plan-build-gate.sh, qa-plan-bash-build-gate.sh, qa-plan-pr-gate.sh) read it
+# via qpg_stamp_valid.
 #
 # WRITING REQUIRES A HUMAN APPROVAL TOKEN (gstack-extensions#71). `write` refuses
 # unless <git-dir>/qa-plan-approval-token holds a valid token, and DELETES that
