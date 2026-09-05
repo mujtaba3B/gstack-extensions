@@ -54,7 +54,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/scripts/qa-plan-bash-build-gate.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/scripts/qa-plan-bash-build-gate.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/scripts/qa-plan-bash-build-gate.sh",
+            "timeout": 20
           }
         ]
       }

@@ -32,8 +32,42 @@ goes from nothing firing to an immediate interrupt naming the files, which on th
 `qa/docs/build-gate-coverage.md` is the full statement of coverage and limits.
 
 Decisions are pure functions with a truth table (`qpg_status_source_paths`,
-`qpg_snapshot_delta`, `qpg_bash_build_disposition`), mutation-controlled: each
-guard deleted makes the suite go red.
+`qpg_unquote_path`, `qpg_snapshot_delta`, `qpg_bash_build_disposition`),
+mutation-controlled: each guard deleted makes the suite go red.
+
+**What review changed, because the first cut was not shippable.** A six-lens
+pass plus a cross-model pass reproduced, live, a set of defects worth listing so
+nobody reintroduces them:
+
+- `PostToolUse` fires only for a SUCCESSFUL tool call, so
+  `sed -i src/app.py && npm test` with a failing test wrote source and the gate
+  never ran. `PostToolUseFailure` is registered too (verified on CLI 2.1.261).
+- An unwritable git dir made the snapshot write fail silently, so every later
+  call replayed the same delta: `ls` blocked forever. The write is checked, the
+  failure is logged, and the block says why it will repeat.
+- A failing `git status` (corrupt index, a `safe.directory` refusal, which is
+  PERSISTENT) turned the gate off permanently and silently. Now logged.
+- Crossing the degrade threshold flipped every snapshot line's shape at once, so
+  a bare `ls` blocked naming 200 files. The mode is in the snapshot header and a
+  flip re-baselines.
+- The stamped short-circuit skipped the snapshot write, so an expiring stamp
+  dumped the whole approved window as a block advising the human to undo work
+  they had approved.
+- One shared snapshot across sessions blocked the INNOCENT session and never
+  blocked the writer. State is keyed per session.
+- The `cd` extraction matched any line, so a heredoc writing a script containing
+  `cd /tmp` disabled the check. First line only now.
+- `.csv`, `.png`, `.log`, `.db` counted as source, so a scraping repo blocked on
+  every run. Data and build artifacts are carved out.
+- `git mv src/engine.py tests/helper.py` was invisible, because only the rename
+  destination was classified and that destination is a carve-out.
+- The delta forked two processes per dirty path: ~4.9 s per Bash call at 50
+  dirty files, ~14 s at 200. Single-pass now, measured at ~655 ms and ~2.3 s.
+- The block message asserted "a Bash command just modified", which the mechanism
+  cannot know, and advised "undo it yourself", which destroys work after a
+  `git stash pop`. Both fixed.
+- A nested worktree reported one collapsed directory entry that classified as
+  source, so the main checkout blocked on a directory.
 
 ## v2.6.0 (qa plugin 3.12.0)
 

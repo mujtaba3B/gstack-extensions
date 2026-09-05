@@ -17,18 +17,28 @@
 #      snapshot side effects the different paths leave behind.
 
 setup() {
-  # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
-  # tests exercise the policy contract deterministically instead of inheriting
-  # whatever ~/dev/gate-policy.json this machine happens to carry.
+  # Hermetic, and NOT rooted at ~/dev. Fixtures used to be real git repos created
+  # under the maintainer's actual governed root, which leaked when a run aborted
+  # (two abandoned `.qpbtest.*` repos were found sitting in ~/dev) and put test
+  # repos inside the very tree these gates police. Nothing needs the real path:
+  # scope.root is a policy field, so point it at the bats tmpdir instead.
   export GATE_POLICY_TEST=1
-  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/no-such-gate-policy.json"
-  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/no-such-gate-local.json"
+  export GATE_POLICY_FILE="$BATS_TEST_TMPDIR/gate-policy.json"
+  export GATE_LOCAL_FILE="$BATS_TEST_TMPDIR/gate-local.json"
+  # Isolates the audit log too, so a run never appends to the maintainer's real
+  # ~/.claude/qa-plan-gate.log and the log assertions below can read it back.
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  mkdir -p "$CLAUDE_CONFIG_DIR"
+  GATELOG="$CLAUDE_CONFIG_DIR/qa-plan-gate.log"
+
   LIB="$BATS_TEST_DIRNAME/../scripts/qa-plan-gate-lib.sh"
   GATE="$BATS_TEST_DIRNAME/../scripts/qa-plan-bash-build-gate.sh"
   # shellcheck source=/dev/null
   . "$LIB"
-  mkdir -p "$HOME/dev"
-  REPO=$(mktemp -d "$HOME/dev/.qpbtest.XXXXXX")
+
+  ROOT="$BATS_TEST_TMPDIR/root"
+  REPO="$ROOT/repo"
+  mkdir -p "$REPO"
   git -C "$REPO" init -q
   git -C "$REPO" config user.name "Test User"
   git -C "$REPO" config user.email "t@example.com"
@@ -42,10 +52,11 @@ setup() {
   git -C "$REPO" branch -M main
   git -C "$REPO" checkout -q -b feat/thing
   GITDIR=$(git -C "$REPO" rev-parse --absolute-git-dir)
-  SNAP="$GITDIR/qa-plan-bash-snapshot"
+  SESSION="s1"
+  SNAP="$GITDIR/qa-plan-bash-snapshot-$SESSION"
 }
 
-teardown() { rm -rf "$REPO"; }
+teardown() { rm -rf "$ROOT"; }
 
 # ---- substring assertions (see the header note about bare `[[ ]]`) ----------
 assert_contains() {  # <haystack> <needle>
@@ -68,7 +79,7 @@ assert_missing() {  # <haystack> <needle-that-must-not-appear>
 # ---- helpers ---------------------------------------------------------------
 gp_write_policy() {  # <gate> <config-json>
   mkdir -p "$(dirname "$GATE_POLICY_FILE")"
-  jq -nc --arg g "$1" --argjson c "$2" --arg root "$HOME/dev" \
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$ROOT" \
     '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
       defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
 }
@@ -90,14 +101,36 @@ stamp_for() {
     "$1" > "$GITDIR/qa-plan-approved"
 }
 
-payload() {  # <command> [cwd]
-  jq -nc --arg c "$1" --arg cwd "${2:-$REPO}" \
-    '{hook_event_name:"PostToolUse", tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd}'
+payload() {  # <command> [cwd] [event] [session]
+  jq -nc --arg c "$1" --arg cwd "${2:-$REPO}" --arg ev "${3:-PostToolUse}" \
+         --arg sid "${4:-$SESSION}" \
+    '{hook_event_name:$ev, tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd, session_id:$sid}'
 }
-fire() { payload "$1" "${2:-$REPO}" | bash "$GATE"; }
+fire() { payload "$1" "${2:-$REPO}" "${3:-PostToolUse}" "${4:-$SESSION}" | bash "$GATE"; }
 
-# Establish the branch baseline the way the first Bash call of a session does.
+# Establish this session's baseline the way its first Bash call does.
 baseline() { fire "ls" >/dev/null 2>&1 || true; }
+
+# assert_allowed <output> <snapshot-expectation>
+#   Every allow path produces empty stdout, so `[ "$output" = "" ]` alone passes
+#   for the WRONG allow. Mutation-proved: deleting the detached-HEAD guard left
+#   its test green, because the fall-through landed on allow-baseline, which is
+#   also silent. So each allow is pinned by a snapshot side effect that
+#   distinguishes WHICH arm ran:
+#     snap-absent  -> exited before the snapshot step (out of scope, stamped,
+#                     base branch, spike, detached, non-Bash)
+#     snap-present -> reached the observe/record step and chose to allow
+assert_allowed() {
+  case "$1" in *'"decision":"block"'*)
+    echo "assert_allowed failed: got a block" >&2; echo "  actual: $1" >&2; return 1 ;;
+  esac
+  case "$2" in
+    snap-absent)  [ ! -f "$SNAP" ] || { echo "expected NO snapshot at $SNAP" >&2; return 1 ;} ;;
+    snap-present) [ -f "$SNAP" ]   || { echo "expected a snapshot at $SNAP" >&2; return 1 ;} ;;
+    *) echo "assert_allowed: bad expectation '$2'" >&2; return 1 ;;
+  esac
+  return 0
+}
 
 # ============================================================================
 # Pure: qpg_bash_build_disposition <verdict> <baseline> <delta>
@@ -171,8 +204,22 @@ baseline() { fire "ls" >/dev/null 2>&1 || true; }
   [ "$output" = "src/app.py" ]
 }
 
-@test "status paths: a rename reports the DESTINATION, not the 'orig -> dest' blob" {
+@test "status paths: a rename reports BOTH sides, never the 'orig -> dest' blob" {
+  # Both, because a rename OUT of the source tree removes application source.
+  # Taking only the destination made `git mv src/engine.py tests/helper.py`
+  # vanish, since the destination is a test carve-out.
   run qpg_status_source_paths "R  src/old.py -> src/new.py"
+  [ "$output" = "src/old.py
+src/new.py" ]
+}
+
+@test "status paths: a rename whose destination is carved out still reports the source" {
+  run qpg_status_source_paths "R  src/engine.py -> tests/engine_helper.py"
+  [ "$output" = "src/engine.py" ]
+}
+
+@test "status paths: a COPY reports only the destination (the original is untouched)" {
+  run qpg_status_source_paths "C  src/old.py -> src/new.py"
   [ "$output" = "src/new.py" ]
 }
 
@@ -190,6 +237,32 @@ baseline() { fire "ls" >/dev/null 2>&1 || true; }
 @test "status paths: a .git/ path is carved out" {
   run qpg_status_source_paths " M .git/config.py"
   [ "$output" = "" ]
+}
+
+@test "status paths: a DIRECTORY entry (nested repo) is never source" {
+  # `-uall` descends ordinary untracked dirs, so a trailing slash can only be a
+  # nested repository the VCS refused to descend into: a linked worktree, a
+  # submodule, or a parked clone. Its basename is EMPTY, which matches no
+  # carve-out, so before the guard this fell through to "source" and the main
+  # checkout blocked on a directory as soon as a worktree existed.
+  run qpg_status_source_paths "?? .claude/worktrees/my-branch/"
+  [ "$output" = "" ]
+  run qpg_status_source_paths "?? vendor/some-clone/"
+  [ "$output" = "" ]
+}
+
+@test "status paths: a directory entry does not mask real source on other lines" {
+  run qpg_status_source_paths "?? .claude/worktrees/wt1/
+ M src/real.py"
+  [ "$output" = "src/real.py" ]
+}
+
+@test "status paths: unmerged conflict codes still count as source" {
+  # A conflicted source file is genuinely modified; UU/AA/DD must not slip past.
+  run qpg_status_source_paths "UU src/app.py"
+  [ "$output" = "src/app.py" ]
+  run qpg_status_source_paths "AA src/two.py"
+  [ "$output" = "src/two.py" ]
 }
 
 @test "status paths: a quoted path is unquoted before classification" {
@@ -364,11 +437,26 @@ PY"
   [ "$output" = "" ]
 }
 
-@test "e2e: a read-only command changes nothing and so cannot fire" {
+@test "e2e: a read-only command with nothing changed does not fire" {
+  # NOTE the careful name. The gate CANNOT guarantee "a read-only command never
+  # fires": it reports any source change since the previous call, whoever made
+  # it, so a `cat` is perfectly capable of surfacing an editor's write. The
+  # earlier name claimed that guarantee and this test never checked it.
   opt_in
   baseline
   run fire "cat src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-present
+}
+
+@test "e2e: a read-only command DOES surface an out-of-band change (documented behavior)" {
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"   # as if the human's editor did it
+  run fire "cat src/app.py"
+  assert_contains "$output" '"decision":"block"'
+  # ...and the wording must not blame the command that merely observed it.
+  assert_missing "$output" "a Bash command just modified"
+  assert_contains "$output" "changed since this session's previous Bash call"
 }
 
 @test "e2e: writing docs, config and tests does not block" {
@@ -378,7 +466,21 @@ PY"
   printf '{}\n'     > "$REPO/settings.json"
   printf 'y\n'     >> "$REPO/tests/test_app.py"
   run fire "tee docs/guide.md settings.json tests/test_app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-present
+}
+
+@test "e2e: data and build artifacts do not block" {
+  # The false-positive class most likely to get the gate deleted: a repo whose
+  # job is writing CSVs, a QA screenshot, a tee'd build log. Measured against the
+  # real ~/dev, one repo had 15 dirty paths that were all scraped html/csv.
+  opt_in
+  baseline
+  printf 'a,b\n1,2\n' > "$REPO/out.csv"
+  printf 'PNG\n'      > "$REPO/shot.png"
+  printf 'log\n'      > "$REPO/run.log"
+  printf 'x\n'        > "$REPO/app.db"
+  run fire "python3 report.py > out.csv; screencapture shot.png; make | tee run.log"
+  assert_allowed "$output" snap-present
 }
 
 @test "e2e: writing outside the repo (/tmp) does not block" {
@@ -386,7 +488,46 @@ PY"
   baseline
   printf 'x\n' > "$BATS_TEST_TMPDIR/scratch.py"
   run fire "cat > $BATS_TEST_TMPDIR/scratch.py"
+  assert_allowed "$output" snap-present
+}
+
+@test "e2e: a dirty submodule gitlink is skipped, not recorded as an unhashable path" {
+  # The superproject reports a dirty submodule as ONE path with no trailing
+  # slash, so the classifier's nested-repo rule misses it. Recording it stored
+  # `- <path>` (a directory cannot be hashed), and every later edit inside the
+  # already-dirty submodule produced a byte-identical line that never fired
+  # again. Skipping it matches the documented rule: nested repos are governed by
+  # their own hook.
+  opt_in
+  SUB="$ROOT/sub"
+  mkdir -p "$SUB"
+  git -C "$SUB" init -q
+  git -C "$SUB" config user.name T
+  git -C "$SUB" config user.email t@e.com
+  printf 'x\n' > "$SUB/lib.py"
+  git -C "$SUB" add -A
+  git -C "$SUB" commit -q -m init
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" vendor/sub 2>/dev/null
+  git -C "$REPO" commit -q -m "add submodule" 2>/dev/null
+  baseline
+  printf 'y\n' > "$REPO/vendor/sub/lib.py"    # dirty the submodule's contents
+  run fire "cat > vendor/sub/lib.py"
+  assert_missing "$output" '"decision":"block"'
+  run cat "$SNAP"
+  assert_missing "$output" "vendor/sub"
+}
+
+@test "e2e: creating a linked worktree inside the repo does not block" {
+  # The real-world shape of the directory-entry bug: a worktree under
+  # .claude/worktrees/ makes the MAIN checkout report one collapsed untracked
+  # directory. Before the guard, the next Bash call here blocked on it.
+  opt_in
+  baseline
+  mkdir -p "$REPO/.claude/worktrees"
+  git -C "$REPO" worktree add -q -b wt-probe "$REPO/.claude/worktrees/wt-probe" >/dev/null 2>&1
+  run fire "git worktree add .claude/worktrees/wt-probe"
   [ "$output" = "" ]
+  git -C "$REPO" worktree remove --force "$REPO/.claude/worktrees/wt-probe" >/dev/null 2>&1 || true
 }
 
 @test "e2e: writing a gitignored path does not block" {
@@ -420,15 +561,32 @@ PY"
   assert_contains "$output" '"decision":"block"'
 }
 
-@test "e2e: a validly stamped branch allows, and short-circuits before snapshotting" {
+@test "e2e: a validly stamped branch allows, but still refreshes the snapshot" {
+  # It used to exit BEFORE the snapshot step as a cost saving. That left the
+  # snapshot stale for the whole approved window, so the moment the stamp lapsed
+  # (every human-override stamp is TTL-bounded, and approval-expired is a real
+  # verdict) the next command, even a bare `ls`, blocked naming every file the
+  # human had already approved, advising them to undo it. Refreshing here costs
+  # one write and removes that entirely.
   opt_in
   stamp_for "feat/thing"
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
-  # Pins WHICH allow this was: allow-stamped exits before the snapshot step, so
-  # no snapshot file exists. An outcome-only assertion would pass for any allow.
-  [ ! -f "$SNAP" ]
+  assert_allowed "$output" snap-present
+  run cat "$SNAP"
+  assert_contains "$output" "src/app.py"
+}
+
+@test "e2e REGRESSION: a lapsed stamp does not dump the approved window as a block" {
+  opt_in
+  stamp_for "feat/thing"
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  printf 'x\n'        > "$REPO/src/b.py"
+  fire "cat > src/app.py" >/dev/null 2>&1 || true   # allowed, and recorded
+  rm -f "$GITDIR/qa-plan-approved"                   # the stamp lapses
+  run fire "ls"                                      # a read-only command
+  assert_allowed "$output" snap-present
 }
 
 @test "e2e: on the base branch there is no feature work to gate" {
@@ -437,7 +595,7 @@ PY"
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-absent
 }
 
 @test "e2e: a spike/ branch bypasses, exactly as it does for gate 1" {
@@ -446,7 +604,7 @@ PY"
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-absent
 }
 
 @test "e2e: an un-governed repo (no policy) allows" {
@@ -454,7 +612,7 @@ PY"
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-absent
 }
 
 @test "e2e: a repo with the build gate disabled allows" {
@@ -462,15 +620,18 @@ PY"
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-absent
 }
 
-@test "e2e: a detached HEAD allows" {
+@test "e2e: a detached HEAD allows, and exits before snapshotting" {
+  # Proved by mutation: deleting the detached guard left this test green, because
+  # the fall-through landed on allow-baseline, which is equally silent. The
+  # snapshot discriminator is what makes the assertion real.
   opt_in
   git -C "$REPO" checkout -q --detach
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  [ "$output" = "" ]
+  assert_allowed "$output" snap-absent
 }
 
 @test "e2e: a non-Bash tool is ignored" {
@@ -502,6 +663,187 @@ PY"
   assert_contains "$output" "spike/"
 }
 
+@test "e2e: a new source file inside a NEW untracked directory BLOCKS" {
+  # Pins `-uall`. Dropping it collapses the new directory to one `src/newmod/`
+  # entry, which the trailing-slash guard then drops, so the whole directory is
+  # SILENTLY ALLOWED. Creating a new module through a heredoc is the most common
+  # build shape this gate exists for, and the mutation was previously uncaught.
+  opt_in
+  baseline
+  mkdir -p "$REPO/src/newmod"
+  printf 'x\n' > "$REPO/src/newmod/thing.py"
+  run fire "mkdir -p src/newmod && cat > src/newmod/thing.py"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/newmod/thing.py"
+}
+
+@test "e2e: the block payload is VALID JSON on stdout alone" {
+  # Every other block test greps a merged stdout+stderr stream, so a stray stdout
+  # line left all 54 green while the runtime saw unparseable JSON and the block
+  # silently became a no-op. Parse it the way the harness does.
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run bash -c 'payload=$(jq -nc --arg c "cat > src/app.py" --arg cwd "$1" --arg sid "$2" \
+      "{hook_event_name:\"PostToolUse\", tool_name:\"Bash\", tool_input:{command:\$c}, cwd:\$cwd, session_id:\$sid}"); \
+      printf "%s" "$payload" | bash "$3" 2>/dev/null | jq -er ".decision"' \
+    _ "$REPO" "$SESSION" "$GATE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "block" ]
+}
+
+@test "e2e: PostToolUseFailure is honored, so a write-then-fail cannot escape" {
+  # PostToolUse fires only for a SUCCESSFUL call, so `sed -i src/app.py && npm
+  # test` with a failing test wrote source and the gate never ran. Verified
+  # against CLI 2.1.261 that PostToolUseFailure fires for a non-zero Bash call.
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "sed -i '' s/x/y/ src/app.py && npm test" "$REPO" "PostToolUseFailure"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/app.py"
+}
+
+@test "e2e: an unknown hook event is ignored" {
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "cat > src/app.py" "$REPO" "SomeOtherEvent"
+  [ "$output" = "" ]
+}
+
+# Cross the >200 dirty-source-path threshold, which is the reachable way to force
+# the degraded comparison mode. (Hiding shasum via PATH also hides git, so the
+# gate exits long before the degrade and the test proves nothing: that mistake
+# made the first version of these two tests pass for the wrong reason.)
+make_many_source_files() {  # <n>
+  local i
+  mkdir -p "$REPO/src/bulk"
+  for ((i = 0; i < $1; i++)); do printf 'x\n' > "$REPO/src/bulk/f$i.py"; done
+}
+
+@test "e2e REGRESSION: a degrade-mode flip re-baselines instead of blocking on everything" {
+  # Degraded lines are `- <path>` and normal lines are `<digest> <path>`, so when
+  # the mode flips EVERY line differs verbatim and the delta reported every dirty
+  # path at once. Reproduced: a bare `ls` blocked naming 200 files. The mode now
+  # lives in the snapshot header, so a flip reads as "no baseline".
+  opt_in
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  baseline                                   # digest-mode snapshot
+  run cat "$SNAP"
+  assert_contains "$output" "mode=digest"
+  make_many_source_files 205                 # crosses the cap -> paths mode
+  run fire "ls"                              # a READ-ONLY command
+  assert_missing "$output" '"decision":"block"'
+  run cat "$SNAP"
+  assert_contains "$output" "mode=paths"
+}
+
+@test "e2e: the degrade is LOGGED, never silent" {
+  # The PR's whole answer to "we never no-op silently" had zero coverage: the
+  # logging could be deleted outright and the suite stayed green.
+  opt_in
+  make_many_source_files 205
+  run fire "ls"
+  run cat "$GATELOG"
+  assert_contains "$output" "delta-degraded"
+  assert_contains "$output" "too-many-paths=20"
+}
+
+@test "e2e: a failing git status is logged rather than silently ungating" {
+  # `status` exits non-zero on a corrupt index or a safe.directory refusal, and
+  # the refusal is PERSISTENT, so the gate would be permanently and invisibly off
+  # while the docs claim coverage.
+  opt_in
+  baseline
+  printf 'corrupt' > "$GITDIR/index"
+  run fire "cat > src/app.py"
+  [ "$output" = "" ]
+  run cat "$GATELOG"
+  assert_contains "$output" "FAIL-OPEN(status-failed)"
+}
+
+@test "e2e REGRESSION: an unwritable git dir does not cause a block storm" {
+  # Reproduced before the fix: call 1 blocked correctly and EVERY later call,
+  # `ls` included, reblocked forever with no explanation. That is the exact
+  # failure the unconditional snapshot write exists to prevent.
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  chmod a-w "$GITDIR"
+  run fire "cat > src/app.py"
+  chmod u+w "$GITDIR"
+  assert_contains "$output" '"decision":"block"'
+  # The block must say WHY it will repeat, instead of leaving it inexplicable.
+  assert_contains "$output" "could not record state"
+  run cat "$GATELOG"
+  assert_contains "$output" "snapshot-write-failed"
+}
+
+@test "e2e: two sessions in one checkout do not consume each other's delta" {
+  # The inversion this keying fixes: with one shared snapshot, whichever hook
+  # fired first ate the delta, so the INNOCENT session was blocked for the
+  # other's write and the WRITING session was never blocked at all.
+  opt_in
+  fire "ls" "$REPO" "PostToolUse" "sessA" >/dev/null 2>&1 || true
+  fire "ls" "$REPO" "PostToolUse" "sessB" >/dev/null 2>&1 || true
+  printf 'print(2)\n' > "$REPO/src/app.py"      # session A writes
+  run fire "cat > src/app.py" "$REPO" "PostToolUse" "sessA"
+  assert_contains "$output" '"decision":"block"'   # A is told, correctly
+  run fire "ls" "$REPO" "PostToolUse" "sessB"
+  assert_contains "$output" '"decision":"block"'   # B sees it too, once
+  run fire "ls" "$REPO" "PostToolUse" "sessB"
+  assert_missing "$output" '"decision":"block"'    # and not again
+}
+
+@test "e2e: a cd inside a heredoc body does not redirect repo resolution" {
+  # The extraction ran per-line over the whole command, so a `cd` on ANY line
+  # won. A heredoc writing a shell script whose body contains `cd /tmp`
+  # retargeted the gate to /tmp, where rev-parse fails and the call exits
+  # ungated. Writing shell scripts through heredocs is this gate's own use case.
+  opt_in
+  baseline
+  printf 'cd /tmp\n' > "$REPO/src/deploy.sh"
+  run fire "cat > src/deploy.sh <<'EOF'
+cd /tmp
+EOF"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/deploy.sh"
+}
+
+@test "e2e: a non-default verdict reaches the message (not only no-stamp)" {
+  opt_in
+  stamp_for "feat/some-other-branch"
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "cat > src/app.py"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "wrong-branch"
+}
+
+@test "e2e: git mv of source into a test path still blocks" {
+  # Only the rename DESTINATION used to be classified, and a test path is a
+  # carve-out, so removing application source vanished entirely.
+  opt_in
+  baseline
+  git -C "$REPO" mv src/app.py tests/app_helper.py
+  run fire "git mv src/app.py tests/app_helper.py"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" "src/app.py"
+}
+
+@test "e2e: staging a file does not by itself produce a block" {
+  # `git add` changes the porcelain XY columns but not the path or the digest,
+  # so it must be a no-op here. Pins that the status columns stay out of the
+  # snapshot line.
+  opt_in
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  baseline
+  git -C "$REPO" add src/app.py
+  run fire "git add src/app.py"
+  assert_allowed "$output" snap-present
+}
+
 @test "e2e: the block reason is honest that it fired AFTER the write" {
   # The one thing this message must never imply is that it stopped anything. It
   # cannot: PostToolUse runs after the tool. Asserted positively, on the sentence
@@ -511,6 +853,36 @@ PY"
   baseline
   printf 'print(2)\n' > "$REPO/src/app.py"
   run fire "cat > src/app.py"
-  assert_contains "$output" "this fires AFTER the write, so nothing was prevented"
+  assert_contains "$output" "it fires AFTER the write, so nothing was prevented"
   assert_contains "$output" "NOTHING HAS BEEN REVERTED"
+}
+
+@test "e2e: the block reason warns that a git tree operation may be a false alarm" {
+  # The old remediation said "undo it yourself" unconditionally. After a stash
+  # pop, merge, rebase or apply, following that destroys work, and those are
+  # exactly the operations that produce a large sudden delta.
+  opt_in
+  baseline
+  printf 'print(2)\n' > "$REPO/src/app.py"
+  run fire "git stash pop"
+  assert_contains "$output" "stash pop, merge, rebase"
+  assert_contains "$output" "should NOT undo anything"
+}
+
+# ============================================================================
+# Classifier: data / build artifacts (shared with gate 1)
+# ============================================================================
+
+@test "path: data and build artifacts are carved out" {
+  for f in out.csv data.tsv db.sqlite3 shot.png logo.svg run.log bundle.tar.gz .DS_Store; do
+    run qpg_path_needs_plan "some/dir/$f"
+    [ "$output" = "carveout" ]
+  done
+}
+
+@test "path: real source is still source after the artifact carve-out" {
+  for f in main.py app.ts server.go lib.rs Makefile deploy.sh; do
+    run qpg_path_needs_plan "src/$f"
+    [ "$output" = "source" ]
+  done
 }
