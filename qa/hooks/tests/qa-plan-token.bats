@@ -31,7 +31,25 @@ setup() {
   GITDIR=$(git -C "$REPO" rev-parse --absolute-git-dir)
 }
 
-teardown() { rm -rf "$REPO"; }
+# Scratch dirs must live under $HOME/dev (the governed-root rule), so they cannot
+# use BATS_TEST_TMPDIR. bats aborts a test body at the FIRST failed assertion, so
+# a trailing `rm -rf` inside a test cleans up only when cleanup does not matter.
+# teardown always runs, so registration happens here. Observed for real during
+# this change: leaked .qptest2.* dirs after a failing run.
+_qp_scratch=()
+qp_scratch() { _qp_scratch+=("$1"); printf '%s' "$1"; }
+teardown() {
+  rm -rf "$REPO"
+  # `[ -n "$d" ] && rm -rf "$d"` looks equivalent and is not: with an empty array
+  # the `:-` expansion yields one empty element, the test is false, the && chain
+  # returns 1, and errexit kills teardown on every test that registered nothing.
+  # Same family as this repo's bare-`[[ ]]` rule: the exit status of the last
+  # command is load-bearing whether or not you meant it to be.
+  for d in "${_qp_scratch[@]:-}"; do
+    if [ -n "$d" ]; then rm -rf "$d"; fi
+  done
+  return 0
+}
 # ---- substring assertions ---------------------------------------------------
 #
 # WHY THESE EXIST INSTEAD OF `[[ "$output" == *"x"* ]]`. Measured on bats-core
@@ -1143,7 +1161,7 @@ _mint_token_for() {  # <gitdir> <branch>
 # A second repo, so "bound to the declared target" can be distinguished from
 # "bound to cwd". Both must exist for the difference to be observable at all.
 setup_repo2() {
-  REPO2=$(mktemp -d "$HOME/dev/.qptest2.XXXXXX")
+  REPO2=$(qp_scratch "$(mktemp -d "$HOME/dev/.qptest2.XXXXXX")")
   git -C "$REPO2" init -q
   git -C "$REPO2" config user.name "Real Human"
   git -C "$REPO2" config user.email "h@example.com"
@@ -1155,7 +1173,7 @@ setup_repo2() {
 
 # Mint with an isolated gate log so the refusal REASON can be asserted.
 mint_with_target() {  # <declared> [answer]
-  LOGDIR=$(mktemp -d)
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
   ask_payload "QA plan" \
     "Approve the plan?
 <qa-plan-target:$1>
@@ -1241,7 +1259,6 @@ mint_with_target() {  # <declared> [answer]
   [ "$output" = "other/branch" ]
   run jq -r .target_source "$GITDIR2/qa-plan-approval-token"
   [ "$output" = "declared" ]
-  rm -rf "$REPO2"
 }
 
 @test "mint: NO declaration reproduces the pre-3.14.0 cwd binding exactly" {
@@ -1254,7 +1271,7 @@ mint_with_target() {  # <declared> [answer]
 }
 
 @test "mint: a declaration outside the governed root mints NOTHING and says so" {
-  OUT=$(mktemp -d)
+  OUT=$(qp_scratch "$(mktemp -d)")
   git -C "$OUT" init -q
   git -C "$OUT" commit -q --allow-empty -m init
   git -C "$OUT" checkout -q -b feat/x
@@ -1264,7 +1281,6 @@ mint_with_target() {  # <declared> [answer]
   run cat "$LOGDIR/qa-plan-gate.log"
   assert_contains "$output" "target-refused(outside-root)"
   assert_missing "$output" "target-refused(branch-mismatch)"
-  rm -rf "$OUT"
 }
 
 @test "mint: a declared branch that does not match the checkout mints NOTHING and says so" {
@@ -1275,7 +1291,6 @@ mint_with_target() {  # <declared> [answer]
   run cat "$LOGDIR/qa-plan-gate.log"
   assert_contains "$output" "target-refused(branch-mismatch)"
   assert_missing "$output" "target-refused(outside-root)"
-  rm -rf "$REPO2"
 }
 
 @test "target_verdict: a path INSIDE a repo but not its root is not-toplevel" {
@@ -1297,7 +1312,7 @@ mint_with_target() {  # <declared> [answer]
 @test "mint: a declared path that is not a repo ROOT mints NOTHING and says so" {
   # A plain dir under ~/dev. Because ~/dev is a git repo, the naive check would
   # have resolved this to ~/dev and bound the token to the workspace repo.
-  NOTREPO=$(mktemp -d "$HOME/dev/.qpnotrepo.XXXXXX")
+  NOTREPO=$(qp_scratch "$(mktemp -d "$HOME/dev/.qpnotrepo.XXXXXX")")
   # The enclosing repo is asserted UNCHANGED, not absent. A bare absence check
   # reads whatever ambient state ~/dev happens to carry, so it fails for reasons
   # that have nothing to do with this hook. Snapshot, act, compare.
@@ -1316,7 +1331,6 @@ mint_with_target() {  # <declared> [answer]
   run cat "$LOGDIR/qa-plan-gate.log"
   assert_contains "$output" "target-refused(not-toplevel)"
   assert_missing "$output" "target-refused(branch-mismatch)"
-  rm -rf "$NOTREPO"
 }
 
 @test "mint: a subdir declaration cannot bind the token to its ENCLOSING repo" {
@@ -1327,7 +1341,7 @@ mint_with_target() {  # <declared> [answer]
   # change, when a mutation run left a real token in ~/dev/.git bound to main.
   # Self-contained on purpose: it builds its own parent so it does not depend
   # on which branch ~/dev happens to be sitting on.
-  PARENT=$(mktemp -d "$HOME/dev/.qpparent.XXXXXX")
+  PARENT=$(qp_scratch "$(mktemp -d "$HOME/dev/.qpparent.XXXXXX")")
   git -C "$PARENT" init -q
   git -C "$PARENT" config user.name "Real Human"
   git -C "$PARENT" config user.email "h@example.com"
@@ -1342,7 +1356,6 @@ mint_with_target() {  # <declared> [answer]
   run cat "$LOGDIR/qa-plan-gate.log"
   assert_contains "$output" "target-refused(not-toplevel)"
   assert_missing "$output" "target-refused(branch-mismatch)"
-  rm -rf "$PARENT"
 }
 
 # ---- ordering: shape is decided BEFORE any filesystem access -----------------
@@ -1379,7 +1392,7 @@ mint_with_target() {  # <declared> [answer]
   # outside-root whether the probes ran first or not: that test passes either
   # way and proves nothing. The only observable difference is whether git was
   # POINTED AT the path, so this shims git and reads its invocation log.
-  SHIM=$(mktemp -d)
+  SHIM=$(qp_scratch "$(mktemp -d)")
   GITLOG="$SHIM/git-calls.log"
   REALGIT=$(command -v git)
   cat > "$SHIM/git" <<SH
@@ -1389,7 +1402,7 @@ exec "$REALGIT" "\$@"
 SH
   chmod +x "$SHIM/git"
 
-  LOGDIR=$(mktemp -d)
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
   Q="Approve the plan?
 <qa-plan-target:/definitely/not/here/repo@feat/x>
 <qa-plan-digest:$DIGEST_A>"
@@ -1406,5 +1419,86 @@ SH
   assert_missing "$output" "/definitely/not/here/repo"
   run cat "$LOGDIR/qa-plan-gate.log"
   assert_contains "$output" "target-refused(outside-root)"
-  rm -rf "$SHIM"
+}
+
+# ---- CodeRabbit findings on PR #89, each with the test that was missing ------
+
+@test "mint: a valid declared target works even when the session cwd is NOT a repo" {
+  # The session repo used to be a hard precondition (`|| exit 0` on the cwd
+  # lookup), so a session started at ~ or /tmp minted nothing however valid the
+  # declaration was. That is the exact cross-repo case this feature exists for,
+  # and it failed silently: no token, no log line.
+  setup_repo2
+  NOREPO=$(qp_scratch "$(mktemp -d)")
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
+  Q="Approve the plan?
+<qa-plan-target:$REPO2@other/branch>
+<qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg q "$Q" --arg cwd "$NOREPO" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q, header:"QA plan", options:[], multiSelect:false}]},
+      tool_response:{answers:{($q):"Approve"}}}' \
+    | env CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+  [ -f "$GITDIR2/qa-plan-approval-token" ]
+  run jq -r .target_source "$GITDIR2/qa-plan-approval-token"
+  [ "$output" = "declared" ]
+}
+
+@test "mint: a PRESENT but unparseable marker fails closed, it does NOT fall back to cwd" {
+  # The extractor's charset is narrow on purpose, so an ordinary macOS checkout
+  # under a path containing a space yields an empty _DECLARED. Treating that as
+  # "no marker" bound the token to the session repo instead: the wrong-target
+  # bind this whole change removes, reached through the parser rather than a
+  # verdict, and with no log line to show for it.
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
+  Q="Approve the plan?
+<qa-plan-target:/Users/x/dev/my repo@main>
+<qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg q "$Q" --arg cwd "$REPO" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q, header:"QA plan", options:[], multiSelect:false}]},
+      tool_response:{answers:{($q):"Approve"}}}' \
+    | env CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+  # The cwd repo must NOT have been stamped as a consolation prize.
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(unparseable)"
+}
+
+@test "mint: an unset HOME yields an EMPTY governed root, which refuses" {
+  # `${HOME:-}/dev` expands to `/dev`, and `/dev` IS absolute, so the
+  # non-absolute check never fired and the governed root really did degrade to
+  # a real directory. The release note claimed the opposite until CodeRabbit
+  # pointed out the guard could not hold.
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
+  Q="Approve the plan?
+<qa-plan-target:/dev/anything@main>
+<qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg q "$Q" --arg cwd "$REPO" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q, header:"QA plan", options:[], multiSelect:false}]},
+      tool_response:{answers:{($q):"Approve"}}}' \
+    | env -u HOME -u QPT_GOVERNED_ROOT CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(outside-root)"
+}
+
+@test "target marker: a mid-line MENTION is not a declaration" {
+  # A QA plan for this feature quotes the marker in its own text. Mid-line
+  # matching would read that as a declaration, fail to parse it, and fail closed
+  # on a plan that declared nothing. Anchored to line start, a mention is inert.
+  run qpt_target_marker_present "see the <qa-plan-target:PATH@BRANCH> marker docs"
+  [ -z "$output" ]
+  run qpt_target_from_question "see the <qa-plan-target:/Users/x/dev/r@main> inline"
+  [ -z "$output" ]
+}
+
+@test "target marker: present-on-its-own-line is detected even when unparseable" {
+  run qpt_target_marker_present "Approve?
+<qa-plan-target:\$TARGET_PATH@\$TARGET_BRANCH>"
+  [ "$output" = "present" ]
+  run qpt_target_from_question "Approve?
+<qa-plan-target:\$TARGET_PATH@\$TARGET_BRANCH>"
+  [ -z "$output" ]
 }

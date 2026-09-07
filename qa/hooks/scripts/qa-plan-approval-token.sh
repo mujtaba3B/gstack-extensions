@@ -81,7 +81,14 @@ fi
 # which keeps every pre-3.14.0 caller working exactly as before.
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 { [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
-GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+# Best effort, NOT a precondition. This used to `|| exit 0`, which made the
+# session cwd a hard requirement and so dropped a perfectly valid declared
+# target whenever the session was started outside any checkout (`~`, `/tmp`, a
+# plain project dir). That is the silent no-mint this hook fears most: no token,
+# no log line, and the stamp writer then blames a dormant hook. The declared
+# target can supply both of these on its own, so the "nowhere to write" decision
+# moves to AFTER the declaration has had its turn.
+GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null || echo "")
 BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 TARGET_SOURCE="cwd"
 
@@ -140,9 +147,28 @@ ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
 # failure mode (the stamp writer then blames an unregistered hook and sends the
 # operator to restart for something a restart cannot fix).
 _DECLARED=$(qpt_target_from_question "$QUESTION")
+
+# A marker that is PRESENT but does not parse is NOT the same as an absent one,
+# and collapsing the two hands the unparseable case straight to the cwd fallback:
+# the wrong-target bind this block exists to prevent, reached through the parser
+# instead of through a verdict. The extractor's charset is deliberately narrow,
+# so an ordinary macOS checkout under a path with a space produces exactly this.
+if [ "$(qpt_target_marker_present "$QUESTION")" = "present" ]; then
+    if [ -z "$_DECLARED" ]; then
+      printf '%s approval-token target-refused(unparseable) branch=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${BRANCH:-?}" \
+        >> "$(qpt_gate_log)" 2>/dev/null || true
+      exit 0
+    fi
+fi
+
 if [ -n "$_DECLARED" ]; then
   _dpath=$(qpt_target_path "$_DECLARED")
-  _droot="${QPT_GOVERNED_ROOT:-${HOME:-}/dev}"
+  # An unset HOME must yield an EMPTY root, which the shape verdict refuses.
+  # `${HOME:-}/dev` expanded to `/dev`, which IS absolute, so the non-absolute
+  # check never fired for it and the governed root really did degrade.
+  _droot="${QPT_GOVERNED_ROOT:-}"
+  if [ -z "$_droot" ] && [ -n "${HOME:-}" ]; then _droot="$HOME/dev"; fi
 
   # PHASE ONE, before ANY filesystem access. The probes below run git inside the
   # declared directory, and git reads that repo's config, so a path this hook has
@@ -168,6 +194,16 @@ if [ -n "$_DECLARED" ]; then
   GITDIR="$_dgitdir"
   BRANCH="$_dbranch"
   TARGET_SOURCE="declared"
+fi
+
+# Neither a declared target nor a session repo resolved, so there is nowhere to
+# put a token. Exiting HERE rather than at the cwd lookup is the whole point of
+# making that lookup best effort.
+if [ -z "$GITDIR" ]; then
+  printf '%s approval-token no-mint(no-target) branch=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${BRANCH:-?}" \
+    >> "$(qpt_gate_log)" 2>/dev/null || true
+  exit 0
 fi
 
 # THE decision, in one pure call whose truth table is enumerated in bats. The

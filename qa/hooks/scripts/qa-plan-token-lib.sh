@@ -231,8 +231,29 @@ qpt_digest_from_question() {
 #   `..`). This value is attacker-relevant: it names a directory the hook will
 #   write a token into, so it is validated rather than trusted. Widening this
 #   regex widens that surface.
+#   ANCHORED TO LINE START, unlike the digest extractor, and the asymmetry is
+#   deliberate. The skill emits this marker on its own line. Matching it mid-line
+#   would make any question that MENTIONS the marker in prose look like a
+#   declaration, and the nearest such question is a QA plan for this feature,
+#   which quotes it as `<qa-plan-target:$TARGET_PATH@$TARGET_BRANCH>`. That does
+#   not parse (`$` is outside the charset), so with the companion presence check
+#   in the hook it would fail closed and mint nothing. Anchoring costs nothing and
+#   removes a self-inflicted footgun.
 qpt_target_from_question() {
-  printf '%s' "$1" | sed -nE 's|.*<qa-plan-target:(/[A-Za-z0-9._/-]+@[A-Za-z0-9._/-]+)>.*|\1|p' | head -1
+  printf '%s' "$1" | sed -nE 's|^<qa-plan-target:(/[A-Za-z0-9._/-]+@[A-Za-z0-9._/-]+)>[[:space:]]*$|\1|p' | head -1
+}
+
+# qpt_target_marker_present <question_text>
+#   Echoes `present` when a line BEGINS with the marker, else nothing. Presence
+#   is asked separately from parse so the hook can tell "no declaration" (use the
+#   cwd fallback) from "a declaration I cannot read" (fail closed). Same anchor as
+#   the extractor, so the two can never disagree about what counts as a marker.
+qpt_target_marker_present() {
+  case "
+$1" in
+    *"
+<qa-plan-target:"*) echo "present" ;;
+  esac
 }
 
 # qpt_target_path <declared>   -> the path half of `path@branch`

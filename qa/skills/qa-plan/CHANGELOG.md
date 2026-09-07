@@ -6,7 +6,8 @@ The approval binds to the plan's DECLARED target, not to whatever repo the
 session is sitting in.
 
 **The bug.** `qa-plan-approval-token.sh` took the repo and branch from the
-session's cwd and wrote the token into that session's `.git/qa-plan-approved`.
+session's cwd and wrote the token into that session's
+`.git/qa-plan-approval-token`.
 Its own comment defended this: "an AskUserQuestion has no command line, so the
 session cwd is the only signal, and it is the right one". Both halves were
 false. The digest marker already proved a question can carry declared data, and
@@ -47,7 +48,41 @@ at the unvalidated path. Its positive control shows three invocations against
 Also from that pass: with a declared target, the approver name and HEAD are read
 from the TARGET repo rather than the session's, which is the intended reading and
 is now stated where it happens; and an unset `HOME` no longer degrades the
-governed root to `/dev`, because a root that is not absolute contains nothing.
+governed root to `/dev`: it now yields an EMPTY root, which the shape verdict
+refuses. The first cut used `${HOME:-}/dev`, which expands to `/dev`, and `/dev`
+IS absolute, so the non-absolute check never fired for it. Caught by CodeRabbit,
+which was right that the release note asserted a guard that did not hold.
+
+**What CodeRabbit found that neither the tests nor the local review did.** Five
+findings on PR #89, all five valid. Two were Major and both were the SAME defect
+class this change exists to remove, reached by routes the tests did not cover:
+
+- The session-repo lookup was a hard precondition (`|| exit 0`), so a session
+  started outside any checkout minted nothing however valid the declaration was.
+  That is exactly the cross-repo case the feature is for, failing silently. The
+  lookup is now best effort and the nowhere-to-write exit happens AFTER the
+  declaration has had its turn.
+- A marker that is PRESENT but unparseable was indistinguishable from an absent
+  one, so it fell through to the cwd fallback: the wrong-target bind, reached
+  through the parser instead of a verdict. An ordinary macOS checkout under a
+  path containing a space produces it. Presence is now detected separately from
+  parse, and an unparseable marker fails closed.
+
+The other three: the unset-`HOME` guard above (the release note asserted a guard
+that could not hold); scratch repos leaking whenever a test failed, because bats
+aborts a test body at the first failed assertion so a trailing `rm -rf` runs only
+when it does not matter (registered and cleared in `teardown` now, and the first
+cut of that teardown was itself killed by errexit on an `&&` chain, the same
+last-command-status family as this repo's bare-`[[ ]]` rule); and a wrong token
+filename in this entry, `qa-plan-approved` (the STAMP) where the token is
+`qa-plan-approval-token`.
+
+Reviewing those fixes for what THEY broke (this repo's own rule) found one: the
+presence check matched the marker anywhere in the question, so a QA plan ABOUT
+this feature, which quotes the marker as `<qa-plan-target:$TARGET_PATH@$TARGET_BRANCH>`,
+would have been read as a declaration, failed to parse, and failed closed on a
+plan that declared nothing. Presence and extraction are both anchored to line
+start now, which is the form the skill emits.
 
 **What the tests found that review would not have.** `~/dev` is itself a git
 repo, so a declared path that is merely a plain directory beneath it resolves to
