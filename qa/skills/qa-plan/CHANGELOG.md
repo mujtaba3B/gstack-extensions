@@ -84,6 +84,28 @@ would have been read as a declaration, failed to parse, and failed closed on a
 plan that declared nothing. Presence and extraction are both anchored to line
 start now, which is the form the skill emits.
 
+**What CI found that no local run could.** The suite was 119/119 green locally and
+failed on the runner. The test asserting `not-toplevel` for a plain directory
+under the governed root had encoded a property of the AUTHOR'S MACHINE: `~/dev`
+is a git repo there (so the dir resolves to the workspace repo) and a bare
+directory on a clean runner (so it resolves to nothing). Same shape as an earlier
+ambient-state bug in that very test. It now points the governed root at a
+throwaway dir, so the verdict is the same everywhere.
+
+Emulating the runner locally (`HOME` set to a temp dir whose `dev` is not a repo)
+then caught a SECOND failure that CI had not reached, and that one was a real
+bug in two directions. `rev-parse --show-toplevel` reports the PHYSICAL path, so
+a declared path crossing a symlink never equalled it and a valid target was
+refused; on macOS that is the common case, since /var and /tmp are symlinks to
+/private/*. And the mirror image was a hole: containment was checked against the
+STRING, so a symlink inside the root pointing outside it passed and then bound
+wherever it led. Both sides are resolved with `cd -P` now (path AND root: resolving
+only one breaks containment whenever the root is itself logical), the containment
+check is re-run on the resolved value, and resolution happens before git is ever
+pointed at the path. That last ordering has its own test, because dropping the
+re-check mints nothing either way (the full verdict re-checks internally) and the
+only observable difference is that git got aimed at the escaping target first.
+
 **What the tests found that review would not have.** `~/dev` is itself a git
 repo, so a declared path that is merely a plain directory beneath it resolves to
 `~/dev/.git`. The first cut would not have refused it: it would have bound the

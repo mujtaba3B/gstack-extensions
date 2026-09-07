@@ -175,6 +175,38 @@ if [ -n "$_DECLARED" ]; then
   # not yet decided is allowed must never be handed to git. Bound first, then
   # touch. Getting this backwards was caught in review of this very change.
   _TV=$(qpt_target_shape_verdict "$_DECLARED" "$_droot")
+
+  # PHASE ONE-AND-A-HALF: resolve symlinks, then re-check containment on the
+  # RESOLVED path. Two separate reasons, and neither is optional.
+  #
+  # Correctness: `rev-parse --show-toplevel` reports the PHYSICAL path, so a
+  # declared path that crosses a symlink never equals it and a valid target is
+  # refused. On macOS this is the common case, not an exotic one: /var, /tmp and
+  # anything under them are symlinks to /private/*.
+  #
+  # Security, and this is the sharper half: containment was checked against the
+  # STRING. A symlink at <root>/link pointing outside the root passes that check
+  # and then binds wherever it actually leads. Re-checking after resolution is
+  # what closes it. `cd -P` is pure path resolution and executes no repo config,
+  # so it is safe to do here, before git is ever pointed at the path.
+  if [ "$_TV" = "ok" ]; then
+    # BOTH sides get resolved, never just one. Resolving only the path breaks
+    # containment whenever the ROOT is itself logical: on macOS a governed root
+    # under /var or /tmp resolves to /private/*, so a resolved path would read as
+    # outside a root it is plainly inside. Resolve both, compare like with like.
+    _dreal=$(cd -P "$_dpath" 2>/dev/null && pwd)
+    _drootreal=$(cd -P "$_droot" 2>/dev/null && pwd)
+    [ -n "$_drootreal" ] || _drootreal="$_droot"
+    if [ -z "$_dreal" ]; then
+      _TV="not-a-repo"
+    else
+      _dpath="$_dreal"
+      _droot="$_drootreal"
+      _DECLARED="${_dreal}@$(qpt_target_branch "$_DECLARED")"
+      _TV=$(qpt_target_shape_verdict "$_DECLARED" "$_droot")
+    fi
+  fi
+
   if [ "$_TV" = "ok" ]; then
     # PHASE TWO. The caller does the I/O; the verdict itself stays pure. Each
     # probe is best effort and yields empty on a path that is not a checkout,

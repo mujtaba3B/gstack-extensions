@@ -1172,13 +1172,14 @@ setup_repo2() {
 }
 
 # Mint with an isolated gate log so the refusal REASON can be asserted.
-mint_with_target() {  # <declared> [answer]
+mint_with_target() {  # <declared> [answer] [governed-root]
   LOGDIR=$(qp_scratch "$(mktemp -d)")
   ask_payload "QA plan" \
     "Approve the plan?
 <qa-plan-target:$1>
 <qa-plan-digest:$DIGEST_A>" "${2:-Approve}" \
-    | env CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+    | env CLAUDE_CONFIG_DIR="$LOGDIR" \
+          ${3:+QPT_GOVERNED_ROOT="$3"} bash "$MINT"
 }
 
 @test "target_from_question: extracts path@branch" {
@@ -1309,18 +1310,25 @@ mint_with_target() {  # <declared> [answer]
   [ "$output" != "not-toplevel" ]
 }
 
-@test "mint: a declared path that is not a repo ROOT mints NOTHING and says so" {
-  # A plain dir under ~/dev. Because ~/dev is a git repo, the naive check would
-  # have resolved this to ~/dev and bound the token to the workspace repo.
-  NOTREPO=$(qp_scratch "$(mktemp -d "$HOME/dev/.qpnotrepo.XXXXXX")")
+@test "mint: a declared path that is in NO repo mints NOTHING and says so" {
+  # Governed root is a throwaway dir on purpose. Keying this on the real ~/dev
+  # made the expected verdict depend on the MACHINE: ~/dev is a git repo on the
+  # author's laptop (so a plain dir under it resolves to the workspace repo and
+  # the verdict is not-toplevel) and a bare directory on a clean CI runner (so
+  # the verdict is not-a-repo). The test passed locally and failed in CI for a
+  # reason that had nothing to do with the code. The not-toplevel case has its
+  # own self-contained test below, which builds its own parent repo.
+  ROOT=$(qp_scratch "$(mktemp -d)")
+  NOTREPO=$(qp_scratch "$(mktemp -d "$ROOT/notrepo.XXXXXX")")
   # The enclosing repo is asserted UNCHANGED, not absent. A bare absence check
   # reads whatever ambient state ~/dev happens to carry, so it fails for reasons
   # that have nothing to do with this hook. Snapshot, act, compare.
   DEVGIT=$(git -C "$HOME/dev" rev-parse --absolute-git-dir 2>/dev/null || echo "")
   DEVBEFORE=""
-  [ -n "$DEVGIT" ] && [ -f "$DEVGIT/qa-plan-approval-token" ] \
-    && DEVBEFORE=$(cat "$DEVGIT/qa-plan-approval-token" 2>/dev/null)
-  mint_with_target "$NOTREPO@feat/x"
+  if [ -n "$DEVGIT" ] && [ -f "$DEVGIT/qa-plan-approval-token" ]; then
+    DEVBEFORE=$(cat "$DEVGIT/qa-plan-approval-token" 2>/dev/null)
+  fi
+  mint_with_target "$NOTREPO@feat/x" "Approve" "$ROOT"
   [ ! -f "$GITDIR/qa-plan-approval-token" ]
   if [ -n "$DEVGIT" ]; then
     DEVAFTER=""
@@ -1329,7 +1337,7 @@ mint_with_target() {  # <declared> [answer]
     [ "$DEVBEFORE" = "$DEVAFTER" ]
   fi
   run cat "$LOGDIR/qa-plan-gate.log"
-  assert_contains "$output" "target-refused(not-toplevel)"
+  assert_contains "$output" "target-refused(not-a-repo)"
   assert_missing "$output" "target-refused(branch-mismatch)"
 }
 
@@ -1501,4 +1509,76 @@ SH
   run qpt_target_from_question "Approve?
 <qa-plan-target:\$TARGET_PATH@\$TARGET_BRANCH>"
   [ -z "$output" ]
+}
+
+@test "mint: a declared path crossing a SYMLINK still binds (physical vs logical)" {
+  # `rev-parse --show-toplevel` reports the physical path, so comparing it to a
+  # logical declared path refuses a valid target. Not exotic on macOS: /var and
+  # /tmp are symlinks to /private/*, so any mktemp path hits this. Caught by
+  # emulating CI, not by the real CI run, which failed earlier for another reason.
+  # Root and repo both live under a mktemp dir, which on macOS is a LOGICAL
+  # /var/... path shadowing a physical /private/var/... one. That is the real
+  # shape of the bug: resolving only the path made it read as outside a root it
+  # is plainly inside.
+  LROOT=$(qp_scratch "$(mktemp -d)")
+  LREPO="$LROOT/repo"
+  mkdir -p "$LREPO"
+  git -C "$LREPO" init -q
+  git -C "$LREPO" config user.name "Real Human"
+  git -C "$LREPO" config user.email "h@example.com"
+  git -C "$LREPO" commit -q --allow-empty -m init
+  git -C "$LREPO" checkout -q -b link/branch
+  LGIT=$(git -C "$LREPO" rev-parse --absolute-git-dir)
+  mint_with_target "$LREPO@link/branch" "Approve" "$LROOT"
+  [ -f "$LGIT/qa-plan-approval-token" ]
+  run jq -r .target_source "$LGIT/qa-plan-approval-token"
+  [ "$output" = "declared" ]
+}
+
+@test "mint: a symlink ESCAPING the governed root is refused, not followed" {
+  # The mirror image, and the reason resolution must precede the containment
+  # re-check rather than replace it: a symlink inside the root pointing outside
+  # it passes a string-only containment check and then binds wherever it leads.
+  setup_repo2
+  ROOT=$(qp_scratch "$(mktemp -d)")
+  ln -s "$REPO2" "$ROOT/escape"
+  # REPO2 lives under $HOME/dev, which is OUTSIDE $ROOT.
+  mint_with_target "$ROOT/escape@other/branch" "Approve" "$ROOT"
+  [ ! -f "$GITDIR2/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(outside-root)"
+}
+
+@test "mint: git is NEVER invoked on a symlink that ESCAPES the governed root" {
+  # The post-resolution half of the ordering guarantee. Dropping the containment
+  # re-check after symlink resolution mints nothing either way, because the full
+  # verdict re-checks shape internally, so a no-token assertion cannot see the
+  # difference. What it CAN see is that git was pointed at the escaping target
+  # first. That is the bound-first-then-touch rule, and this is the only test
+  # that fails when it is broken.
+  setup_repo2
+  ROOT=$(qp_scratch "$(mktemp -d)")
+  ln -s "$REPO2" "$ROOT/escape"
+  SHIM=$(qp_scratch "$(mktemp -d)")
+  GITLOG="$SHIM/git-calls.log"
+  REALGIT=$(command -v git)
+  cat > "$SHIM/git" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$GITLOG"
+exec "$REALGIT" "\$@"
+SH
+  chmod +x "$SHIM/git"
+  LOGDIR=$(qp_scratch "$(mktemp -d)")
+  Q="Approve the plan?
+<qa-plan-target:$ROOT/escape@other/branch>
+<qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg q "$Q" --arg cwd "$REPO" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q, header:"QA plan", options:[], multiSelect:false}]},
+      tool_response:{answers:{($q):"Approve"}}}' \
+    | env PATH="$SHIM:$PATH" CLAUDE_CONFIG_DIR="$LOGDIR" QPT_GOVERNED_ROOT="$ROOT" bash "$MINT"
+  [ ! -f "$GITDIR2/qa-plan-approval-token" ]
+  run cat "$GITLOG"
+  assert_missing "$output" "$REPO2"
+  assert_missing "$output" "$ROOT/escape"
 }
