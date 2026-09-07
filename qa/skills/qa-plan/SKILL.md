@@ -210,15 +210,25 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
    DIGEST=$("$STAMP" digest <path-to-the-PR-body-or-plan-file>)   # or pipe the body on stdin
    ```
 
-   The question text carries both the plan link and the digest, in this order, each on its own line:
+   The question text carries the plan link, the declared target, and the digest, in this order, each on its own line:
 
    ```text
    Approve this QA plan?
    📄 Full plan: <artifact-url-from-step-4b>
+   <qa-plan-target:$TARGET_PATH@$TARGET_BRANCH>
    <qa-plan-digest:$DIGEST>
    ```
 
-   The **artifact URL is required** and is what makes the one-turn gate safe (see above). The **digest marker goes last, on its own line**. It DOES render in the modal, so treat it as a visible fingerprint of the plan being approved rather than hidden metadata. Extra lines above the marker are safe: `qpt_digest_from_question` matches per line, and the minter looks the answer up by the question's full text, newlines included. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
+   Build the target line from the repo the plan is FOR, not from wherever this session happens to be running:
+
+   ```bash
+   TARGET_PATH=$(git -C <the-target-repo> rev-parse --show-toplevel)
+   TARGET_BRANCH=$(git -C <the-target-repo> rev-parse --abbrev-ref HEAD)
+   ```
+
+   **Declare the target whenever you know it, which is always.** As of qa 3.14.0 the minting hook binds the token to this declaration and writes it where that repo's gate reads. Omit the line and the hook falls back to the session's cwd, which is the pre-3.14.0 behavior and is kept only so older callers keep working. Do not rely on the fallback: it is wrong exactly when the session is not rooted in the target repo, which is the normal case for a worktree, a sibling checkout, or any session driving another repo. The path must be absolute, must sit under `~/dev` (or `$QPT_GOVERNED_ROOT`), must contain no `..` segment, and must name a checkout currently on the declared branch. Anything else mints NOTHING and logs which rule failed to `~/.claude/qa-plan-gate.log`; it deliberately does not fall back to cwd, because silently stamping a different branch than the one on screen is the failure this marker exists to prevent.
+
+   The **artifact URL is required** and is what makes the one-turn gate safe (see above). The **digest marker goes last, on its own line**, with the target marker directly above it. It DOES render in the modal, so treat it as a visible fingerprint of the plan being approved rather than hidden metadata. Extra lines above the marker are safe: `qpt_digest_from_question` matches per line, and the minter looks the answer up by the question's full text, newlines included. This is what binds the approval to the plan the human actually saw: the minting hook copies the digest into the token, and the stamp takes its `criteria_digest` from the token, so an approval of plan A can never be stamped as an approval of plan B.
 
    An earlier version told you to run `shasum` over your own slice of the section. That produced a digest of RAW text while the gate hashed NORMALIZED text, so one stray trailing newline created a stamp whose digest could never match and a `gh pr create` that blocked forever with no way to satisfy it. Use the `digest` verb.
 

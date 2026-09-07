@@ -1,5 +1,64 @@
 # qa:plan CHANGELOG
 
+## v2.8.0 (qa plugin 3.14.0)
+
+The approval binds to the plan's DECLARED target, not to whatever repo the
+session is sitting in.
+
+**The bug.** `qa-plan-approval-token.sh` took the repo and branch from the
+session's cwd and wrote the token into that session's `.git/qa-plan-approved`.
+Its own comment defended this: "an AskUserQuestion has no command line, so the
+session cwd is the only signal, and it is the right one". Both halves were
+false. The digest marker already proved a question can carry declared data, and
+the repo a session sits in is routinely not the repo the human is approving for.
+
+Two failures came out of it. A cross-repo approval wrote its token where the
+target's gate never looks, so a correct approval was silently discarded; three
+sessions were blocked on exactly this on 2026-09-07. Worse, on a checkout shared
+by parallel sessions the ambient branch can belong to a PEER: on 2026-09-04 a
+valid token landed on another session's branch, whose own stamp predated it by
+16 minutes so `status` read entirely normal, and a `write` would have recorded
+the human approving a plan they had never seen. Ambient state cannot attest to a
+human's intent.
+
+**The fix.** `/qa:plan` emits `<qa-plan-target:/abs/path@branch>` beside the
+existing digest marker. `qpt_target_verdict` (pure, truth table in bats) decides
+whether that declaration may bind, and the hook does the I/O. Absent marker means
+the old cwd behavior, unchanged, so every pre-3.14.0 caller keeps working. Every
+other refusal FAILS CLOSED and logs which rule failed, rather than falling back
+to cwd, because quietly stamping a different branch than the one on screen is the
+defect being removed. The token records `target_source`, so any stamp can be
+audited afterwards.
+
+**What the local review caught, in this change's own code.** The first cut ran
+`git -C <declared-path>` three times BEFORE checking containment, so the hook
+touched a directory named in the question text before deciding that directory was
+allowed, and git reads the config of whatever repo it lands in. The decision is
+now two phases: `qpt_target_shape_verdict` settles everything decidable from the
+strings, with no filesystem access at all, and only an `ok` there permits the
+probes. Bound first, then touch. The test that pins this had to be rewritten
+before it was worth anything: asserting on the verdict LABEL cannot detect the
+ordering, because the full verdict re-checks shape internally and returns
+`outside-root` either way, so that test passed whether the probes ran first or
+not. The real probe shims `git`, runs the hook, and asserts git was never aimed
+at the unvalidated path. Its positive control shows three invocations against
+`/definitely/not/here/repo` when the phase split is removed.
+
+Also from that pass: with a declared target, the approver name and HEAD are read
+from the TARGET repo rather than the session's, which is the intended reading and
+is now stated where it happens; and an unset `HOME` no longer degrades the
+governed root to `/dev`, because a root that is not absolute contains nothing.
+
+**What the tests found that review would not have.** `~/dev` is itself a git
+repo, so a declared path that is merely a plain directory beneath it resolves to
+`~/dev/.git`. The first cut would not have refused it: it would have bound the
+token to the WORKSPACE repo. Hence `not-toplevel`, requiring the declared path to
+be the repo root, which is what the skill emits (`rev-parse --show-toplevel`).
+The declared path is attacker-relevant input, so its charset is narrow, `..` is
+rejected as a path SEGMENT (a directory legitimately named `..foo` is not
+traversal), and containment is compared with trailing slashes so a sibling that
+merely prefixes the root (`/dev` vs `/development`) cannot pass as a child.
+
 ## v2.7.0 (qa plugin 3.13.0)
 
 The build gate now covers source written through Bash, which it never did.

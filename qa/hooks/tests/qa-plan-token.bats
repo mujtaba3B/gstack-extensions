@@ -1129,3 +1129,282 @@ _mint_token_for() {  # <gitdir> <branch>
   [ ! -f "$WGD/qa-plan-approved" ]
   git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
 }
+
+# ========================================================================
+# Declared target (qa 3.14.0): the approval binds to the plan's target repo
+# and branch, not to whatever repo the session happens to be sitting in.
+#
+# The property: a verdict other than `ok` or `none` mints NOTHING, anywhere,
+# and says which rule failed. It must never fall back to cwd, because quietly
+# stamping a different branch than the one on screen is the exact defect this
+# marker exists to remove.
+# ========================================================================
+
+# A second repo, so "bound to the declared target" can be distinguished from
+# "bound to cwd". Both must exist for the difference to be observable at all.
+setup_repo2() {
+  REPO2=$(mktemp -d "$HOME/dev/.qptest2.XXXXXX")
+  git -C "$REPO2" init -q
+  git -C "$REPO2" config user.name "Real Human"
+  git -C "$REPO2" config user.email "h@example.com"
+  git -C "$REPO2" commit -q --allow-empty -m init
+  git -C "$REPO2" branch -M main
+  git -C "$REPO2" checkout -q -b other/branch
+  GITDIR2=$(git -C "$REPO2" rev-parse --absolute-git-dir)
+}
+
+# Mint with an isolated gate log so the refusal REASON can be asserted.
+mint_with_target() {  # <declared> [answer]
+  LOGDIR=$(mktemp -d)
+  ask_payload "QA plan" \
+    "Approve the plan?
+<qa-plan-target:$1>
+<qa-plan-digest:$DIGEST_A>" "${2:-Approve}" \
+    | env CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+}
+
+@test "target_from_question: extracts path@branch" {
+  run qpt_target_from_question "Approve?
+<qa-plan-target:/Users/x/dev/repo@feat/thing>
+<qa-plan-digest:$DIGEST_A>"
+  [ "$output" = "/Users/x/dev/repo@feat/thing" ]
+}
+
+@test "target_from_question: absent marker yields nothing" {
+  run qpt_target_from_question "Approve? <qa-plan-digest:$DIGEST_A>"
+  [ -z "$output" ]
+}
+
+@test "target_from_question: a path carrying a space or metacharacter is NOT extracted" {
+  run qpt_target_from_question "<qa-plan-target:/Users/x/dev/my repo@main>"
+  [ -z "$output" ]
+  run qpt_target_from_question "<qa-plan-target:/Users/x/dev/repo;rm -rf@main>"
+  [ -z "$output" ]
+}
+
+@test "target_verdict: a well-formed declaration on the right branch is ok" {
+  run qpt_target_verdict "/root/dev/r@feat/x" "/root/dev" "/root/dev/r/.git" "feat/x" "/root/dev/r"
+  [ "$output" = "ok" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "target_verdict: no declaration is none, which is the cwd fallback" {
+  run qpt_target_verdict "" "/root/dev" "/root/dev/r/.git" "feat/x"
+  [ "$output" = "none" ]
+}
+
+@test "target_verdict: a declaration missing the branch or the leading slash is malformed" {
+  run qpt_target_verdict "/root/dev/r" "/root/dev" "/root/dev/r/.git" "feat/x"
+  [ "$output" = "malformed" ]
+  run qpt_target_verdict "relative/r@feat/x" "/root/dev" "/root/dev/r/.git" "feat/x"
+  [ "$output" = "malformed" ]
+}
+
+@test "target_verdict: a .. SEGMENT is traversal, and it is not confused with outside-root" {
+  run qpt_target_verdict "/root/dev/../etc@feat/x" "/root/dev" "/root/dev/r/.git" "feat/x"
+  [ "$output" = "traversal" ]
+  # The negative assertion: a distinct rule failed, so it must not be reported
+  # as the containment one. Two rules collapsing into one verdict is how a
+  # refusal passes for the wrong reason.
+  [ "$output" != "outside-root" ]
+}
+
+@test "target_verdict: ..foo is a legitimate directory name, NOT traversal" {
+  run qpt_target_verdict "/root/dev/..foo@feat/x" "/root/dev" "/root/dev/..foo/.git" "feat/x" "/root/dev/..foo"
+  [ "$output" = "ok" ]
+}
+
+@test "target_verdict: a sibling that merely PREFIXES the root is outside it" {
+  run qpt_target_verdict "/root/development/r@feat/x" "/root/dev" "/root/development/r/.git" "feat/x"
+  [ "$output" = "outside-root" ]
+}
+
+@test "target_verdict: a path that is not a checkout is not-a-repo" {
+  run qpt_target_verdict "/root/dev/r@feat/x" "/root/dev" "" "feat/x"
+  [ "$output" = "not-a-repo" ]
+  [ "$output" != "branch-mismatch" ]
+}
+
+@test "target_verdict: a checkout on a DIFFERENT branch is branch-mismatch" {
+  run qpt_target_verdict "/root/dev/r@feat/x" "/root/dev" "/root/dev/r/.git" "main" "/root/dev/r"
+  [ "$output" = "branch-mismatch" ]
+  [ "$output" != "not-a-repo" ]
+}
+
+@test "mint: a declared target binds the token to THAT repo, and leaves cwd's alone" {
+  setup_repo2
+  mint_with_target "$REPO2@other/branch"
+  [ -f "$GITDIR2/qa-plan-approval-token" ]
+  # The whole point: the session's own repo gets nothing.
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run jq -r .branch "$GITDIR2/qa-plan-approval-token"
+  [ "$output" = "other/branch" ]
+  run jq -r .target_source "$GITDIR2/qa-plan-approval-token"
+  [ "$output" = "declared" ]
+  rm -rf "$REPO2"
+}
+
+@test "mint: NO declaration reproduces the pre-3.14.0 cwd binding exactly" {
+  mint_approval
+  [ -f "$GITDIR/qa-plan-approval-token" ]
+  run jq -r .branch "$GITDIR/qa-plan-approval-token"
+  [ "$output" = "feat/thing" ]
+  run jq -r .target_source "$GITDIR/qa-plan-approval-token"
+  [ "$output" = "cwd" ]
+}
+
+@test "mint: a declaration outside the governed root mints NOTHING and says so" {
+  OUT=$(mktemp -d)
+  git -C "$OUT" init -q
+  git -C "$OUT" commit -q --allow-empty -m init
+  git -C "$OUT" checkout -q -b feat/x
+  mint_with_target "$OUT@feat/x"
+  [ ! -f "$OUT/.git/qa-plan-approval-token" ]
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(outside-root)"
+  assert_missing "$output" "target-refused(branch-mismatch)"
+  rm -rf "$OUT"
+}
+
+@test "mint: a declared branch that does not match the checkout mints NOTHING and says so" {
+  setup_repo2
+  mint_with_target "$REPO2@not/the/branch"
+  [ ! -f "$GITDIR2/qa-plan-approval-token" ]
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(branch-mismatch)"
+  assert_missing "$output" "target-refused(outside-root)"
+  rm -rf "$REPO2"
+}
+
+@test "target_verdict: a path INSIDE a repo but not its root is not-toplevel" {
+  # Found by the wired test below, not by reasoning: ~/dev is itself a repo, so
+  # a plain directory under it resolves to ~/dev/.git. Binding there would have
+  # stamped the WORKSPACE repo instead of refusing.
+  run qpt_target_verdict "/root/dev/r/sub@feat/x" "/root/dev" "/root/dev/.git" "feat/x" "/root/dev"
+  [ "$output" = "not-toplevel" ]
+  [ "$output" != "not-a-repo" ]
+  [ "$output" != "branch-mismatch" ]
+}
+
+@test "target_verdict: a path in no repo at all is not-a-repo" {
+  run qpt_target_verdict "/root/dev/r@feat/x" "/root/dev" "" "feat/x" ""
+  [ "$output" = "not-a-repo" ]
+  [ "$output" != "not-toplevel" ]
+}
+
+@test "mint: a declared path that is not a repo ROOT mints NOTHING and says so" {
+  # A plain dir under ~/dev. Because ~/dev is a git repo, the naive check would
+  # have resolved this to ~/dev and bound the token to the workspace repo.
+  NOTREPO=$(mktemp -d "$HOME/dev/.qpnotrepo.XXXXXX")
+  # The enclosing repo is asserted UNCHANGED, not absent. A bare absence check
+  # reads whatever ambient state ~/dev happens to carry, so it fails for reasons
+  # that have nothing to do with this hook. Snapshot, act, compare.
+  DEVGIT=$(git -C "$HOME/dev" rev-parse --absolute-git-dir 2>/dev/null || echo "")
+  DEVBEFORE=""
+  [ -n "$DEVGIT" ] && [ -f "$DEVGIT/qa-plan-approval-token" ] \
+    && DEVBEFORE=$(cat "$DEVGIT/qa-plan-approval-token" 2>/dev/null)
+  mint_with_target "$NOTREPO@feat/x"
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  if [ -n "$DEVGIT" ]; then
+    DEVAFTER=""
+    [ -f "$DEVGIT/qa-plan-approval-token" ] \
+      && DEVAFTER=$(cat "$DEVGIT/qa-plan-approval-token" 2>/dev/null)
+    [ "$DEVBEFORE" = "$DEVAFTER" ]
+  fi
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(not-toplevel)"
+  assert_missing "$output" "target-refused(branch-mismatch)"
+  rm -rf "$NOTREPO"
+}
+
+@test "mint: a subdir declaration cannot bind the token to its ENCLOSING repo" {
+  # The damage case, and the reason not-toplevel exists. When the declared
+  # branch happens to MATCH the enclosing repo's branch, every other guard
+  # passes and the naive version binds the token to that enclosing repo: a
+  # different repo than the one the human was shown. Proven live during this
+  # change, when a mutation run left a real token in ~/dev/.git bound to main.
+  # Self-contained on purpose: it builds its own parent so it does not depend
+  # on which branch ~/dev happens to be sitting on.
+  PARENT=$(mktemp -d "$HOME/dev/.qpparent.XXXXXX")
+  git -C "$PARENT" init -q
+  git -C "$PARENT" config user.name "Real Human"
+  git -C "$PARENT" config user.email "h@example.com"
+  git -C "$PARENT" commit -q --allow-empty -m init
+  git -C "$PARENT" checkout -q -b enclosing/branch
+  PGIT=$(git -C "$PARENT" rev-parse --absolute-git-dir)
+  mkdir -p "$PARENT/sub"
+  # Declared branch matches the parent's, so ONLY the toplevel rule can refuse.
+  mint_with_target "$PARENT/sub@enclosing/branch"
+  [ ! -f "$PGIT/qa-plan-approval-token" ]
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(not-toplevel)"
+  assert_missing "$output" "target-refused(branch-mismatch)"
+  rm -rf "$PARENT"
+}
+
+# ---- ordering: shape is decided BEFORE any filesystem access -----------------
+#
+# The hook must not hand a path to `git -C` until it has decided the path is
+# allowed, because git reads the config of whatever repo it lands in. These
+# tests pin the ORDER, which is invisible to every other test here: each one
+# passes whether the check runs first or last, so only an ordering probe
+# distinguishes them.
+
+@test "target_shape_verdict: decides malformed, traversal and outside-root with NO repo inputs" {
+  run qpt_target_shape_verdict "relative@x" "/root/dev"
+  [ "$output" = "malformed" ]
+  run qpt_target_shape_verdict "/root/dev/../etc@x" "/root/dev"
+  [ "$output" = "traversal" ]
+  run qpt_target_shape_verdict "/elsewhere/r@x" "/root/dev"
+  [ "$output" = "outside-root" ]
+  run qpt_target_shape_verdict "/root/dev/r@x" "/root/dev"
+  [ "$output" = "ok" ]
+}
+
+@test "target_shape_verdict: a relative or empty root contains nothing" {
+  # An unset HOME turns the default root into `/dev`; an empty one would compare
+  # against nothing at all. Both must refuse rather than widen the surface.
+  run qpt_target_shape_verdict "/root/dev/r@x" ""
+  [ "$output" = "outside-root" ]
+  run qpt_target_shape_verdict "/root/dev/r@x" "relative/dev"
+  [ "$output" = "outside-root" ]
+}
+
+@test "mint: git is NEVER invoked on a declared path that fails the shape rules" {
+  # The real ordering probe. Asserting on the VERDICT label cannot detect this,
+  # because qpt_target_verdict re-checks shape internally and so returns
+  # outside-root whether the probes ran first or not: that test passes either
+  # way and proves nothing. The only observable difference is whether git was
+  # POINTED AT the path, so this shims git and reads its invocation log.
+  SHIM=$(mktemp -d)
+  GITLOG="$SHIM/git-calls.log"
+  REALGIT=$(command -v git)
+  cat > "$SHIM/git" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$GITLOG"
+exec "$REALGIT" "\$@"
+SH
+  chmod +x "$SHIM/git"
+
+  LOGDIR=$(mktemp -d)
+  Q="Approve the plan?
+<qa-plan-target:/definitely/not/here/repo@feat/x>
+<qa-plan-digest:$DIGEST_A>"
+  jq -nc --arg q "$Q" --arg cwd "$REPO" \
+    '{tool_name:"AskUserQuestion", cwd:$cwd, session_id:"s1",
+      tool_input:{questions:[{question:$q, header:"QA plan", options:[], multiSelect:false}]},
+      tool_response:{answers:{($q):"Approve"}}}' \
+    | env PATH="$SHIM:$PATH" CLAUDE_CONFIG_DIR="$LOGDIR" bash "$MINT"
+
+  [ ! -f "$GITDIR/qa-plan-approval-token" ]
+  # git ran (on the session cwd, legitimately) but was never aimed at the
+  # unvalidated declared path.
+  run cat "$GITLOG"
+  assert_missing "$output" "/definitely/not/here/repo"
+  run cat "$LOGDIR/qa-plan-gate.log"
+  assert_contains "$output" "target-refused(outside-root)"
+  rm -rf "$SHIM"
+}
