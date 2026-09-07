@@ -69,14 +69,28 @@ if [ -n "$_HB" ]; then
   find "$(qpt_liveness_dir)" -type f -mtime +7 -delete 2>/dev/null || true
 fi
 
-# Resolve the repo from the session cwd. Unlike the ship/land sentinels there is
-# no `cd <dir> &&` to honor: an AskUserQuestion has no command line, so the
-# session cwd is the only signal, and it is the right one (the human is approving
-# the plan for the repo the session is working in).
+# Resolve the session cwd. Until qa 3.14.0 this WAS the binding, on the reasoning
+# that "an AskUserQuestion has no command line, so the session cwd is the only
+# signal, and it is the right one". Both halves were false and the comment is kept
+# here as a marker of what changed: the question can carry declared data (the
+# digest marker already proved it), and the repo a session is sitting in is
+# routinely not the repo the human is approving a plan for. See
+# qpt_target_from_question in the lib for the two failures that produced.
+#
+# So cwd is now the FALLBACK, used only when the question declares no target,
+# which keeps every pre-3.14.0 caller working exactly as before.
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 { [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
-GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+# Best effort, NOT a precondition. This used to `|| exit 0`, which made the
+# session cwd a hard requirement and so dropped a perfectly valid declared
+# target whenever the session was started outside any checkout (`~`, `/tmp`, a
+# plain project dir). That is the silent no-mint this hook fears most: no token,
+# no log line, and the stamp writer then blames a dormant hook. The declared
+# target can supply both of these on its own, so the "nowhere to write" decision
+# moves to AFTER the declaration has had its turn.
+GITDIR=$(git -C "$CWD" rev-parse --absolute-git-dir 2>/dev/null || echo "")
 BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+TARGET_SOURCE="cwd"
 
 # Find the QA-plan question and the label the human picked for it.
 #
@@ -122,6 +136,108 @@ ANSWER=$(printf '%s' "$PAYLOAD" | jq -r --arg q "$QUESTION" '
   .tool_response.answers[$q] // empty
 ' 2>/dev/null) || exit 0
 
+# The DECLARED target, if the plan carried one. This runs before the mint
+# decision because it can change BRANCH, which that decision reads.
+#
+# Fail-closed is the whole point. Any verdict other than `ok` or `none` means the
+# human was shown a target this machine cannot honor, and the one thing we must
+# never do is quietly stamp a DIFFERENT branch instead: that is the defect this
+# change exists to remove, so falling back to cwd here would reintroduce it under
+# a new name. The reason is logged, because a silent no-mint is this hook's worst
+# failure mode (the stamp writer then blames an unregistered hook and sends the
+# operator to restart for something a restart cannot fix).
+_DECLARED=$(qpt_target_from_question "$QUESTION")
+
+# A marker that is PRESENT but does not parse is NOT the same as an absent one,
+# and collapsing the two hands the unparseable case straight to the cwd fallback:
+# the wrong-target bind this block exists to prevent, reached through the parser
+# instead of through a verdict. The extractor's charset is deliberately narrow,
+# so an ordinary macOS checkout under a path with a space produces exactly this.
+if [ "$(qpt_target_marker_present "$QUESTION")" = "present" ]; then
+    if [ -z "$_DECLARED" ]; then
+      printf '%s approval-token target-refused(unparseable) branch=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${BRANCH:-?}" \
+        >> "$(qpt_gate_log)" 2>/dev/null || true
+      exit 0
+    fi
+fi
+
+if [ -n "$_DECLARED" ]; then
+  _dpath=$(qpt_target_path "$_DECLARED")
+  # An unset HOME must yield an EMPTY root, which the shape verdict refuses.
+  # `${HOME:-}/dev` expanded to `/dev`, which IS absolute, so the non-absolute
+  # check never fired for it and the governed root really did degrade.
+  _droot="${QPT_GOVERNED_ROOT:-}"
+  if [ -z "$_droot" ] && [ -n "${HOME:-}" ]; then _droot="$HOME/dev"; fi
+
+  # PHASE ONE, before ANY filesystem access. The probes below run git inside the
+  # declared directory, and git reads that repo's config, so a path this hook has
+  # not yet decided is allowed must never be handed to git. Bound first, then
+  # touch. Getting this backwards was caught in review of this very change.
+  _TV=$(qpt_target_shape_verdict "$_DECLARED" "$_droot")
+
+  # PHASE ONE-AND-A-HALF: resolve symlinks, then re-check containment on the
+  # RESOLVED path. Two separate reasons, and neither is optional.
+  #
+  # Correctness: `rev-parse --show-toplevel` reports the PHYSICAL path, so a
+  # declared path that crosses a symlink never equals it and a valid target is
+  # refused. On macOS this is the common case, not an exotic one: /var, /tmp and
+  # anything under them are symlinks to /private/*.
+  #
+  # Security, and this is the sharper half: containment was checked against the
+  # STRING. A symlink at <root>/link pointing outside the root passes that check
+  # and then binds wherever it actually leads. Re-checking after resolution is
+  # what closes it. `cd -P` is pure path resolution and executes no repo config,
+  # so it is safe to do here, before git is ever pointed at the path.
+  if [ "$_TV" = "ok" ]; then
+    # BOTH sides get resolved, never just one. Resolving only the path breaks
+    # containment whenever the ROOT is itself logical: on macOS a governed root
+    # under /var or /tmp resolves to /private/*, so a resolved path would read as
+    # outside a root it is plainly inside. Resolve both, compare like with like.
+    _dreal=$(cd -P "$_dpath" 2>/dev/null && pwd)
+    _drootreal=$(cd -P "$_droot" 2>/dev/null && pwd)
+    [ -n "$_drootreal" ] || _drootreal="$_droot"
+    if [ -z "$_dreal" ]; then
+      _TV="not-a-repo"
+    else
+      _dpath="$_dreal"
+      _droot="$_drootreal"
+      _DECLARED="${_dreal}@$(qpt_target_branch "$_DECLARED")"
+      _TV=$(qpt_target_shape_verdict "$_DECLARED" "$_droot")
+    fi
+  fi
+
+  if [ "$_TV" = "ok" ]; then
+    # PHASE TWO. The caller does the I/O; the verdict itself stays pure. Each
+    # probe is best effort and yields empty on a path that is not a checkout,
+    # which the verdict reads as not-a-repo.
+    _dgitdir=$(git -C "$_dpath" rev-parse --absolute-git-dir 2>/dev/null || echo "")
+    _dbranch=$(git -C "$_dpath" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    _dtop=$(git -C "$_dpath" rev-parse --show-toplevel 2>/dev/null || echo "")
+    _TV=$(qpt_target_verdict "$_DECLARED" "$_droot" "$_dgitdir" "$_dbranch" "$_dtop")
+  fi
+  if [ "$_TV" != "ok" ]; then
+    printf '%s approval-token target-refused(%s) declared=%s root=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_TV" "$_DECLARED" "$_droot" \
+      >> "$(qpt_gate_log)" 2>/dev/null || true
+    exit 0
+  fi
+  CWD="$_dpath"
+  GITDIR="$_dgitdir"
+  BRANCH="$_dbranch"
+  TARGET_SOURCE="declared"
+fi
+
+# Neither a declared target nor a session repo resolved, so there is nowhere to
+# put a token. Exiting HERE rather than at the cwd lookup is the whole point of
+# making that lookup best effort.
+if [ -z "$GITDIR" ]; then
+  printf '%s approval-token no-mint(no-target) branch=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${BRANCH:-?}" \
+    >> "$(qpt_gate_log)" 2>/dev/null || true
+  exit 0
+fi
+
 # THE decision, in one pure call whose truth table is enumerated in bats. The
 # refusal REASON is logged rather than discarded: a silent no-mint is this hook's
 # worst failure mode, because the stamp writer then tells the operator the hook is
@@ -152,6 +268,10 @@ NOW=$(date +%s)
 # moment we know a real person acted, so it is the only place entitled to attach
 # their name to anything. qa-plan-stamp.sh reads `git config` nowhere at all now,
 # which is what stops a forged stamp from wearing the human's name (#71).
+# NOTE: with a declared target, CWD is that target, so the approver name and the
+# HEAD above are read from the repo the plan is FOR rather than from the session's.
+# That is the intended reading (the stamp describes the target branch), and it is
+# called out here because it is a silent consequence of the reassignment above.
 APPROVER=$(git -C "$CWD" config user.name 2>/dev/null || true)
 [ -n "$APPROVER" ] && APPROVER="$APPROVER (via AskUserQuestion)"
 [ -n "$APPROVER" ] || APPROVER="human (via AskUserQuestion)"
@@ -173,9 +293,10 @@ jq -nc \
   --arg question "$QUESTION" \
   --arg nonce "$NONCE" \
   --arg plandigest "$PLAN_DIGEST" \
+  --arg targetsource "$TARGET_SOURCE" \
   '{branch:$branch, head:$head, approved_at_epoch:$epoch, approver:$approver,
     session:$session, question:$question, nonce:$nonce, plan_digest:$plandigest,
-    source:"AskUserQuestion"}' \
+    target_source:$targetsource, source:"AskUserQuestion"}' \
   > "$tmp" 2>/dev/null \
   && mv -f "$tmp" "$GITDIR/qa-plan-approval-token" 2>/dev/null \
   || rm -f "$tmp" 2>/dev/null

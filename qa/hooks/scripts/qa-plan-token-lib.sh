@@ -205,6 +205,158 @@ qpt_digest_from_question() {
   printf '%s' "$1" | sed -nE 's/.*<qa-plan-digest:([0-9a-fA-F]{16,128})>.*/\1/p' | head -1
 }
 
+# qpt_target_from_question <question_text>
+#   Extract the plan's DECLARED target from the marker /qa:plan embeds in the
+#   approval question: `<qa-plan-target:/abs/path/to/repo@branch>`. Echoes the
+#   raw `path@branch`, or nothing when the marker is absent.
+#
+#   WHY A DECLARED TARGET EXISTS AT ALL. Until qa 3.14.0 the hook took the repo
+#   and branch from the SESSION's cwd, on the stated reasoning that "an
+#   AskUserQuestion has no command line, so the session cwd is the only signal,
+#   and it is the right one". Both halves were wrong. It is not the only signal:
+#   the digest marker directly above proves the question itself can carry
+#   declared data. And it is not the right one: the human approves a plan for a
+#   SPECIFIC branch, which is routinely not whatever the session happens to be
+#   sitting in. That produced two failures. A cross-repo approval wrote its token
+#   where the target repo's gate never looks, so a correct approval was silently
+#   discarded. Worse, on a checkout shared by parallel sessions the ambient
+#   branch can belong to a PEER: on 2026-09-04 a valid token landed on another
+#   session's branch, whose own stamp predated it by 16 minutes so `status` read
+#   entirely normal, and a `write` would have recorded the human approving a plan
+#   they had never seen. Ambient state cannot attest to a human's intent; only
+#   what the human was shown can, which is why this travels in the question next
+#   to the digest.
+#
+#   The charset is deliberately narrow (no spaces, no shell metacharacters, no
+#   `..`). This value is attacker-relevant: it names a directory the hook will
+#   write a token into, so it is validated rather than trusted. Widening this
+#   regex widens that surface.
+#   ANCHORED TO LINE START, unlike the digest extractor, and the asymmetry is
+#   deliberate. The skill emits this marker on its own line. Matching it mid-line
+#   would make any question that MENTIONS the marker in prose look like a
+#   declaration, and the nearest such question is a QA plan for this feature,
+#   which quotes it as `<qa-plan-target:$TARGET_PATH@$TARGET_BRANCH>`. That does
+#   not parse (`$` is outside the charset), so with the companion presence check
+#   in the hook it would fail closed and mint nothing. Anchoring costs nothing and
+#   removes a self-inflicted footgun.
+qpt_target_from_question() {
+  printf '%s' "$1" | sed -nE 's|^<qa-plan-target:(/[A-Za-z0-9._/-]+@[A-Za-z0-9._/-]+)>[[:space:]]*$|\1|p' | head -1
+}
+
+# qpt_target_marker_present <question_text>
+#   Echoes `present` when a line BEGINS with the marker, else nothing. Presence
+#   is asked separately from parse so the hook can tell "no declaration" (use the
+#   cwd fallback) from "a declaration I cannot read" (fail closed). Same anchor as
+#   the extractor, so the two can never disagree about what counts as a marker.
+qpt_target_marker_present() {
+  case "
+$1" in
+    *"
+<qa-plan-target:"*) echo "present" ;;
+  esac
+}
+
+# qpt_target_path <declared>   -> the path half of `path@branch`
+# qpt_target_branch <declared> -> the branch half
+#   Split on the LAST `@`, so a branch name is what follows and a path
+#   containing `@` cannot silently eat the separator.
+qpt_target_path() { printf '%s' "${1%@*}"; }
+qpt_target_branch() { printf '%s' "${1##*@}"; }
+
+# qpt_target_verdict <declared> <governed_root> <resolved_gitdir> <actual_branch>
+#   Decide whether a declared target may bind the token. PURE: every input is an
+#   argument, the caller does the filesystem work, and the output is one token.
+#   Echoes exactly one of:
+#
+#     none            no declaration; the caller falls back to cwd (legacy path)
+#     malformed       declaration present but not `<abs-path>@<branch>`
+#     traversal       contains a `..` segment
+#     outside-root    absolute, but not under the governed root
+#     not-a-repo      the caller could not resolve a git dir there
+#     not-toplevel    it resolves into a repo, but is not that repo's ROOT
+#     branch-mismatch that checkout is not on the declared branch
+#     ok              bind to the declared target
+#
+#   EVERY non-`ok`, non-`none` verdict FAILS CLOSED: the caller mints nothing and
+#   logs which. It must never silently fall back to cwd, because a declaration
+#   that cannot be honored means the human was shown a target this machine cannot
+#   satisfy, and quietly stamping a DIFFERENT branch instead is precisely the bug
+#   this whole change exists to remove.
+#   `not-toplevel` is not pedantry, and it was found by its own test rather than
+#   reasoned about. `~/dev` is ITSELF a git repo, so any plain directory beneath
+#   it resolves to `~/dev/.git`. Without this check a declaration naming a path
+#   that is not a checkout would not be refused: it would silently bind the token
+#   to the WORKSPACE repo, which is a different repo than the one on screen. That
+#   is the same class of wrong-target bind this whole change removes, so the
+#   declared path must be the repo ROOT, which is exactly what the skill emits
+#   (`git rev-parse --show-toplevel`).
+# qpt_target_shape_verdict <declared> <root>
+#   Phase ONE of the decision: everything decidable from the STRINGS alone.
+#   Echoes none | malformed | traversal | outside-root | ok.
+#
+#   WHY THIS IS SPLIT OUT, and it is not tidiness. The caller has to run `git -C
+#   <declared-path>` to learn the repo state phase two needs, and git reads the
+#   config of whatever repo it lands in, which is a code-execution surface. So a
+#   single-phase check would have the hook TOUCH a directory named in the question
+#   text before deciding whether that directory is allowed, which inverts the
+#   containment rule it is supposed to enforce: bound first, then touch. Callers
+#   MUST run this before any filesystem access and stop on anything but `ok`.
+qpt_target_shape_verdict() {
+  local declared="$1" root="$2"
+  local path branch
+
+  [ -n "$declared" ] || { echo "none"; return 1; }
+
+  case "$declared" in
+    /*@*) ;;
+    *) echo "malformed"; return 1 ;;
+  esac
+  path=$(qpt_target_path "$declared")
+  branch=$(qpt_target_branch "$declared")
+  { [ -n "$path" ] && [ -n "$branch" ]; } || { echo "malformed"; return 1; }
+
+  # `..` is checked as a PATH SEGMENT, not a substring: a directory legitimately
+  # named `..foo` is not traversal, and matching the substring would reject it.
+  case "/$path/" in
+    */../*) echo "traversal"; return 1 ;;
+  esac
+
+  # An empty or relative root cannot contain anything, and treating it as though
+  # it could is how an unset HOME turns the governed root into `/dev` and quietly
+  # widens the surface. Refuse rather than compare against it.
+  case "$root" in
+    /*) ;;
+    *) echo "outside-root"; return 1 ;;
+  esac
+  # Containment is compared with a trailing slash on both sides so that a sibling
+  # whose name merely starts with the root (`/Users/me/development`) cannot pass
+  # as a child of `/Users/me/dev`.
+  case "${path%/}/" in
+    "${root%/}"/*) ;;
+    *) echo "outside-root"; return 1 ;;
+  esac
+
+  echo "ok"; return 0
+}
+
+qpt_target_verdict() {
+  local declared="$1" root="$2" gitdir="$3" actual="$4" toplevel="${5:-}"
+  local path branch shape
+
+  shape=$(qpt_target_shape_verdict "$declared" "$root") || { echo "$shape"; return 1; }
+
+  path=$(qpt_target_path "$declared")
+  branch=$(qpt_target_branch "$declared")
+
+  [ -n "$gitdir" ] || { echo "not-a-repo"; return 1; }
+  # Compared with trailing slashes stripped so a declaration written with one
+  # does not read as a different directory than the toplevel git reports.
+  [ "${toplevel%/}" = "${path%/}" ] || { echo "not-toplevel"; return 1; }
+  [ "$actual" = "$branch" ] || { echo "branch-mismatch"; return 1; }
+
+  echo "ok"; return 0
+}
+
 # The migration carve-out that used to live here (qpt_unattested_cutoff /
 # qpt_unattested_in_window) is GONE, removed on PR #76 after CodeRabbit pointed
 # out it was authorized by a MUTABLE attribute. Two commands defeated it:
