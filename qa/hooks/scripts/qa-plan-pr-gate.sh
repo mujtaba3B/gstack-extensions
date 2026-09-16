@@ -34,32 +34,78 @@ printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[
 # Resolve the repo the command targets, honoring a leading `cd <dir>` (hooks run
 # from the session cwd, not the cwd a `cd ... &&` switched into).
 WORKDIR=$(printf '%s\n' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p' | head -1)
+# Literal "~/" is a match PATTERN here (input that starts with a tilde), not an
+# expansion; SC2088 misreads it, so silence it for this case.
+# shellcheck disable=SC2088
 case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
 { [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
 
-TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
-# No path pre-filter here: gp_gate_config below makes the whole scope decision,
-# and a duplicate path-only test would wrongly exempt a worktree parked outside
-# ~/dev (a worktree of the ~/dev repo itself has to live outside it).
-
-# Effective gate config. Every repo under the policy root is gated by DEFAULT,
-# resolved from the tracked ~/dev/gate-policy.json; per-repo tuning lives in that
-# file's `overrides` block, keyed by repo identity. There are no marker files.
-# Returns non-zero only when the repo is genuinely out of scope, in which case we
-# allow. See gate-policy-lib.sh for why.
+# Libs first. The cross-cwd bind below asks the policy whether a candidate ~/dev
+# checkout is governed and uses the repo resolver, so gate-policy-lib.sh, the pure
+# gate lib, the token lib, and the repo lib must all be sourced BEFORE resolution,
+# not after. Each fails OPEN (allow) when absent, like every other unmet dependency
+# in this gate.
 GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
 [ -f "$GPLIB" ] || exit 0
 # shellcheck source=/dev/null
 . "$GPLIB"
-MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
-
 LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-gate-lib.sh"
 TLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-token-lib.sh"
-{ [ -f "$LIB" ] && [ -f "$TLIB" ]; } || exit 0
+RLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-plan-repo-lib.sh"
+{ [ -f "$LIB" ] && [ -f "$TLIB" ] && [ -f "$RLIB" ]; } || exit 0
 # shellcheck source=/dev/null
 . "$LIB"
 # shellcheck source=/dev/null
 . "$TLIB"
+# shellcheck source=/dev/null
+. "$RLIB"
+LOG=$(qpt_gate_log)
+
+# Bind (TOP, REPODIR, BRANCH, GITDIR, MARKER) one of two ways:
+#
+#   CLASSIC: the cd / session cwd is a governed ~/dev repo, and the command does not
+#     name a DIFFERENT repo via --repo/-R/GH_REPO. BRANCH is that worktree's checked-out
+#     head, GITDIR its git dir, REPODIR the cwd - byte-identical to this gate's
+#     long-standing behavior.
+#   CROSS-CWD: the cwd is NOT a governed ~/dev repo (a session anchored in a Drive/tmp
+#     workspace), or names another repo. Bind to the governed ~/dev WORKTREE of the
+#     target repo that is on the PR's --head branch and read ITS stamp. This is the
+#     QA-plan twin of the ship gate's out-of-~/dev binding (ship-gate-repo-lib.sh's
+#     sg_dev_checkout_for_repo); it additionally needs the branch, because the QA-plan
+#     stamp is per-branch and lives in the per-worktree git dir the stamp writer
+#     targeted (gstack-extensions#89). Without this a create from outside ~/dev found
+#     the repo "out of scope" and the QA-plan policy silently did not fire at all.
+#
+# Anything unresolvable -> out of scope -> ALLOW, logged (never a silent exit), the
+# gate's standing fail-open posture with the deploy gate as the backstop.
+TARGET=$(qpg_repo_from_flags "$CMD" || true)
+HEADBR=$(qpg_head_branch_from_cmd "$CMD" || true)
+CWD_TOP=""; CWD_ORIGIN=""
+if CWD_TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) && gp_gate_config "$CWD_TOP" qa-plan >/dev/null 2>&1; then
+  CWD_ORIGIN=$(qpg_norm_repo "$(git -C "$WORKDIR" remote get-url origin 2>/dev/null)")
+else
+  CWD_TOP=""
+fi
+
+TOP=""; REPODIR=""; BRANCH=""; GITDIR=""
+if [ -n "$CWD_TOP" ] && { [ -z "$TARGET" ] || [ "$TARGET" = "$CWD_ORIGIN" ]; }; then
+  TOP="$CWD_TOP"; REPODIR="$WORKDIR"
+  BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null || echo "")
+  MARKER=$(gp_gate_config "$TOP" qa-plan) || exit 0
+elif [ -n "$TARGET" ] && [ -n "$HEADBR" ] && RESOLVED=$(qpg_dev_worktree_for_repo_branch "$TARGET" "$HEADBR"); then
+  TOP=${RESOLVED%%$'\t'*}; GITDIR=${RESOLVED#*$'\t'}; REPODIR="$TOP"; BRANCH="$HEADBR"
+  if ! MARKER=$(gp_gate_config "$TOP" qa-plan); then
+    printf '%s pr-gate OUT-OF-SCOPE(bound-repo-ungoverned) target=%s head=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET" "$HEADBR" >> "$LOG" 2>/dev/null || true
+    exit 0
+  fi
+else
+  printf '%s pr-gate OUT-OF-SCOPE(no-bind) workdir=%s target=%s head=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WORKDIR" "${TARGET:-none}" "${HEADBR:-none}" >> "$LOG" 2>/dev/null || true
+  exit 0
+fi
+[ -n "$GITDIR" ] || exit 0
 
 qpg_gate_enabled "$MARKER" pr || exit 0   # pr gate not enabled -> allow
 
@@ -67,7 +113,6 @@ qpg_gate_enabled "$MARKER" pr || exit 0   # pr gate not enabled -> allow
 PRBASE=$(printf '%s' "$CMD" | grep -oE '(--base[ =]|[[:space:]]-B[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
 if [ -n "$PRBASE" ] && [ "$(qpg_base_in_scope "$MARKER" "$PRBASE")" = "out" ]; then exit 0; fi
 
-BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || exit 0
 
 # Bookkeeping fast lane: a branch whose ENTIRE diff vs base is docs / the
@@ -81,19 +126,20 @@ DIFFBASE="$PRBASE"
 [ -n "$DIFFBASE" ] || DIFFBASE=$(printf '%s' "$MARKER" | jq -r '(.base_branches // ["main"])[0] // "main"' 2>/dev/null || echo "main")
 BASEREF=""
 for _cand in "origin/$DIFFBASE" "$DIFFBASE"; do
-  if git -C "$WORKDIR" rev-parse -q --verify "$_cand" >/dev/null 2>&1; then BASEREF="$_cand"; break; fi
+  if git -C "$REPODIR" rev-parse -q --verify "$_cand" >/dev/null 2>&1; then BASEREF="$_cand"; break; fi
 done
 if [ -n "$BASEREF" ]; then
-  CHANGED=$(git -C "$WORKDIR" diff --name-only "$BASEREF...HEAD" 2>/dev/null)
+  # REPODIR is checked out on BRANCH in both bind paths, so HEAD == the head branch.
+  CHANGED=$(git -C "$REPODIR" diff --name-only "$BASEREF...HEAD" 2>/dev/null)
   if [ -n "$CHANGED" ] && [ "$(qpg_is_bookkeeping "$CHANGED")" = "yes" ]; then
-    LOG=$(qpt_gate_log)
     printf '%s pr-gate ALLOW(bookkeeping) branch=%s files=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$(printf '%s' "$CHANGED" | tr '\n' ',')" >> "$LOG" 2>/dev/null || true
     exit 0
   fi
 fi
 
-GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+# GITDIR was resolved in the bind above (the classic cwd git dir, or the cross-cwd
+# target worktree's git dir), so the stamp is read from wherever the writer put it.
 STAMP=$(cat "$GITDIR/qa-plan-approved" 2>/dev/null || echo "")
 
 # Plan-drift input: digest the `## QA` section of the body this create is about
