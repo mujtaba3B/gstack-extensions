@@ -90,10 +90,50 @@ else
   echo "WARNING: could not resolve required_checks for $REPO from the gate policy (run from a checkout of it). Defaulting to required checks $REQUIRED; verify the repo actually produces those checks or merges will deadlock." >&2
 fi
 
-PAYLOAD=$(jq -nc --argjson contexts "$REQUIRED" --argjson ea "$ENFORCE_ADMINS" '{
+# Branch names may contain '/' (release/2026.06); encode for the REST path.
+BRANCH_API=${BRANCH//\//%2F}
+
+# PRESERVE any existing review requirement instead of clearing it.
+#
+# A PUT replaces protection wholesale, so hardcoding null here silently deleted
+# whatever review rule the branch already had. That is not a theoretical edge:
+# on 2026-09-16 mutwo-skills, mutwo-tools, gstack-extensions and dev were given
+# require_code_owner_reviews so a change to a gate script or a guard hook needs
+# a human, and the next --apply-protection run on any of them would have wiped
+# that with no output saying so. This script is the one that ARMS the gates, so
+# it is the last place that should be quietly disarming a different one.
+#
+# The GET and PUT shapes differ, so the response is normalized to the four PUT
+# fields rather than fed back verbatim. A branch with no protection (404) or no
+# review rule yields null, which is the original behavior for that case.
+EXISTING_REVIEWS=$(gh api "repos/$REPO/branches/$BRANCH_API/protection" \
+  --jq '.required_pull_request_reviews' 2>/dev/null || true)
+[ -n "$EXISTING_REVIEWS" ] || EXISTING_REVIEWS=null
+REVIEWS=$(printf '%s' "$EXISTING_REVIEWS" | jq -c 'if . == null then null else {
+  dismiss_stale_reviews: (.dismiss_stale_reviews // false),
+  require_code_owner_reviews: (.require_code_owner_reviews // false),
+  required_approving_review_count: (.required_approving_review_count // 0),
+  require_last_push_approval: (.require_last_push_approval // false)
+} end' 2>/dev/null) || REVIEWS=null
+[ -n "$REVIEWS" ] || REVIEWS=null
+if [ "$REVIEWS" != "null" ]; then
+  echo "Preserving the existing review requirement on $REPO @ $BRANCH: $REVIEWS" >&2
+  # Preserving a code-owner rule while also binding admins is a deadlock on a
+  # repo whose only code owner is the only admin: GitHub does not let anyone
+  # approve their own PR, so that person could never merge their own change to
+  # an owned path, and enforce_admins removes the bypass that would save them.
+  # Warn rather than refuse: on a repo with several code owners this is exactly
+  # the configuration you want.
+  if [ "$ENFORCE_ADMINS" = "true" ] \
+     && [ "$(printf '%s' "$REVIEWS" | jq -r '.require_code_owner_reviews')" = "true" ]; then
+    echo "WARNING: $REPO requires code-owner review AND enforce_admins=true. If the repo has a single code owner who is also the only admin, that person cannot merge their own change to an owned path (nobody can self-approve, and enforce_admins removes the admin bypass). Pass --soft to keep the admin escape hatch." >&2
+  fi
+fi
+
+PAYLOAD=$(jq -nc --argjson contexts "$REQUIRED" --argjson ea "$ENFORCE_ADMINS" --argjson reviews "$REVIEWS" '{
   required_status_checks: { strict: false, contexts: $contexts },
   enforce_admins: $ea,
-  required_pull_request_reviews: null,
+  required_pull_request_reviews: $reviews,
   restrictions: null,
   required_linear_history: false,
   allow_force_pushes: false,
@@ -115,8 +155,6 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   case "$ans" in y|Y|yes|YES) ;; *) echo "aborted." >&2; exit 1 ;; esac
 fi
 
-# Branch names may contain '/' (release/2026.06); encode for the REST path.
-BRANCH_API=${BRANCH//\//%2F}
 printf '%s' "$PAYLOAD" | gh api -X PUT "repos/$REPO/branches/$BRANCH_API/protection" \
   -H "Accept: application/vnd.github+json" --input - >/dev/null
 
