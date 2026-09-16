@@ -1,0 +1,28 @@
+# Human approval required for the gate surface.
+#
+# These paths decide whether a change is allowed to merge or deploy, or decide
+# what lands on the human's machine. An agent that can rewrite them can clear
+# its own path, so the gates would still run and would simply agree with
+# whoever edited them last. Everything else in this repo (skills, docs, specs,
+# per-plugin manifests) is deliberately left un-owned: agents work here freely.
+#
+# CODEOWNERS is last-match-wins, so no rule below may be widened to overlap an
+# earlier one without checking what it shadows.
+
+# Owns itself. Without this, anyone with push could delete the rules below in a
+# PR that nothing gates, which is the same hole one level up.
+/.github/CODEOWNERS @mujtaba3B
+
+# The gate scripts and the hook manifests that arm them.
+/eng/hooks/ @mujtaba3B
+/qa/hooks/ @mujtaba3B
+
+# The delivery mechanism, which outranks the gates it delivers. bin/install
+# copies the plugins into ~/.claude/plugins/cache, bin/gstack-extensions-upgrade
+# calls it, and 21 skills offer to run that upgrade, so an edit here executes on
+# the human's machine during a routine "Upgrade now".
+/bin/ @mujtaba3B
+
+# The root marketplace lists which plugins exist. Dropping eng or qa from it
+# stops their gates being installed at all, with no change to a gate script.
+/.claude-plugin/ @mujtaba3B
