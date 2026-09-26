@@ -14,8 +14,13 @@
 #
 # The block reason is deliberately SHORT (the human sees it verbatim at the end
 # of every blocked turn; a 2,500-char menu buried the actual response). It names
-# the posture keywords and points at the canonical contract:
-# docs/qa-status-postures.md (in this repo). Keep the details there, not here.
+# the posture keywords and points at the canonical contract, docs/qa-status-postures.md,
+# by a path DERIVED from this script's own location (<plugin root>/docs/...), so it
+# is right in the checkout and in every installed cache copy. It used to say
+# ~/.claude/docs/..., a copy that only this repo's bin/install wrote: a marketplace
+# install of the plugin (every worker user on the mini) had no such file, and an
+# agent that took the dead pointer at its word guessed a posture from the six
+# words here and guessed wrong. Keep the details in the doc, not here.
 
 set -u
 
@@ -81,8 +86,10 @@ LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-status-gate-lib.sh"
 DECISION=$(qa_gate_decision "$LAST" "$SHIPPABLE")
 if [ "$DECISION" = "block" ]; then
 
-REASON="QA gate: work declared done on a branch with commits ahead, but no QA posture stated. End the turn with one QA_STATUS line: dev_verified, deploy_branch_for_manual_qa, prod_verified, blocked, skip_requested, or no_tracked_change (plus EVIDENCE: / DRIVER: / DEPLOYED: / REASON: as the posture requires).
-Full contract if unsure: read ~/.claude/docs/qa-status-postures.md"
+# The contract ships beside this script: <plugin root>/docs/qa-status-postures.md.
+DOC="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/docs/qa-status-postures.md"
+REASON="QA gate: work declared done on a branch with commits ahead, but no QA posture stated. End the turn with one QA_STATUS line: dev_verified, deploy_branch_for_manual_qa, prod_verified, blocked, skip_requested, or no_tracked_change (plus EVIDENCE: / DRIVER: / DEPLOYED: / REASON: as the posture requires). In the PR body CI greens only on verified / blocked / skip_approved, so write dev_verified there as verified.
+Full contract if unsure: read $DOC"
 
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0
