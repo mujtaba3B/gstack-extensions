@@ -17,9 +17,10 @@
 # the posture keywords and points at the canonical contract, docs/qa-status-postures.md,
 # by a path DERIVED from this script's own location (<plugin root>/docs/...), so it
 # is right in the checkout and in every installed cache copy. It used to say
-# ~/.claude/docs/..., which no install writes; an agent that took the dead pointer
-# at its word guessed a posture from the six words here and guessed wrong.
-# Keep the details in the doc, not here.
+# ~/.claude/docs/..., a copy that only this repo's bin/install wrote: a marketplace
+# install of the plugin (every worker user on the mini) had no such file, and an
+# agent that took the dead pointer at its word guessed a posture from the six
+# words here and guessed wrong. Keep the details in the doc, not here.
 
 set -u
 

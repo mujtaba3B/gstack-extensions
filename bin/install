@@ -188,13 +188,15 @@ SHIM
 chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
 echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
 
-# 5. Deploy the QA posture contract doc to its fixed path. The qa-status-gate
-#    Stop hook's block message points agents at ~/.claude/docs/qa-status-postures.md
-#    (a path baked into the ported script), so keep that path valid from this
-#    repo now that claude-hooks no longer owns the doc.
-mkdir -p "$HOME/.claude/docs"
-cp "$REPO/qa/docs/qa-status-postures.md" "$HOME/.claude/docs/qa-status-postures.md"
-echo "deployed: ~/.claude/docs/qa-status-postures.md (qa-status-gate contract)"
+# 5. (Retired in qa 3.14.1.) This used to copy qa/docs/qa-status-postures.md to
+#    ~/.claude/docs/ because the qa-status-gate Stop hook's block message named that
+#    path. The hook now derives the path from its own install location, so the
+#    copy would only drift from the doc the message points at. Remove a stale
+#    copy if one is left from an earlier install, so nobody reads the old text.
+if [ -f "$HOME/.claude/docs/qa-status-postures.md" ]; then
+  rm -f "$HOME/.claude/docs/qa-status-postures.md"
+  echo "removed: ~/.claude/docs/qa-status-postures.md (legacy copy; the hook now points into the plugin)"
+fi
 
 echo
 # Exit non-zero if any plugin failed, so bin/gstack-extensions-upgrade's
