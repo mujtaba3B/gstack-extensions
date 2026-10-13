@@ -221,6 +221,8 @@ Beyond the human-readable verdict, every QA Quincey run ends by STATING a machin
 - FAIL → `QA_STATUS: blocked` + `REASON:` (and, for browser, a filed `/pm:bug`).
 - QA not feasible → `QA_STATUS: skip_requested` + `REASON:`, escalated to `skip_approved` + `QA_SKIP_APPROVED_BY:` after a human OK (CI rejects a bare `skip_requested`).
 
+Two more postures exist outside a qa:* run's verdict: `deploy_branch_for_manual_qa` (the feature branch deployed to its real host for QA) and `no_tracked_change` (nothing version-controlled changed). The full list, with every posture's required lines, is `docs/qa-status-postures.md` at the plugin root.
+
 End the final message with the posture line. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The full two-gate format, the strict CI rules, and the skip escalation live in `qa:browser`'s `references/qa-contract.md`.
 
 ---

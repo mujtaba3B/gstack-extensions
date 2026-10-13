@@ -51,11 +51,15 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 | Posture | Stop hook | CI qa-gate |
 |---|---|---|
 | `dev_verified` + `EVIDENCE` (alias: `verified`) | passes | passes |
+| `deploy_branch_for_manual_qa` + `DRIVER` + `DEPLOYED` | passes (stated) | **fails** (not an accepted keyword) |
 | `prod_verified` + `EVIDENCE` | passes | n/a (post-deploy, not a pre-merge gate) |
 | `awaiting_human` + `DRIVER` + `CHECK` + `PHASE` | passes (stated) | **fails** for `PHASE: dev` (a pending human check never greens a merge); n/a for `PHASE: prod` (post-deploy) |
 | `blocked` + `REASON` | passes | passes |
 | `skip_requested` + `REASON` | passes (stated) | **fails** (not an accepted keyword) |
 | `skip_approved` + `QA_SKIP_APPROVED_BY` | passes | passes |
+| `no_tracked_change` | passes (stated) | n/a (no tracked change to merge) |
+
+This table is a summary; the full contract for every posture is `docs/qa-status-postures.md` at the qa plugin's root.
 
 `skip_requested` is a valid stated posture for the Stop hook but the CI gate does NOT accept it. If QA is genuinely infeasible, you must escalate: state `skip_requested` + `REASON`, ask the human "ok to skip QA for <reason>", and on approval record `skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>` in the PR body. Emitting `skip_requested` alone passes the hook but leaves the PR red.
 

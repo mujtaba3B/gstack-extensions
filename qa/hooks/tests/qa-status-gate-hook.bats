@@ -114,7 +114,7 @@ assert_short_block() { # validates $output as the short-pointer block form
   [ -z "$output" ]
 }
 
-@test "hook allows: commits ahead, awaiting_human post-deploy posture stated" {
+@test "hook allows: commits ahead, multi-line posture body (awaiting_human + companion lines)" {
   commit_ahead
   run run_gate "$(printf 'Merged and deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: restart the desktop app, run /mu:pause, see the task land\nPHASE: prod')"
   [ "$status" -eq 0 ]
