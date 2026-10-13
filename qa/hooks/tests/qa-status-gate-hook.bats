@@ -161,6 +161,7 @@ stub_pr_body() { # $1 = Production artifacts value
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | jq -r '.decision')" = "block" ]
   echo "$output" | jq -r '.reason' | grep -q 'artifact-evidence'
+  echo "$output" | jq -r '.reason' | grep -qF 'engaged by: PHASE: prod'
 }
 
 @test "hook blocks: a fenced PHASE: dev example above the real PHASE: prod handoff" {

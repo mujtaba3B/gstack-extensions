@@ -351,6 +351,33 @@ setup() {
   [ "$output" = "no" ]
 }
 
+# ---- qa_artifact_engage_reason (what the block message names) --------------
+
+@test "engage reason: names a prod_verified posture" {
+  run qa_artifact_engage_reason "Deployed. QA_STATUS: prod_verified EVIDENCE: x"
+  [ "$output" = "QA_STATUS: prod_verified" ]
+}
+
+@test "engage reason: names the line that pairs PHASE with prod" {
+  run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev (Production QA runs after land)')"
+  [ "$output" = "PHASE: dev (Production QA runs after land)" ]
+}
+
+@test "engage reason: names a Phase table header token (a fail-closed false engage)" {
+  run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n| Phase | Check | Result |\n|---|---|---|\n| Dev | x | ok |')"
+  [ "$output" = "Phase | Check" ]
+}
+
+@test "engage reason: says no dev PHASE was stated when none is" {
+  run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nCHECK: x')"
+  [ "$output" = "no PHASE: dev stated" ]
+}
+
+@test "engages yes: an unspaced PHASE-dev is not read as dev (fail closed)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE-dev')"
+  [ "$output" = "yes" ]
+}
+
 # ---- awaiting_human next to the artifact check (fail closed) ----------------
 # An awaiting_human PHASE: prod handoff makes a Production-QA evidence claim
 # (the agent-runnable Prod rows it closed), so its EVIDENCE is checked like

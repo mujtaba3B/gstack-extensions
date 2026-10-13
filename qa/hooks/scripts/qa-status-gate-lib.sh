@@ -198,7 +198,8 @@ qa_strip_fences() {
 #   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
 #   `awaiting_human` posture (bold or backticked too), UNLESS it is plainly dev:
 #   every `PHASE <separator> <value>` token in the message (separator `:`, `=`,
-#   `|` or `-`, markup tolerated) has the value `dev` or `development`, at
+#   `|` or a spaced ` - `, markup tolerated; an unspaced "PHASE-dev" is not
+#   read as dev and engages) has the value `dev` or `development`, at
 #   least one such token exists, and NO line pairs `PHASE` with the word prod
 #   (`prod`, `production`, `pre-prod`, `preprod`; not "product" or "reproduce")
 #   anywhere after it. So "PHASE: post-deploy" engages as surely as "prod". Its EVIDENCE closes the agent-runnable
@@ -230,6 +231,28 @@ qa_artifact_engages() {
     echo yes; return 0
   fi
   echo no
+}
+
+# qa_artifact_engage_reason <fence_stripped_message>  -> one line  (PURE)
+#   Why qa_artifact_engages said yes, for the block message, so an agent whose
+#   honest dev handoff was engaged by a stray mention (a "Phase" table header,
+#   a "PHASE: prod" remark) can see the exact text and reword it. Echoes the
+#   prod_verified posture if stated, else the first line pairing PHASE with
+#   prod, else the first non-dev PHASE token,
+#   else "no PHASE: dev stated" (truncated to 80 chars). Never changes the
+#   decision; it only explains it.
+qa_artifact_engage_reason() {
+  local msg="$1" why
+  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
+    echo "QA_STATUS: prod_verified"; return 0
+  fi
+  why=$(printf '%s\n' "$msg" | grep -iE 'PHASE.*(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)' | head -n 1)
+  if [ -z "$why" ]; then
+    why=$(printf '%s\n' "$msg" | grep -oiE 'PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*' \
+          | grep -viE '[^[:alnum:]-](dev|development)$' | head -n 1)
+  fi
+  [ -n "$why" ] || why="no PHASE: dev stated"
+  printf '%s\n' "$why" | cut -c1-80
 }
 
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
