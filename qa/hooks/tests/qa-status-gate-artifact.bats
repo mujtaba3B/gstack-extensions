@@ -231,9 +231,9 @@ setup() {
   [ "$output" = "no" ]
 }
 
-@test "engages no: the hook message's 'PHASE: dev|prod' menu copied onto a PHASE line reads as dev" {
+@test "engages yes: the hook message's 'PHASE: dev|prod' menu on a PHASE line is ambiguous (fail closed)" {
   run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev|prod')"
-  [ "$output" = "no" ]
+  [ "$output" = "yes" ]
 }
 
 @test "engages yes: awaiting_human with PHASE omitted (fail closed)" {
@@ -273,6 +273,34 @@ setup() {
   [ "$output" = "no" ]
   run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE=dev')"
   [ "$output" = "no" ]
+}
+
+@test "engages yes: a prod PHASE line that mentions dev later (red-team shape)" {
+  for line in 'PHASE: prod (was PHASE: dev)' 'PHASE: prod, not PHASE: dev' 'PHASE: post-deploy; earlier phase=dev'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $line"; return 1; }
+  done
+}
+
+@test "engages yes: mixed or prefix-only dev values (red-team shape)" {
+  for line in 'PHASE: dev and prod' 'PHASE: dev, then prod' 'PHASE: dev-ready-for-prod' 'PHASE: devops'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $line"; return 1; }
+  done
+}
+
+@test "engages yes: a prod PHASE line behind a markdown prefix next to a dev one (red-team shape)" {
+  for line in '1. PHASE: prod' '> PHASE: prod' '## PHASE: prod' '+ PHASE: prod' '`PHASE: prod`' 'a) PHASE: prod'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n%s' "$line")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $line"; return 1; }
+  done
+}
+
+@test "engages no: a plainly dev PHASE in any markdown shape (no false block)" {
+  for line in 'PHASE: development' '`PHASE: dev`' '1. PHASE: dev' '> PHASE: dev' 'PHASE: DEV' 'PHASE: dev (preview)'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
+    [ "$output" = "no" ] || { echo "engaged on a dev handoff: $line"; return 1; }
+  done
 }
 
 @test "engages no: dev_verified with PHASE: prod (only awaiting_human is widened)" {

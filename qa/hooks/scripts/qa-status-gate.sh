@@ -95,7 +95,8 @@ fi
 # missing gh, no PR, or no `Production artifacts:` field leaves PROD_ARTIFACT
 # empty and the gate behaves exactly as before. The gh lookup is gated on the
 # Production-QA claim (qa_artifact_engages on the same fence-stripped text the
-# gate reads: prod_verified, or awaiting_human unless every PHASE line says dev)
+# gate reads: prod_verified, or awaiting_human unless it states only dev PHASE
+# lines; a missing PHASE counts as prod)
 # so a normal turn never pays for a network call.
 if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
   PR_BODY=$( (cd "$CWD" && gh pr view --json body --jq '.body' 2>/dev/null) 2>/dev/null )
@@ -103,9 +104,9 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
   if [ -n "$PROD_ARTIFACT" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ]; then
-      AREASON="QA gate (artifact-evidence): you stated a Production-QA posture (prod_verified, or awaiting_human whose PHASE is not dev), but your EVIDENCE names a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
+      AREASON="QA gate (artifact-evidence): you stated a Production-QA posture (prod_verified, or awaiting_human that is not plainly PHASE: dev; a missing PHASE counts as prod), but your EVIDENCE names a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
 ${PROD_ARTIFACT}
-Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before claiming prod_verified."
+Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before restating your posture."
       jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
       exit 0
     fi
