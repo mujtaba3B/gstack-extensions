@@ -19,7 +19,8 @@
 #   dev_verified                + EVIDENCE:   (alias: verified)
 #   deploy_branch_for_manual_qa + DRIVER: <roster-id> + DEPLOYED:
 #   prod_verified               + EVIDENCE:   (post-deploy only)
-#   blocked                     + REASON:
+#   awaiting_human              + DRIVER: + CHECK: + PHASE: dev|prod
+#   blocked                    + REASON:
 #   skip_requested              + REASON:  (then a signed skip in the PR)
 #   skip_approved               (the recorded human sign-off)
 #   no_tracked_change           (docs/memory/ops-only turn; nothing to QA)

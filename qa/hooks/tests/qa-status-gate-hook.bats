@@ -50,8 +50,8 @@ assert_short_block() { # validates $output as the short-pointer block form
   # Short by design: a handful of lines, well under the old 2,500-char menu.
   [ "$(printf '%s\n' "$reason" | wc -l | tr -d ' ')" -le 4 ]
   [ "${#reason}" -lt 600 ]
-  for kw in dev_verified deploy_branch_for_manual_qa prod_verified blocked \
-            skip_requested no_tracked_change qa-status-postures.md; do
+  for kw in dev_verified deploy_branch_for_manual_qa prod_verified awaiting_human \
+            blocked skip_requested no_tracked_change PHASE: qa-status-postures.md; do
     printf '%s' "$reason" | grep -q "$kw"
   done
 }
@@ -110,6 +110,13 @@ assert_short_block() { # validates $output as the short-pointer block form
 @test "hook allows: commits ahead but QA_STATUS posture stated" {
   commit_ahead
   run run_gate 'Done. QA_STATUS: dev_verified EVIDENCE: ran the flow'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "hook allows: commits ahead, awaiting_human post-deploy posture stated" {
+  commit_ahead
+  run run_gate "$(printf 'Merged and deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: restart the desktop app, run /mu:pause, see the task land\nPHASE: prod')"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }

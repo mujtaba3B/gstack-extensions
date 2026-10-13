@@ -41,6 +41,12 @@ command and ENDS the turn, with `dev_verified` recorded after the thumbs-up. Eit
 the turn-ending message carries a `DEPLOYED:` line so the deploy is a recorded decision,
 not an improvisation, and the PR body names the driver with their handle.
 
+When the human's check involves NO branch deploy (a local install exercised in his
+own app), or the change is already merged and deployed and only his live check is
+left, state `awaiting_human` with `PHASE: dev` or `PHASE: prod` instead (see
+[`qa-status-postures.md`](qa-status-postures.md)). This posture is for the case
+where you put the branch on a host for him.
+
 ## It ends the turn, it does not clear the merge
 
 `deploy_branch_for_manual_qa` satisfies the build-time Stop hook (any `QA_STATUS:`

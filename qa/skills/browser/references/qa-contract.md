@@ -14,6 +14,11 @@ EVIDENCE: <command run / URL hit / screenshot path / test name proving you exerc
 QA_STATUS: prod_verified
 EVIDENCE: <live check proving the Production QA Plan passed after deploy (build-procedure step 11)>
 
+QA_STATUS: awaiting_human
+DRIVER: <roster id, usually mujtaba>
+CHECK: <the exact thing the human must do, and what they should see>
+PHASE: <dev or prod>      # only a human can do the last check; nothing failed
+
 QA_STATUS: blocked
 REASON: <what prevents QA right now>
 
@@ -47,6 +52,7 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 |---|---|---|
 | `dev_verified` + `EVIDENCE` (alias: `verified`) | passes | passes |
 | `prod_verified` + `EVIDENCE` | passes | n/a (post-deploy, not a pre-merge gate) |
+| `awaiting_human` + `DRIVER` + `CHECK` + `PHASE` | passes (stated) | **fails** for `PHASE: dev` (a pending human check never greens a merge); n/a for `PHASE: prod` (post-deploy) |
 | `blocked` + `REASON` | passes | passes |
 | `skip_requested` + `REASON` | passes (stated) | **fails** (not an accepted keyword) |
 | `skip_approved` + `QA_SKIP_APPROVED_BY` | passes | passes |

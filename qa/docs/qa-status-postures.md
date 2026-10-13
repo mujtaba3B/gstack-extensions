@@ -63,6 +63,29 @@ and passed.
   directly while the derived per-agent images that production actually runs
   went silently stale.
 
+### `QA_STATUS: awaiting_human`
+
+Every check an agent can run is done; the one item left needs a human's hands
+(a desktop-app click, a real login, a device in the room). Not broken, not
+finished: waiting on a named person for a named check.
+
+- Requires `DRIVER: <roster id>` (usually `mujtaba`), `CHECK: <the exact thing
+  the human must do and what they should see>`, and `PHASE: dev` or
+  `PHASE: prod`.
+- `PHASE: prod` is the common case: the change is merged and deployed, and the
+  only open Production QA row is a live check no agent can perform (e.g. run
+  `/mu:pause` from the desktop app after a restart). Record `prod_verified`
+  after the human reports back.
+- `PHASE: dev` is a pre-merge check only the human can do that involves no
+  branch deploy (e.g. a local install exercised in his own app). If you
+  deployed the feature branch to a host for him, use
+  `deploy_branch_for_manual_qa` with `DRIVER: mujtaba` instead: its
+  `DEPLOYED:` line is the record of that deploy. Either way the merge stays
+  blocked until the Dev QA boxes are checked and `verified` is recorded.
+- Use this, not `blocked`, when nothing is wrong and the only gap is a human
+  check; use it, not `dev_verified` / `prod_verified`, so the open item stays
+  visible.
+
 ### `QA_STATUS: blocked`
 
 Something prevents QA right now.
@@ -96,8 +119,8 @@ docs-only commits.
 
 ## Intermediate vs terminal postures (CI asymmetry)
 
-`deploy_branch_for_manual_qa` and `skip_requested` end the working turn at the
-Stop hook but are NOT accepted by the strict per-repo CI qa-gate
+`deploy_branch_for_manual_qa`, `skip_requested`, and `awaiting_human` end the
+working turn at the Stop hook but are NOT accepted by the strict per-repo CI qa-gate
 (`.github/workflows/qa-gate.yml`), which greens only on `verified` / `blocked`
 / `skip_approved` (verified against the deployed workflow's matcher; note it
 does NOT match the longer `dev_verified` spelling, so the PR body must carry a
@@ -105,4 +128,6 @@ plain `QA_STATUS: verified` line for CI even when the turn-level posture was
 stated as `dev_verified`). That is intentional: the merge stays blocked on
 real verification, and the PR goes green when the verified posture is
 recorded after the human's thumbs-up. (`prod_verified` is post-deploy, not a
-pre-merge condition.)
+pre-merge condition; so is `awaiting_human PHASE: prod`, which CI never sees.
+`awaiting_human PHASE: dev` is deliberately left out of the CI matcher so a
+pending human check can never green a merge.)

@@ -52,6 +52,21 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+@test "allows: awaiting_human PHASE: prod (post-deploy, only the human's live check left)" {
+  run qa_gate_decision "$(printf 'Merged and deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: restart the desktop app, run /mu:pause, see the task land\nPHASE: prod')" 1
+  [ "$output" = "allow" ]
+}
+
+@test "allows: awaiting_human PHASE: dev (human-only check, no branch deploy)" {
+  run qa_gate_decision "$(printf 'Done.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: open the local build in the app and confirm the menu item\nPHASE: dev')" 1
+  [ "$output" = "allow" ]
+}
+
+@test "blocks: awaiting_human only inside a fenced block is a quotation, not a posture" {
+  run qa_gate_decision "$(printf 'All done.\n```\nQA_STATUS: awaiting_human\nPHASE: prod\n```')" 1
+  [ "$output" = "block" ]
+}
+
 @test "allows: completion claim but no shippable work (pure conversation)" {
   run qa_gate_decision "Done explaining. Here is how it works." 0
   [ "$output" = "allow" ]
