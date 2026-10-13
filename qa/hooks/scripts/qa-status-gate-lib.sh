@@ -84,8 +84,8 @@ qa_gate_decision() {
 # weaker proxy at execution time and the gate accepted prod_verified on it. The
 # bug was caught only by a later manual in-container smoke.
 #
-# These functions let the gate reject a prod_verified EVIDENCE line that names
-# only an upstream / base / proxy artifact instead of the exact production
+# These functions let the gate reject a Production-QA EVIDENCE line (prod_verified,
+# or an awaiting_human production handoff) that names only an upstream / base / proxy artifact instead of the exact production
 # artifact the approved plan named in its `Production artifacts:` field. They are
 # PURE (no I/O): qa-status-gate.sh fetches the PR body, extracts the field, and
 # passes it in.
@@ -188,21 +188,28 @@ EOF
 
 # qa_artifact_engages <message>  -> yes|no  (PURE)
 #   Whether a message makes a Production-QA evidence claim the artifact check
-#   must inspect. Two shapes engage it: a `QA_STATUS: prod_verified` posture,
-#   and an `awaiting_human` posture with `PHASE: prod` (its EVIDENCE closes the
-#   agent-runnable Production rows before the human's check, so a base / proxy
-#   artifact there is the same stale-image risk). `PHASE: dev` does not engage:
-#   dev QA runs a preview artifact by design. The match is deliberately broad
-#   (any `PHASE:` value starting `prod`, including "production"): engaging more
-#   only means more evidence gets checked, and a missing `Production artifacts:`
-#   field still fails open downstream.
+#   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
+#   `awaiting_human` posture UNLESS its first PHASE line explicitly says dev:
+#   its EVIDENCE closes the agent-runnable Production rows before the human's
+#   check, so a base / proxy artifact there is the same stale-image risk.
+#   Fail closed: a missing or oddly formatted PHASE ("PHASE=prod",
+#   "**PHASE**: prod", "PHASE: post-deploy", none at all) engages. Only the
+#   FIRST PHASE line counts (whitespace, bullets and bold before it are fine),
+#   so later prose that mentions "PHASE: prod" cannot flip a dev handoff, and
+#   the hook message's own "PHASE: dev|prod" menu reads as dev. Engaging only
+#   means evidence gets checked; a missing `Production artifacts:` field still
+#   fails open downstream. Known residual: an agent that declares PHASE: dev on
+#   what is really a post-deploy handoff is not checked here.
 qa_artifact_engages() {
-  local msg="$1"
+  local msg="$1" phase
   if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
     echo yes; return 0
   fi
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*awaiting_human' \
-     && printf '%s' "$msg" | grep -qiE 'PHASE:[^[:alnum:]]*prod'; then
+  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*awaiting_human'; then
+    phase=$(printf '%s\n' "$msg" | grep -iE '^[-*[:space:]]*\**PHASE\**[[:space:]]*[:=]' | head -n 1)
+    if printf '%s' "$phase" | grep -qiE 'PHASE\**[[:space:]]*[:=][^[:alnum:]]*dev'; then
+      echo no; return 0
+    fi
     echo yes; return 0
   fi
   echo no
@@ -223,9 +230,11 @@ qa_artifact_gate() {
   local clean
   clean=$(printf '%s\n' "$msg" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}')
 
-  # Scope: prod_verified only. dev_verified is exercised against a dev / preview
-  # artifact by design and has no Production-artifact field to match against;
-  # enforcing it would be a category error and could false-block correct dev QA.
+  # Scope: Production-QA claims only (qa_artifact_engages: prod_verified, or
+  # awaiting_human unless PHASE is explicitly dev). dev_verified and an
+  # awaiting_human PHASE: dev handoff are exercised against a dev / preview
+  # artifact by design; enforcing them would be a category error and could
+  # false-block correct dev QA.
   [ "$(qa_artifact_engages "$clean")" = "yes" ] || { echo allow; return 0; }
 
   local evidence

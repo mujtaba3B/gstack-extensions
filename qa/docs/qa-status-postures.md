@@ -58,7 +58,7 @@ and passed.
 - Artifact-evidence rule: if the approved QA plan in the PR body named a
   `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
   or deploy id), the EVIDENCE must cite THAT artifact (this also applies to an
-  `awaiting_human` handoff with `PHASE: prod`). The gate rejects evidence
+  `awaiting_human` handoff unless its `PHASE:` is `dev`). The gate rejects evidence
   that names only a base / upstream / proxy artifact from the same image
   family. This is incident hardening: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
@@ -88,10 +88,12 @@ finished: waiting on a named person for a named check.
 - `awaiting_human` claims nothing about the pending check, so it needs no
   `EVIDENCE:`. An `EVIDENCE:` line may cite the rows the agent did run; it is
   not a verification claim for the human's check.
-- The gate enforces the Production bar: with `PHASE: prod`, the message's
-  `EVIDENCE:` is checked against the plan's `Production artifacts:` exactly
-  as `prod_verified` is, so a handoff citing only a base / proxy artifact is
-  blocked. `PHASE: dev` is not checked (dev QA runs a preview artifact).
+- The gate enforces the Production bar: unless the first `PHASE:` line says
+  `dev`, the message's `EVIDENCE:` is checked against the plan's
+  `Production artifacts:` exactly as `prod_verified` is, so a handoff citing
+  only a base / proxy artifact is blocked. A missing or oddly formatted
+  `PHASE:` is checked too (fail closed). `PHASE: dev` is not checked: dev QA
+  runs a preview artifact.
 - While awaiting, say "I'll mark it verified once you confirm" rather than
   writing the literal `QA_STATUS: prod_verified` token: any unfenced
   `QA_STATUS: prod_verified` also engages the artifact check, by design (a

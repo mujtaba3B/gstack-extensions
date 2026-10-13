@@ -231,8 +231,42 @@ setup() {
   [ "$output" = "no" ]
 }
 
-@test "engages no: the hook message's own 'PHASE: dev|prod' menu text" {
-  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n(plus CHECK: / PHASE: dev|prod)')"
+@test "engages no: the hook message's 'PHASE: dev|prod' menu copied onto a PHASE line reads as dev" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev|prod')"
+  [ "$output" = "no" ]
+}
+
+@test "engages yes: awaiting_human with PHASE omitted (fail closed)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nCHECK: run the live agent')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: awaiting_human with unusual PHASE formats (fail closed)" {
+  for phase in 'PHASE=prod' 'PHASE prod' '**PHASE**: prod' 'PHASE: post-deploy' 'PHASE: 2 (prod)'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$phase")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $phase"; return 1; }
+  done
+}
+
+@test "engages no: first PHASE line is dev, later prose mentions PHASE: prod" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\nAfter merge we move to PHASE: prod.')"
+  [ "$output" = "no" ]
+}
+
+@test "engages yes: first PHASE line is prod, a later PHASE line says dev" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: prod\nPHASE: dev was last week')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages no: bold or equals-sign dev PHASE still reads as dev" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n- **PHASE:** dev')"
+  [ "$output" = "no" ]
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE=dev')"
+  [ "$output" = "no" ]
+}
+
+@test "engages no: dev_verified with PHASE: prod (only awaiting_human is widened)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: dev_verified\nPHASE: prod')"
   [ "$output" = "no" ]
 }
 
