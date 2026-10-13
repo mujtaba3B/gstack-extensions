@@ -1,0 +1,7 @@
+---
+type: regex
+weight: 1
+pattern: "QA_STATUS:[ \\t]*awaiting_human"
+flags: i
+match: contains
+---
