@@ -152,7 +152,7 @@ State, in this order:
 2. The `devops check` verdict, per check.
 3. The new live state: re-run `wtr status <id>` and show that the running commit now matches `origin/main`.
 
-Then state the QA posture per the QA contract: `QA_STATUS: prod_verified` plus `EVIDENCE:` when the checks passed and you verified the live state, `QA_STATUS: awaiting_human` plus `DRIVER:`, `CHECK:` and `PHASE: prod` when the checks passed but a Production QA row needs a human's hands, or `QA_STATUS: blocked` plus `REASON:` when they did not.
+Then state the QA posture per the QA contract: `QA_STATUS: prod_verified` plus `EVIDENCE:` when the checks passed and you verified the live state, `QA_STATUS: awaiting_human` plus `DRIVER:`, `CHECK:` and `PHASE: prod` when the checks passed but a Production QA row needs a human's hands (while awaiting, write "I'll mark it verified once you confirm", never the literal `QA_STATUS: prod_verified` token; see the qa plugin's `docs/qa-status-postures.md`), or `QA_STATUS: blocked` plus `REASON:` when they did not.
 
 ## What this skill does NOT do
 

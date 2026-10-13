@@ -72,6 +72,11 @@ finished: waiting on a named person for a named check.
 - Requires `DRIVER: <roster id>` (usually `mujtaba`), `CHECK: <the exact thing
   the human must do and what they should see>`, and `PHASE: dev` or
   `PHASE: prod`.
+- Run every check an agent CAN run first. Each agent-runnable row must be
+  closed with evidence that meets that phase's bar before you hand off (for
+  Production rows, the `prod_verified` bar, including the artifact-evidence
+  rule above). `CHECK:` names only what no agent can do; never move a
+  runnable check into it.
 - `PHASE: prod` is the common case: the change is merged and deployed, and the
   only open Production QA row is a live check no agent can perform (e.g. run
   `/mu:pause` from the desktop app after a restart). Record `prod_verified`

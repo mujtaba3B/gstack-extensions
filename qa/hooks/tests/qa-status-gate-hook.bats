@@ -54,6 +54,15 @@ assert_short_block() { # validates $output as the short-pointer block form
             blocked skip_requested no_tracked_change CHECK: PHASE: qa-status-postures.md; do
     printf '%s' "$reason" | grep -q "$kw"
   done
+  # Every posture the contract documents must be named, so a posture added to
+  # the doc cannot leave the message stale. skip_approved is recorded in the PR
+  # body after a human sign-off, never stated at a Stop, so it is exempt.
+  postures=$(sed -n 's/^### `QA_STATUS: \([a-z_]*\)`.*/\1/p' "$BATS_TEST_DIRNAME/../../docs/qa-status-postures.md")
+  [ "$(printf '%s\n' "$postures" | grep -c .)" -ge 8 ]
+  for kw in $postures; do
+    [ "$kw" = "skip_approved" ] && continue
+    printf '%s' "$reason" | grep -q "$kw"
+  done
 }
 
 @test "hook allows silently: modified tracked file alone, no commits ahead" {
