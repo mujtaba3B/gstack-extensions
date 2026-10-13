@@ -248,9 +248,9 @@ setup() {
   done
 }
 
-@test "engages no: PHASE: dev, later prose mentions PHASE: prod mid-sentence" {
+@test "engages yes: PHASE: dev, but prose later pairs PHASE with prod (fail closed)" {
   run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\nAfter merge we move to PHASE: prod.')"
-  [ "$output" = "no" ]
+  [ "$output" = "yes" ]
 }
 
 @test "engages yes: one PHASE line prod, another says dev (not every line is dev)" {
@@ -314,6 +314,30 @@ setup() {
   for line in 'PHASE: dev, then pre-prod' 'PHASE: dev/prod' 'PHASE: dev, production next'; do
     run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
     [ "$output" = "yes" ] || { echo "did not engage on: $line"; return 1; }
+  done
+}
+
+@test "engages yes: the posture, DRIVER and PHASE: prod on one line, plus a dev recap bullet (adversarial shape)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human DRIVER: mujtaba PHASE: prod\n- PHASE: dev QA passed on the preview earlier')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: prod in tables, dash separators, backticked keys or after e.g. (adversarial shapes)" {
+  for extra in '| PHASE | prod |' 'PHASE - prod' '`PHASE`: prod' 'DRIVER: x | CHECK: y | PHASE: prod' 'e.g. the PHASE: prod check remains'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n%s' "$extra")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $extra"; return 1; }
+  done
+}
+
+@test "engages yes: preprod spelled as one word counts as prod" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev (preprod)')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: a bold or backticked awaiting_human posture engages too" {
+  for posture in 'QA_STATUS: **awaiting_human**' 'QA_STATUS: `awaiting_human`'; do
+    run qa_artifact_engages "$(printf '%s\nPHASE: prod' "$posture")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $posture"; return 1; }
   done
 }
 

@@ -196,32 +196,35 @@ qa_strip_fences() {
 # qa_artifact_engages <fence_stripped_message>  -> yes|no  (PURE)
 #   Whether a message makes a Production-QA evidence claim the artifact check
 #   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
-#   `awaiting_human` posture, UNLESS it has at least one PHASE line, every PHASE
-#   line's own value is a dev token (`dev` or `development`, then a word
-#   boundary), and no PHASE line mentions prod as a word (`prod`, `production`,
-#   `pre-prod`, `dev/prod`; not "product" or "reproduce"): its EVIDENCE closes the
-#   agent-runnable Production rows before the human's check, so a base / proxy
-#   artifact there is the same stale-image risk. Everything ambiguous resolves
-#   to "check" (fail closed): no PHASE line, an odd format, "dev and prod",
-#   "devops", "prod (was dev)", the "dev|prod" menu. PHASE lines are found
-#   broadly (any non-letter markdown prefix: bullets, numbers, `>`, `#`,
-#   backticks, or a one-letter `a)` marker), so a prod line cannot hide behind
-#   formatting, and the rule is monotone: adding a line can only turn checking
-#   on. Prose that mentions PHASE mid-sentence is not a PHASE line. Engaging
+#   `awaiting_human` posture (bold or backticked too), UNLESS it is plainly dev:
+#   every `PHASE <separator> <value>` token in the message (separator `:`, `=`,
+#   `|` or `-`, markup tolerated) has the value `dev` or `development`, at
+#   least one such token exists, and NO line pairs `PHASE` with the word prod
+#   (`prod`, `production`, `pre-prod`, `preprod`; not "product" or "reproduce")
+#   anywhere after it. So "PHASE: post-deploy" engages as surely as "prod". Its EVIDENCE closes the agent-runnable
+#   Production rows before the human's check, so a base / proxy artifact there
+#   is the same stale-image risk.
+#   Both tests match anywhere in the text rather than parsing "PHASE lines":
+#   every line-parsing rule tried here was beaten by formatting (a one-line
+#   posture, recap bullets, tables, list markers, "e.g."). This one is
+#   monotone: adding text can only add a non-dev token or a prod mention, so it
+#   can only turn checking on. Everything
+#   ambiguous engages (fail closed): no PHASE at all, "devops", "dev and prod",
+#   the "dev|prod" menu, prose such as "next we move to PHASE: prod". Engaging
 #   only means evidence gets checked; a missing `Production artifacts:` field
-#   still fails open downstream. Known residual: an agent that declares only
-#   PHASE: dev on what is really a post-deploy handoff is not checked here.
+#   (no PR on the current branch, e.g. a deploy run from main) still fails open
+#   downstream. Known residual: an agent that never pairs PHASE with prod, and
+#   declares PHASE: dev on what is really a post-deploy handoff, is not checked.
 qa_artifact_engages() {
-  local msg="$1" phases
-  local key='^([^[:alpha:]]|[[:alpha:]][.)])*\**PHASE\**[[:space:]]*[:=]'
+  local msg="$1" values
   if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
     echo yes; return 0
   fi
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*awaiting_human'; then
-    phases=$(printf '%s\n' "$msg" | grep -iE "$key")
-    if [ -n "$phases" ] \
-       && ! printf '%s\n' "$phases" | grep -viqE "${key}[^[:alnum:]]*dev(elopment)?([^[:alnum:]]|\$)" \
-       && ! printf '%s\n' "$phases" | grep -qiE '(^|[^[:alnum:]])prod(uction)?([^[:alnum:]]|$)'; then
+  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[*`_[:space:]]*awaiting_human'; then
+    values=$(printf '%s\n' "$msg" | grep -oiE 'PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*')
+    if [ -n "$values" ] \
+       && ! printf '%s\n' "$values" | grep -viqE '[^[:alnum:]-](dev|development)$' \
+       && ! printf '%s\n' "$msg" | grep -qiE 'PHASE.*(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)'; then
       echo no; return 0
     fi
     echo yes; return 0

@@ -93,8 +93,11 @@ finished: waiting on a named person for a named check.
   mentioning prod), its `EVIDENCE:` is checked against the plan's
   `Production artifacts:` exactly as `prod_verified` is, so a handoff citing
   only a base / proxy artifact is blocked. A missing or oddly formatted
-  `PHASE:` is checked too (fail closed). A `PHASE: dev` handoff is not
-  checked: dev QA runs a preview artifact.
+  `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
+  with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
+  preview artifact. The check reads `Production artifacts:` from the PR of
+  the current branch, so a handoff written from `main` (no PR) is not
+  checked; close those rows against the named artifact yourself.
 - While awaiting, say "I'll mark it verified once you confirm" rather than
   writing the literal `QA_STATUS: prod_verified` token: any unfenced
   `QA_STATUS: prod_verified` also engages the artifact check, by design (a
