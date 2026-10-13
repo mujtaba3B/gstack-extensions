@@ -130,4 +130,7 @@ real verification, and the PR goes green when the verified posture is
 recorded after the human's thumbs-up. (`prod_verified` is post-deploy, not a
 pre-merge condition; so is `awaiting_human PHASE: prod`, which CI never sees.
 `awaiting_human PHASE: dev` is deliberately left out of the CI matcher so a
-pending human check can never green a merge.)
+pending human check can never green a merge. That holds because the matcher
+is anchored to the keyword right after `QA_STATUS:`, so a `CHECK:` line that
+mentions "verified" does not satisfy it. A per-repo matcher that loosens that
+anchor would break this guarantee.)

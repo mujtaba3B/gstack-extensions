@@ -46,7 +46,7 @@ The per-repo `.github/workflows/qa-gate.yml` (e.g. hesco) re-checks the same pos
 
 So the QA block you hand the user for the PR body must be CI-clean: a real single-keyword line, not the menu, not fenced, not commented.
 
-## The asymmetry that bites: `skip_requested`
+## The asymmetry that bites: intermediate postures
 
 | Posture | Stop hook | CI qa-gate |
 |---|---|---|
@@ -58,6 +58,8 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 | `skip_approved` + `QA_SKIP_APPROVED_BY` | passes | passes |
 
 `skip_requested` is a valid stated posture for the Stop hook but the CI gate does NOT accept it. If QA is genuinely infeasible, you must escalate: state `skip_requested` + `REASON`, ask the human "ok to skip QA for <reason>", and on approval record `skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>` in the PR body. Emitting `skip_requested` alone passes the hook but leaves the PR red.
+
+`awaiting_human` with `PHASE: dev` behaves the same way on purpose: it ends the turn honestly while the human's check is pending, and the PR stays red until `verified` is recorded after they report back.
 
 ## Honesty (non-negotiable)
 
