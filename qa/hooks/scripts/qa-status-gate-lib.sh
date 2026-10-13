@@ -188,19 +188,30 @@ EOF
 
 # qa_artifact_scope <fence_stripped_message>  -> check|skip  (PURE)
 #   Whether the artifact-evidence check applies to the posture the message
-#   STATES. A posture is stated on a line of its own (only bullets, bold or
-#   whitespace before `QA_STATUS:`); a mid-sentence mention is prose. Skips ONLY
-#   when an awaiting_human posture line is stated and no prod_verified posture
-#   line is: awaiting_human claims nothing verified, so an EVIDENCE line citing
-#   the rows the agent ran, next to prose like "I will record QA_STATUS:
-#   prod_verified once you confirm", is not a prod_verified claim. Every other
-#   shape (an inline prod_verified, both postures stated) stays checked: fail
-#   closed. Known residual: a stated awaiting_human line plus a mid-sentence
-#   prod_verified claim is skipped; its stated posture records nothing verified.
+#   STATES. Skips ONLY when an awaiting_human posture is stated and no
+#   prod_verified posture is: awaiting_human claims nothing verified, so an
+#   EVIDENCE line citing the rows the agent ran, next to prose like "I will
+#   record QA_STATUS: prod_verified once you confirm", is not a prod_verified
+#   claim. The two sides are deliberately ASYMMETRIC so ambiguity resolves to
+#   "check" (fail closed):
+#     - awaiting_human counts as stated only behind an explicit prefix set:
+#       whitespace, a -/*/+ bullet, a [ ] / [x] task box, a 1. / a) marker,
+#       and bold. A blockquote, inline code or table cell does NOT count.
+#     - prod_verified counts as stated on any line where QA_STATUS: is not
+#       preceded by a word of two or more letters (so task boxes, list
+#       markers, quotes and code all count; only mid-sentence prose does not),
+#       with the value optionally wrapped in bold or backticks.
+#   Lines inside ~~~ fences are ignored (the caller strips ``` fences) and a
+#   bare CR is treated as a line break. Known residual: a stated awaiting_human
+#   line plus a mid-SENTENCE prod_verified claim is skipped; its stated posture
+#   records nothing verified.
 qa_artifact_scope() {
-  local clean="$1" anchor='^[^A-Za-z]*QA_STATUS:\**[[:space:]]*'
-  if printf '%s\n' "$clean" | grep -qiE "${anchor}awaiting_human" \
-     && ! printf '%s\n' "$clean" | grep -qiE "${anchor}prod_verified"; then
+  local msg strict broad
+  msg=$(printf '%s\n' "$1" | tr '\r' '\n' | awk 'BEGIN{f=0} /^[[:space:]]*~~~/{f=!f; next} !f{print}')
+  strict='^[[:space:]]*([-*+][[:space:]]+)?(\[[ xX]\][[:space:]]+)?(([0-9]+|[A-Za-z])[.)][[:space:]]+)?\**QA_STATUS:\**[[:space:]]*awaiting_human'
+  broad='^([^[:alpha:]]|[[:alpha:]][^[:alpha:]])*QA_STATUS:[^[:alnum:]_]*prod_verified'
+  if printf '%s\n' "$msg" | grep -qiE "$strict" \
+     && ! printf '%s\n' "$msg" | grep -qiE "$broad"; then
     echo skip
     return 0
   fi
@@ -209,9 +220,11 @@ qa_artifact_scope() {
 
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
-#   ONLY when the message states a prod_verified posture AND its EVIDENCE names a
-#   base/proxy artifact instead of the production artifact the plan named. Any
-#   other posture, missing evidence, or a non-blocking verdict -> allow.
+#   ONLY when the message states a prod_verified posture, qa_artifact_scope says
+#   "check" (a stated awaiting_human with no stated prod_verified is skipped),
+#   AND its EVIDENCE names a base/proxy artifact instead of the production
+#   artifact the plan named. Any other posture, missing evidence, or a
+#   non-blocking verdict -> allow.
 qa_artifact_gate() {
   local msg="$1" field="$2"
 
