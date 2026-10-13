@@ -75,13 +75,21 @@ finished: waiting on a named person for a named check.
 - `PHASE: prod` is the common case: the change is merged and deployed, and the
   only open Production QA row is a live check no agent can perform (e.g. run
   `/mu:pause` from the desktop app after a restart). Record `prod_verified`
-  after the human reports back.
+  after the human reports back. Also record the open check where it outlives
+  this chat: a comment on the merged PR naming the open Production QA row and
+  the CHECK, or a TODO. After merge the Stop gate no longer fires on the
+  branch, so a chat line alone is easy to lose.
+- `awaiting_human` claims nothing was verified, so it carries no `EVIDENCE:`
+  and the artifact-evidence rule above does not apply to it. Any Production QA
+  row an agent did run is still checked against the named production artifact
+  when `prod_verified` is stated.
 - `PHASE: dev` is a pre-merge check only the human can do that involves no
   branch deploy (e.g. a local install exercised in his own app). If you
   deployed the feature branch to a host for him, use
   `deploy_branch_for_manual_qa` with `DRIVER: mujtaba` instead: its
-  `DEPLOYED:` line is the record of that deploy. Either way the merge stays
-  blocked until the Dev QA boxes are checked and `verified` is recorded.
+  `DEPLOYED:` line is the record of that deploy. Either way, leave the Dev QA
+  box for the human's check unchecked until they report back: that box is
+  what keeps the merge blocked, and `verified` is recorded only after it.
 - Use this, not `blocked`, when nothing is wrong and the only gap is a human
   check; use it, not `dev_verified` / `prod_verified`, so the open item stays
   visible.
@@ -129,8 +137,10 @@ stated as `dev_verified`). That is intentional: the merge stays blocked on
 real verification, and the PR goes green when the verified posture is
 recorded after the human's thumbs-up. (`prod_verified` is post-deploy, not a
 pre-merge condition; so is `awaiting_human PHASE: prod`, which CI never sees.
-`awaiting_human PHASE: dev` is deliberately left out of the CI matcher so a
-pending human check can never green a merge. That holds because the matcher
-is anchored to the keyword right after `QA_STATUS:`, so a `CHECK:` line that
-mentions "verified" does not satisfy it. A per-repo matcher that loosens that
-anchor would break this guarantee.)
+`awaiting_human PHASE: dev` is deliberately left out of the CI matcher, so
+the posture itself never greens a merge; the matcher is anchored to the
+keyword right after `QA_STATUS:`, so a `CHECK:` line that mentions "verified"
+does not count. That is not a hard guarantee: the matcher also accepts
+`blocked`, and the Dev QA boxes merge-clearance reads can be ticked by anyone
+who edits the PR body. What actually keeps a pending human check from merging
+is the driver leaving its Dev QA box unchecked until the human reports back.)
