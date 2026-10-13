@@ -851,7 +851,7 @@ QA is a first-class, recorded decision. The same run feeds two gates with differ
 
 Decide the posture from the verdict:
 - all scenarios PASS (deviations accepted/ignored) → `QA_STATUS: verified` + `EVIDENCE:` citing the real-surface observations, screenshot paths, the probe, and any test names. NEVER emit `verified` unless you actually drove the UI and observed the outcome.
-- every scenario you could drive PASSED, but one needs the human's hands (his real session, a desktop app) → `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` + `PHASE: dev`. Leave that check's Dev QA box unchecked until he reports back: that box is what blocks the merge (a repo's CI qa-gate, where one exists, also rejects the posture). Record `verified` only after his thumbs-up.
+- every scenario you could drive PASSED, but one needs the human's hands (his real session, a desktop app) → `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` (only what no agent can do) + `PHASE: dev`. If you deployed the branch to a host for his check, use `deploy_branch_for_manual_qa` + `DRIVER:` + `DEPLOYED:` instead (see `docs/qa-status-postures.md`). Leave that check's Dev QA box unchecked until he reports back: that box is what blocks the merge (a repo's CI qa-gate, where one exists, also rejects the posture). Record `verified` only after his thumbs-up.
 - a FAIL, or QA could not complete → `QA_STATUS: blocked` + `REASON:`.
 - QA genuinely not feasible → `QA_STATUS: skip_requested` + `REASON:`, then ask the human "ok to skip QA for <reason>"; on approval record `QA_STATUS: skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>`. CI rejects `skip_requested`, so it must reach `skip_approved` before the PR can go green.
 

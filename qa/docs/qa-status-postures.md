@@ -57,7 +57,8 @@ and passed.
 - Requires `EVIDENCE:` of the live check.
 - Artifact-evidence rule: if the approved QA plan in the PR body named a
   `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
-  or deploy id), the EVIDENCE must cite THAT artifact. The gate rejects evidence
+  or deploy id), the EVIDENCE must cite THAT artifact (this also applies to an
+  `awaiting_human` handoff with `PHASE: prod`). The gate rejects evidence
   that names only a base / upstream / proxy artifact from the same image
   family. This is incident hardening: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
@@ -87,11 +88,15 @@ finished: waiting on a named person for a named check.
 - `awaiting_human` claims nothing about the pending check, so it needs no
   `EVIDENCE:`. An `EVIDENCE:` line may cite the rows the agent did run; it is
   not a verification claim for the human's check.
-- While awaiting, do not write the literal `QA_STATUS: prod_verified` token
-  anywhere in the message, even as a promise. Say "I'll mark it verified once
-  you confirm" instead. Any unfenced `QA_STATUS: prod_verified` engages the
-  artifact-evidence check above, by design: a rule that tried to tell a
-  promise from a claim was beaten by markdown and HTML shapes and reverted.
+- The gate enforces the Production bar: with `PHASE: prod`, the message's
+  `EVIDENCE:` is checked against the plan's `Production artifacts:` exactly
+  as `prod_verified` is, so a handoff citing only a base / proxy artifact is
+  blocked. `PHASE: dev` is not checked (dev QA runs a preview artifact).
+- While awaiting, say "I'll mark it verified once you confirm" rather than
+  writing the literal `QA_STATUS: prod_verified` token: any unfenced
+  `QA_STATUS: prod_verified` also engages the artifact check, by design (a
+  rule that tried to tell a promise from a claim was beaten by markdown and
+  HTML shapes and reverted).
 - `PHASE: dev` is a pre-merge check only the human can do that involves no
   branch deploy (e.g. a local install exercised in his own app). If you
   deployed the feature branch to a host for him, use

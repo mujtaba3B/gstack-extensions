@@ -209,16 +209,67 @@ setup() {
   [ "$output" = "allow" ]
 }
 
-# ---- awaiting_human next to the artifact check (fail closed) ----------------
-# The check is not scoped by posture: any unfenced QA_STATUS: prod_verified token
-# engages it. A per-line "which posture is stated" carve-out was tried and lost
-# three red-team rounds to markdown and HTML shapes, each failing OPEN, so it was
-# reverted. While awaiting a human, the contract says to phrase the follow-up
-# without the literal token ("mark it verified"); these rows pin both halves.
+# ---- qa_artifact_engages (which messages make a Production-QA claim) --------
 
-@test "awaiting gate allow: guided phrasing (no literal token) + base-family EVIDENCE" {
+@test "engages yes: prod_verified posture" {
+  run qa_artifact_engages "Deployed. QA_STATUS: prod_verified EVIDENCE: x"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: awaiting_human with PHASE: prod" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: prod')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: awaiting_human with PHASE: production (broad on purpose)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: production QA, row 2')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages no: awaiting_human with PHASE: dev (preview artifact by design)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev')"
+  [ "$output" = "no" ]
+}
+
+@test "engages no: the hook message's own 'PHASE: dev|prod' menu text" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n(plus CHECK: / PHASE: dev|prod)')"
+  [ "$output" = "no" ]
+}
+
+@test "engages no: dev_verified" {
+  run qa_artifact_engages "QA_STATUS: dev_verified EVIDENCE: preview"
+  [ "$output" = "no" ]
+}
+
+# ---- awaiting_human next to the artifact check (fail closed) ----------------
+# An awaiting_human PHASE: prod handoff makes a Production-QA evidence claim
+# (the agent-runnable Prod rows it closed), so its EVIDENCE is checked like
+# prod_verified. PHASE: dev is out of scope, and a missing Production
+# artifacts field still fails open. A per-line "which posture is stated"
+# carve-out was tried and lost three red-team rounds to markdown and HTML
+# shapes, each failing OPEN, so the check is never narrowed by formatting.
+
+@test "awaiting gate block: PHASE: prod handoff with base-only EVIDENCE (evidence laundering)" {
   msg=$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested %s\nI will mark it verified once you confirm.' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate allow: PHASE: prod handoff whose EVIDENCE names the exact production ref" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: live run on %s' "$PERAGENT")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate allow: PHASE: dev handoff is out of scope (preview artifact)" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nCHECK: open the local build\nPHASE: dev\nEVIDENCE: docker run %s in preview' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate allow: PHASE: prod handoff with no Production artifacts field fails open" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: prod\nEVIDENCE: docker run %s' "$BASE")
+  run qa_artifact_gate "$msg" ""
   [ "$output" = "allow" ]
 }
 

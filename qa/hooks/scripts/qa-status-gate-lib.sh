@@ -186,11 +186,35 @@ EOF
   return 0
 }
 
+# qa_artifact_engages <message>  -> yes|no  (PURE)
+#   Whether a message makes a Production-QA evidence claim the artifact check
+#   must inspect. Two shapes engage it: a `QA_STATUS: prod_verified` posture,
+#   and an `awaiting_human` posture with `PHASE: prod` (its EVIDENCE closes the
+#   agent-runnable Production rows before the human's check, so a base / proxy
+#   artifact there is the same stale-image risk). `PHASE: dev` does not engage:
+#   dev QA runs a preview artifact by design. The match is deliberately broad
+#   (any `PHASE:` value starting `prod`, including "production"): engaging more
+#   only means more evidence gets checked, and a missing `Production artifacts:`
+#   field still fails open downstream.
+qa_artifact_engages() {
+  local msg="$1"
+  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
+    echo yes; return 0
+  fi
+  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*awaiting_human' \
+     && printf '%s' "$msg" | grep -qiE 'PHASE:[^[:alnum:]]*prod'; then
+    echo yes; return 0
+  fi
+  echo no
+}
+
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
-#   ONLY when the message states a prod_verified posture AND its EVIDENCE names a
-#   base/proxy artifact instead of the production artifact the plan named. Any
-#   other posture, missing evidence, or a non-blocking verdict -> allow.
+#   ONLY when the message makes a Production-QA evidence claim
+#   (qa_artifact_engages: prod_verified, or awaiting_human with PHASE: prod) AND
+#   its EVIDENCE names a base/proxy artifact instead of the production artifact
+#   the plan named. Any other posture, missing evidence, or a non-blocking
+#   verdict -> allow.
 qa_artifact_gate() {
   local msg="$1" field="$2"
 
@@ -202,7 +226,7 @@ qa_artifact_gate() {
   # Scope: prod_verified only. dev_verified is exercised against a dev / preview
   # artifact by design and has no Production-artifact field to match against;
   # enforcing it would be a category error and could false-block correct dev QA.
-  printf '%s' "$clean" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified' || { echo allow; return 0; }
+  [ "$(qa_artifact_engages "$clean")" = "yes" ] || { echo allow; return 0; }
 
   local evidence
   evidence=$(qa_extract_evidence "$clean")

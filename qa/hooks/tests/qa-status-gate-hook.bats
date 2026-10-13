@@ -145,6 +145,32 @@ assert_short_block() { # validates $output as the short-pointer block form
   [ -z "$output" ]
 }
 
+# A gh stub on PATH serves the PR body, so the hook's artifact path runs end to
+# end (its PR-body fetch is gated on qa_artifact_engages).
+stub_pr_body() { # $1 = Production artifacts value
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nprintf "%%s\\n" "**Production artifacts:** %s on the mini"\n' "$1" > "$BATS_TEST_TMPDIR/bin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "hook blocks: awaiting_human PHASE: prod handoff citing only the base image" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested nanoclaw-agent-v2-83c915c8')"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+  echo "$output" | jq -r '.reason' | grep -q 'artifact-evidence'
+}
+
+@test "hook allows: awaiting_human PHASE: prod handoff citing the exact production ref" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: live run on nanoclaw-agent-v2-83c915c8:ag-1-main')"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "hook allows: stop_hook_active continuation never re-blocks (loop guard)" {
   commit_ahead
   run run_gate 'All done, ready to merge.' true
