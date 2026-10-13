@@ -99,9 +99,11 @@ finished: waiting on a named person for a named check.
   with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
   preview artifact. The check reads `Production artifacts:` from the PR of
   the current branch, so a handoff written from `main` (no PR) is not
-  checked; close those rows against the named artifact yourself. If a
-  dev handoff is blocked, the message names the text that engaged the check
-  (a "Phase" table header, a "PHASE: prod" remark): state only `PHASE: dev`.
+  checked; close those rows against the named artifact yourself. A block
+  names the text that engaged the check (a "Phase" table header, a
+  "PHASE: prod" remark). The fix is to re-verify through the production
+  artifact; restating as `PHASE: dev` is right only for a genuinely
+  pre-merge handoff, never for one whose change is merged or deployed.
 - While awaiting, say "I'll mark it verified once you confirm" rather than
   writing the literal `QA_STATUS: prod_verified` token: any unfenced
   `QA_STATUS: prod_verified` also engages the artifact check, by design (a

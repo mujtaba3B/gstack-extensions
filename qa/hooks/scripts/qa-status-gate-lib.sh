@@ -84,11 +84,12 @@ qa_gate_decision() {
 # weaker proxy at execution time and the gate accepted prod_verified on it. The
 # bug was caught only by a later manual in-container smoke.
 #
-# These functions let the gate reject a Production-QA EVIDENCE line (prod_verified,
-# or an awaiting_human production handoff) that names only an upstream / base / proxy artifact instead of the exact production
-# artifact the approved plan named in its `Production artifacts:` field. They are
-# PURE (no I/O): qa-status-gate.sh fetches the PR body, extracts the field, and
-# passes it in.
+# These functions let the gate reject a Production-QA EVIDENCE line
+# (prod_verified, or an awaiting_human production handoff) that names only an
+# upstream / base / proxy artifact instead of the exact production artifact the
+# approved plan named in its `Production artifacts:` field. They are PURE (no
+# I/O): qa-status-gate.sh fetches the PR body, extracts the field, and passes
+# it in.
 #
 # Conservative by construction (this gate fails OPEN and has fleet-wide blast
 # radius). The only verdict that blocks is `mismatch`, returned ONLY when the
@@ -210,20 +211,22 @@ QA_PROD_WORD_RE='(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)'
 #   read as dev and engages) has the value `dev` or `development`, at
 #   least one such token exists, and NO line pairs `PHASE` with the word prod
 #   (`prod`, `production`, `pre-prod`, `preprod`; not "product" or "reproduce")
-#   anywhere after it. So "PHASE: post-deploy" engages as surely as "prod". Its EVIDENCE closes the agent-runnable
+#   anywhere after it. So "PHASE: post-deploy" engages as surely as "prod".
+#   An awaiting_human production handoff's EVIDENCE closes the agent-runnable
 #   Production rows before the human's check, so a base / proxy artifact there
 #   is the same stale-image risk.
 #   Both tests match anywhere in the text rather than parsing "PHASE lines":
 #   every line-parsing rule tried here was beaten by formatting (a one-line
-#   posture, recap bullets, tables, list markers, "e.g."). This one is
-#   monotone: adding text can only add a non-dev token or a prod mention, so it
-#   can only turn checking on. Everything
+#   posture, recap bullets, tables, list markers, "e.g."). Once a message has a
+#   non-dev PHASE token or a PHASE/prod pairing, no added text can cancel it;
+#   the only way out is a message whose every PHASE token is dev. Everything
 #   ambiguous engages (fail closed): no PHASE at all, "devops", "dev and prod",
 #   the "dev|prod" menu, prose such as "next we move to PHASE: prod". Engaging
 #   only means evidence gets checked; a missing `Production artifacts:` field
 #   (no PR on the current branch, e.g. a deploy run from main) still fails open
 #   downstream. Known residual: an agent that never pairs PHASE with prod, and
 #   declares PHASE: dev on what is really a post-deploy handoff, is not checked.
+#   The block message must never coach that relabel.
 qa_artifact_engages() {
   local msg="$1" values
   if printf '%s' "$msg" | grep -qiE "$QA_PROD_VERIFIED_RE"; then
@@ -246,8 +249,9 @@ qa_artifact_engages() {
 #   honest dev handoff was engaged by a stray mention (a "Phase" table header,
 #   a "PHASE: prod" remark) can see the exact text and reword it. Echoes the
 #   prod_verified posture if stated, else the span from PHASE to prod on the
-#   first line pairing them, else the first non-dev PHASE token, else "no
-#   PHASE: dev stated". Every branch is cut to 80 chars. It reads the same
+#   first line pairing them, else the first non-dev PHASE token, else a
+#   neutral "treated as prod" note (worded so it never reads as "add PHASE:
+#   dev"). Every branch is cut to 80 chars. It reads the same
 #   QA_*_RE patterns as qa_artifact_engages, so the two cannot drift; it never
 #   changes the decision, it only explains it.
 qa_artifact_engage_reason() {
@@ -264,7 +268,7 @@ qa_artifact_engage_reason() {
     why=$(printf '%s\n' "$msg" | grep -oiE "$QA_PHASE_TOKEN_RE" \
           | grep -viE "$QA_PHASE_DEV_RE" | head -n 1)
   fi
-  [ -n "$why" ] || why="no PHASE: dev stated"
+  [ -n "$why" ] || why="awaiting_human with no plain PHASE: dev (treated as prod)"
   printf '%s\n' "$why" | cut -c1-80
 }
 

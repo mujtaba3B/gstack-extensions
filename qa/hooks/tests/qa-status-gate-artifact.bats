@@ -368,9 +368,9 @@ setup() {
   [ "$output" = "Phase | Check" ]
 }
 
-@test "engage reason: says no dev PHASE was stated when none is" {
+@test "engage reason: a missing PHASE gets a neutral note, not an instruction" {
   run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nCHECK: x')"
-  [ "$output" = "no PHASE: dev stated" ]
+  [ "$output" = "awaiting_human with no plain PHASE: dev (treated as prod)" ]
 }
 
 @test "engage reason: a long line keeps the PHASE-to-prod span, capped at 80" {
@@ -391,7 +391,7 @@ setup() {
   for m in 'PHASE: post-deploy' 'PHASE=staging' 'PHASE: dev and prod' '| Phase | Check |' 'PHASE: dev, then PHASE: prod'; do
     msg=$(printf 'QA_STATUS: awaiting_human\n%s' "$m")
     [ "$(qa_artifact_engages "$msg")" = "yes" ]
-    [ "$(qa_artifact_engage_reason "$msg")" != "no PHASE: dev stated" ]
+    [ "$(qa_artifact_engage_reason "$msg")" != "awaiting_human with no plain PHASE: dev (treated as prod)" ]
   done
 }
 

@@ -162,6 +162,13 @@ stub_pr_body() { # $1 = Production artifacts value
   [ "$(echo "$output" | jq -r '.decision')" = "block" ]
   echo "$output" | jq -r '.reason' | grep -q 'artifact-evidence'
   echo "$output" | jq -r '.reason' | grep -qF 'engaged by: PHASE: prod'
+  # The production remedy comes first; the dev label is offered only for a
+  # pre-merge handoff, so the message never coaches relabelling a deploy.
+  r=$(echo "$output" | jq -r '.reason')
+  fix=$(printf '%s\n' "$r" | grep -n 'Re-verify THROUGH' | cut -d: -f1)
+  dev=$(printf '%s\n' "$r" | grep -n 'PHASE: dev is the right label' | cut -d: -f1)
+  [ -n "$fix" ] && [ -n "$dev" ] && [ "$fix" -lt "$dev" ]
+  printf '%s' "$r" | grep -qF 'nothing from this branch is merged or deployed yet'
 }
 
 @test "hook blocks: a fenced PHASE: dev example above the real PHASE: prod handoff" {
