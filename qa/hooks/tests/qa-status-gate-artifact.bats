@@ -209,6 +209,50 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+# ---- qa_artifact_scope (which stated posture the check applies to) ------------
+
+@test "scope skip: stated awaiting_human line + prose mention of prod_verified" {
+  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nPHASE: prod\nI will record QA_STATUS: prod_verified once you confirm.')"
+  [ "$output" = "skip" ]
+}
+
+@test "scope skip: bold bullet awaiting_human posture line counts as stated" {
+  run qa_artifact_scope "$(printf -- '- **QA_STATUS:** awaiting_human\nlater: QA_STATUS: prod_verified')"
+  [ "$output" = "skip" ]
+}
+
+@test "scope check: inline prod_verified with no awaiting_human line (the incident shape)" {
+  run qa_artifact_scope "Deployed. QA_STATUS: prod_verified EVIDENCE: ran docker run base"
+  [ "$output" = "check" ]
+}
+
+@test "scope check: both postures stated on their own lines -> fail closed" {
+  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: prod_verified')"
+  [ "$output" = "check" ]
+}
+
+@test "scope check: awaiting_human only mid-sentence is prose, not a stated posture" {
+  run qa_artifact_scope "$(printf 'Not QA_STATUS: awaiting_human after all.\nQA_STATUS: prod_verified')"
+  [ "$output" = "check" ]
+}
+
+@test "scope residual: stated awaiting_human + mid-sentence prod_verified claim is skipped" {
+  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nDone. QA_STATUS: prod_verified EVIDENCE: base')"
+  [ "$output" = "skip" ]
+}
+
+@test "gate allow: awaiting_human + EVIDENCE on the base family + prose prod_verified (red-team repro)" {
+  msg=$(printf 'Deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested %s\nI will record QA_STATUS: prod_verified once you confirm.' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
+@test "gate block: both postures stated, base-only evidence -> still blocks" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: prod_verified\nEVIDENCE: ran docker run %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
 @test "gate block: real prod_verified outside a fence still blocks despite a fenced example" {
   msg=$(printf 'Example:\n```\nsome code\n```\nDeployed. QA_STATUS: prod_verified EVIDENCE: docker run %s only' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"

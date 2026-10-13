@@ -186,6 +186,27 @@ EOF
   return 0
 }
 
+# qa_artifact_scope <fence_stripped_message>  -> check|skip  (PURE)
+#   Whether the artifact-evidence check applies to the posture the message
+#   STATES. A posture is stated on a line of its own (only bullets, bold or
+#   whitespace before `QA_STATUS:`); a mid-sentence mention is prose. Skips ONLY
+#   when an awaiting_human posture line is stated and no prod_verified posture
+#   line is: awaiting_human claims nothing verified, so an EVIDENCE line citing
+#   the rows the agent ran, next to prose like "I will record QA_STATUS:
+#   prod_verified once you confirm", is not a prod_verified claim. Every other
+#   shape (an inline prod_verified, both postures stated) stays checked: fail
+#   closed. Known residual: a stated awaiting_human line plus a mid-sentence
+#   prod_verified claim is skipped; its stated posture records nothing verified.
+qa_artifact_scope() {
+  local clean="$1" anchor='^[^A-Za-z]*QA_STATUS:\**[[:space:]]*'
+  if printf '%s\n' "$clean" | grep -qiE "${anchor}awaiting_human" \
+     && ! printf '%s\n' "$clean" | grep -qiE "${anchor}prod_verified"; then
+    echo skip
+    return 0
+  fi
+  echo check
+}
+
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
 #   ONLY when the message states a prod_verified posture AND its EVIDENCE names a
@@ -203,6 +224,7 @@ qa_artifact_gate() {
   # artifact by design and has no Production-artifact field to match against;
   # enforcing it would be a category error and could false-block correct dev QA.
   printf '%s' "$clean" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified' || { echo allow; return 0; }
+  [ "$(qa_artifact_scope "$clean")" = "check" ] || { echo allow; return 0; }
 
   local evidence
   evidence=$(qa_extract_evidence "$clean")

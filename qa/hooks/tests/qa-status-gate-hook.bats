@@ -114,6 +114,21 @@ assert_short_block() { # validates $output as the short-pointer block form
   [ -z "$output" ]
 }
 
+@test "eval prompts quote the live block reason verbatim (drift guard)" {
+  commit_ahead
+  run run_gate 'All done, ready to merge.'
+  reason=$(echo "$output" | jq -r '.reason')
+  n=0
+  for p in "$BATS_TEST_DIRNAME"/../../evals/*/prompt.md; do
+    grep -q '^> QA gate:' "$p" || continue
+    n=$((n + 1))
+    printf '%s\n' "$reason" | sed 's/^/> /' | while IFS= read -r line; do
+      grep -qxF -- "$line" "$p" || { echo "stale quote in $p: $line"; exit 1; }
+    done
+  done
+  [ "$n" -ge 1 ]
+}
+
 @test "hook allows: commits ahead, multi-line posture body (awaiting_human + companion lines)" {
   commit_ahead
   run run_gate "$(printf 'Merged and deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: restart the desktop app, run /mu:pause, see the task land\nPHASE: prod')"
