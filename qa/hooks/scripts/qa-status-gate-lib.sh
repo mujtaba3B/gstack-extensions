@@ -198,6 +198,10 @@ qa_strip_fences() {
 # explains with. Shared so the explanation cannot drift from the decision.
 # Plain (not readonly) so re-sourcing the lib, as bats does per test, is safe.
 QA_PROD_VERIFIED_RE='QA_STATUS:[[:space:]]*prod_verified'
+# Markup (bold, backticks) and a hyphen or space for the underscore all count:
+# a reworded posture must not skip the check. prod_verified keeps its strict
+# form here; its markup gap is the pre-existing follow-up, not this change.
+QA_AWAITING_HUMAN_RE='QA_STATUS:[*`_[:space:]]*awaiting[-_[:space:]]?human'
 QA_PHASE_TOKEN_RE='PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*'
 QA_PHASE_DEV_RE='[^[:alnum:]-](dev|development)$'
 QA_PROD_WORD_RE='(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)'
@@ -232,7 +236,7 @@ qa_artifact_engages() {
   if printf '%s' "$msg" | grep -qiE "$QA_PROD_VERIFIED_RE"; then
     echo yes; return 0
   fi
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[*`_[:space:]]*awaiting_human'; then
+  if printf '%s' "$msg" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
     values=$(printf '%s\n' "$msg" | grep -oiE "$QA_PHASE_TOKEN_RE")
     if [ -n "$values" ] \
        && ! printf '%s\n' "$values" | grep -viqE "$QA_PHASE_DEV_RE" \
@@ -268,7 +272,7 @@ qa_artifact_engage_reason() {
     why=$(printf '%s\n' "$msg" | grep -oiE "$QA_PHASE_TOKEN_RE" \
           | grep -viE "$QA_PHASE_DEV_RE" | head -n 1)
   fi
-  [ -n "$why" ] || why="awaiting_human with no plain PHASE: dev (treated as prod)"
+  [ -n "$why" ] || why="awaiting_human with no PHASE stated (treated as prod)"
   printf '%s\n' "$why" | cut -c1-80
 }
 

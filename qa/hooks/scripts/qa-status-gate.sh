@@ -104,7 +104,7 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ]; then
       AWHY=$(qa_artifact_engage_reason "$(qa_strip_fences "$LAST")")
-      AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or awaiting_human not plainly PHASE: dev), engaged by: ${AWHY}
+      AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
 Your EVIDENCE names a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
 ${PROD_ARTIFACT}
 Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before restating your posture.

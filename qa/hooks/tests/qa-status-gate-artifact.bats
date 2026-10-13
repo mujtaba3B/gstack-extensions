@@ -370,7 +370,7 @@ setup() {
 
 @test "engage reason: a missing PHASE gets a neutral note, not an instruction" {
   run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nCHECK: x')"
-  [ "$output" = "awaiting_human with no plain PHASE: dev (treated as prod)" ]
+  [ "$output" = "awaiting_human with no PHASE stated (treated as prod)" ]
 }
 
 @test "engage reason: a long line keeps the PHASE-to-prod span, capped at 80" {
@@ -391,8 +391,15 @@ setup() {
   for m in 'PHASE: post-deploy' 'PHASE=staging' 'PHASE: dev and prod' '| Phase | Check |' 'PHASE: dev, then PHASE: prod'; do
     msg=$(printf 'QA_STATUS: awaiting_human\n%s' "$m")
     [ "$(qa_artifact_engages "$msg")" = "yes" ]
-    [ "$(qa_artifact_engage_reason "$msg")" != "awaiting_human with no plain PHASE: dev (treated as prod)" ]
+    [ "$(qa_artifact_engage_reason "$msg")" != "awaiting_human with no PHASE stated (treated as prod)" ]
   done
+}
+
+@test "engages yes: awaiting-human and awaiting human (reworded posture) with PHASE: prod" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting-human\nPHASE: prod')"
+  [ "$output" = "yes" ]
+  run qa_artifact_engages "$(printf 'QA_STATUS: awaiting human\nPHASE: prod')"
+  [ "$output" = "yes" ]
 }
 
 @test "engages yes: an unspaced PHASE-dev is not read as dev (fail closed)" {
