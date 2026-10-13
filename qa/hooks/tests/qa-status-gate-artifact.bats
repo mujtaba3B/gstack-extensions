@@ -248,13 +248,23 @@ setup() {
   done
 }
 
-@test "engages no: first PHASE line is dev, later prose mentions PHASE: prod" {
+@test "engages no: PHASE: dev, later prose mentions PHASE: prod mid-sentence" {
   run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\nAfter merge we move to PHASE: prod.')"
   [ "$output" = "no" ]
 }
 
-@test "engages yes: first PHASE line is prod, a later PHASE line says dev" {
+@test "engages yes: one PHASE line prod, another says dev (not every line is dev)" {
   run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\nPHASE: prod\nPHASE: dev was last week')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: a dev recap bullet before the real PHASE: prod (red-team shape)" {
+  run qa_artifact_engages "$(printf -- '- Phase: dev QA passed on the preview build\nQA_STATUS: awaiting_human\nPHASE: prod')"
+  [ "$output" = "yes" ]
+}
+
+@test "engages yes: an earlier dev_verified block, then an awaiting_human PHASE: prod (red-team shape)" {
+  run qa_artifact_engages "$(printf 'QA_STATUS: dev_verified\nPHASE: dev (done)\nQA_STATUS: awaiting_human\nPHASE: prod')"
   [ "$output" = "yes" ]
 }
 
@@ -293,6 +303,18 @@ setup() {
   msg=$(printf 'QA_STATUS: awaiting_human\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: live run on %s' "$PERAGENT")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "allow" ]
+}
+
+@test "awaiting gate block: a fenced PHASE: dev example above the real PHASE: prod handoff" {
+  msg=$(printf 'Template:\n```\nPHASE: dev\n```\nQA_STATUS: awaiting_human\nPHASE: prod\nEVIDENCE: smoke-tested %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate block: the only PHASE line is inside a fence (counts as missing: fail closed)" {
+  msg=$(printf 'QA_STATUS: awaiting_human\n```\nPHASE: dev\n```\nEVIDENCE: smoke-tested %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
 }
 
 @test "awaiting gate allow: PHASE: dev handoff is out of scope (preview artifact)" {

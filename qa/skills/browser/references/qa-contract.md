@@ -63,7 +63,7 @@ This table is a summary; the full contract for every posture is `docs/qa-status-
 
 `skip_requested` is a valid stated posture for the Stop hook but the CI gate does NOT accept it. If QA is genuinely infeasible, you must escalate: state `skip_requested` + `REASON`, ask the human "ok to skip QA for <reason>", and on approval record `skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>` in the PR body. Emitting `skip_requested` alone passes the hook but leaves the PR red.
 
-`awaiting_human` with `PHASE: dev` behaves the same way on purpose: it ends the turn honestly while the human's check is pending. Leave that check's Dev QA box unchecked until they report back: that box, not CI, is what blocks the merge. Run every check you can before handing off; `CHECK:` names only what no agent can do. With `PHASE: prod`, your `EVIDENCE:` is checked against the plan's production artifact like `prod_verified`, and while awaiting you write "I'll mark it verified once you confirm", never the literal `QA_STATUS: prod_verified` line.
+`awaiting_human` with `PHASE: dev` behaves the same way on purpose: it ends the turn honestly while the human's check is pending. Leave that check's Dev QA box unchecked until they report back: that box, not CI, is what blocks the merge. Run every check you can before handing off; `CHECK:` names only what no agent can do. Unless every `PHASE:` line says dev (a missing or malformed `PHASE:` counts as prod), your `EVIDENCE:` is checked against the plan's production artifact like `prod_verified`, and while awaiting you write "I'll mark it verified once you confirm", never the literal `QA_STATUS: prod_verified` line.
 
 ## Honesty (non-negotiable)
 

@@ -186,28 +186,38 @@ EOF
   return 0
 }
 
-# qa_artifact_engages <message>  -> yes|no  (PURE)
+# qa_strip_fences <message>  -> message without ``` fenced blocks  (PURE)
+#   The one fence stripper the artifact check uses, so the hook's network
+#   prefilter and qa_artifact_gate decide on exactly the same text.
+qa_strip_fences() {
+  printf '%s\n' "$1" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}'
+}
+
+# qa_artifact_engages <fence_stripped_message>  -> yes|no  (PURE)
 #   Whether a message makes a Production-QA evidence claim the artifact check
 #   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
-#   `awaiting_human` posture UNLESS its first PHASE line explicitly says dev:
-#   its EVIDENCE closes the agent-runnable Production rows before the human's
-#   check, so a base / proxy artifact there is the same stale-image risk.
-#   Fail closed: a missing or oddly formatted PHASE ("PHASE=prod",
-#   "**PHASE**: prod", "PHASE: post-deploy", none at all) engages. Only the
-#   FIRST PHASE line counts (whitespace, bullets and bold before it are fine),
-#   so later prose that mentions "PHASE: prod" cannot flip a dev handoff, and
-#   the hook message's own "PHASE: dev|prod" menu reads as dev. Engaging only
-#   means evidence gets checked; a missing `Production artifacts:` field still
-#   fails open downstream. Known residual: an agent that declares PHASE: dev on
-#   what is really a post-deploy handoff is not checked here.
+#   `awaiting_human` posture, UNLESS it has at least one PHASE line and EVERY
+#   PHASE line says dev: its EVIDENCE closes the agent-runnable Production rows
+#   before the human's check, so a base / proxy artifact there is the same
+#   stale-image risk. The rule is monotone on purpose: adding any line can only
+#   turn checking on, never off, so no recap bullet, earlier posture or quoted
+#   template can flip a production handoff to "not checked" (picking a single
+#   "real" PHASE line was beaten twice by exactly that). A missing or oddly
+#   formatted PHASE engages (fail closed); a PHASE line is one whose key starts
+#   the line (bullets, bold and "=" tolerated), so prose mentioning
+#   "PHASE: prod" mid-sentence does not flip a dev handoff. Engaging only means
+#   evidence gets checked; a missing `Production artifacts:` field still fails
+#   open downstream. Known residual: an agent that declares PHASE: dev on what
+#   is really a post-deploy handoff is not checked here.
 qa_artifact_engages() {
-  local msg="$1" phase
+  local msg="$1" phases
   if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
     echo yes; return 0
   fi
   if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*awaiting_human'; then
-    phase=$(printf '%s\n' "$msg" | grep -iE '^[-*[:space:]]*\**PHASE\**[[:space:]]*[:=]' | head -n 1)
-    if printf '%s' "$phase" | grep -qiE 'PHASE\**[[:space:]]*[:=][^[:alnum:]]*dev'; then
+    phases=$(printf '%s\n' "$msg" | grep -iE '^[-*[:space:]]*\**PHASE\**[[:space:]]*[:=]')
+    if [ -n "$phases" ] \
+       && ! printf '%s\n' "$phases" | grep -viqE 'PHASE\**[[:space:]]*[:=][^[:alnum:]]*dev'; then
       echo no; return 0
     fi
     echo yes; return 0
@@ -218,7 +228,8 @@ qa_artifact_engages() {
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
 #   ONLY when the message makes a Production-QA evidence claim
-#   (qa_artifact_engages: prod_verified, or awaiting_human with PHASE: prod) AND
+#   (qa_artifact_engages: prod_verified, or awaiting_human unless every PHASE
+#   line says dev) AND
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
 #   the plan named. Any other posture, missing evidence, or a non-blocking
 #   verdict -> allow.
@@ -228,10 +239,10 @@ qa_artifact_gate() {
   # Strip fenced code blocks so a message that quotes or discusses the posture
   # inside ``` ... ``` does not engage enforcement (same guard as the posture gate).
   local clean
-  clean=$(printf '%s\n' "$msg" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}')
+  clean=$(qa_strip_fences "$msg")
 
   # Scope: Production-QA claims only (qa_artifact_engages: prod_verified, or
-  # awaiting_human unless PHASE is explicitly dev). dev_verified and an
+  # awaiting_human unless every PHASE line says dev). dev_verified and an
   # awaiting_human PHASE: dev handoff are exercised against a dev / preview
   # artifact by design; enforcing them would be a category error and could
   # false-block correct dev QA.

@@ -163,6 +163,22 @@ stub_pr_body() { # $1 = Production artifacts value
   echo "$output" | jq -r '.reason' | grep -q 'artifact-evidence'
 }
 
+@test "hook blocks: a fenced PHASE: dev example above the real PHASE: prod handoff" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed. Template:\n```\nPHASE: dev\n```\nQA_STATUS: awaiting_human\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested nanoclaw-agent-v2-83c915c8')"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+}
+
+@test "hook blocks: awaiting_human whose only PHASE line is fenced (fail closed)" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\n```\nPHASE: dev\n```\nEVIDENCE: smoke-tested nanoclaw-agent-v2-83c915c8')"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+}
+
 @test "hook allows: awaiting_human PHASE: prod handoff citing the exact production ref" {
   commit_ahead
   stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
