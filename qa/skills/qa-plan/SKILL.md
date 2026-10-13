@@ -117,7 +117,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 - [ ] Docs updated where user-facing
 - [ ] `where-things-run.json` bumped if the deploy changed hosts
 
-**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live, or `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` + `PHASE: prod` while a human-tester row is still open.
+**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live, or, once every agent-runnable Prod QA row is closed with evidence, `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` (only what no agent can do) + `PHASE: prod` while a human-tester row is still open (write "I'll mark it verified once you confirm", not the literal prod_verified posture line).
 ```
 
 Format rules the gates depend on:
