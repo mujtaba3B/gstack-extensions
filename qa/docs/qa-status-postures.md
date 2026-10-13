@@ -90,7 +90,8 @@ finished: waiting on a named person for a named check.
   not a verification claim for the human's check.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
-  anywhere in it, every such token `dev`, and nothing pairing PHASE with
+  anywhere in it, every such token `dev` or `development`, and nothing
+  pairing PHASE with
   prod), its `EVIDENCE:` is checked against the plan's
   `Production artifacts:` exactly as `prod_verified` is, so a handoff citing
   only a base / proxy artifact is blocked. A missing or oddly formatted

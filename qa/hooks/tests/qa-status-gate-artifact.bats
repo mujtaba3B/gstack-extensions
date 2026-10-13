@@ -358,9 +358,9 @@ setup() {
   [ "$output" = "QA_STATUS: prod_verified" ]
 }
 
-@test "engage reason: names the line that pairs PHASE with prod" {
+@test "engage reason: names the span that pairs PHASE with prod" {
   run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev (Production QA runs after land)')"
-  [ "$output" = "PHASE: dev (Production QA runs after land)" ]
+  [ "$output" = "PHASE: dev (Production " ]
 }
 
 @test "engage reason: names a Phase table header token (a fail-closed false engage)" {
@@ -371,6 +371,28 @@ setup() {
 @test "engage reason: says no dev PHASE was stated when none is" {
   run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nCHECK: x')"
   [ "$output" = "no PHASE: dev stated" ]
+}
+
+@test "engage reason: a long line keeps the PHASE-to-prod span, capped at 80" {
+  pad=$(printf 'x%.0s' $(seq 1 90))
+  run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\n| %s | PHASE: prod | ok |' "$pad")"
+  [ "${#output}" -le 80 ]
+  case "$output" in "PHASE: prod"*) ;; *) echo "got: $output"; false ;; esac
+}
+
+@test "engage reason: PHASE and prod far apart fall back to the line, still capped at 80" {
+  pad=$(printf 'x%.0s' $(seq 1 90))
+  run qa_artifact_engage_reason "$(printf 'QA_STATUS: awaiting_human\nPHASE: dev, notes %s then prod' "$pad")"
+  [ "${#output}" -le 80 ]
+  case "$output" in "PHASE: dev, notes x"*) ;; *) echo "got: $output"; false ;; esac
+}
+
+@test "engage reason agrees with engages: every engaged awaiting_human message names a cause" {
+  for m in 'PHASE: post-deploy' 'PHASE=staging' 'PHASE: dev and prod' '| Phase | Check |' 'PHASE: dev, then PHASE: prod'; do
+    msg=$(printf 'QA_STATUS: awaiting_human\n%s' "$m")
+    [ "$(qa_artifact_engages "$msg")" = "yes" ]
+    [ "$(qa_artifact_engage_reason "$msg")" != "no PHASE: dev stated" ]
+  done
 }
 
 @test "engages yes: an unspaced PHASE-dev is not read as dev (fail closed)" {

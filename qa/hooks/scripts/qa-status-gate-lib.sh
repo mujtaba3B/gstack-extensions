@@ -193,6 +193,14 @@ qa_strip_fences() {
   printf '%s\n' "$1" | awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}'
 }
 
+# The patterns qa_artifact_engages decides with and qa_artifact_engage_reason
+# explains with. Shared so the explanation cannot drift from the decision.
+# Plain (not readonly) so re-sourcing the lib, as bats does per test, is safe.
+QA_PROD_VERIFIED_RE='QA_STATUS:[[:space:]]*prod_verified'
+QA_PHASE_TOKEN_RE='PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*'
+QA_PHASE_DEV_RE='[^[:alnum:]-](dev|development)$'
+QA_PROD_WORD_RE='(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)'
+
 # qa_artifact_engages <fence_stripped_message>  -> yes|no  (PURE)
 #   Whether a message makes a Production-QA evidence claim the artifact check
 #   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
@@ -218,14 +226,14 @@ qa_strip_fences() {
 #   declares PHASE: dev on what is really a post-deploy handoff, is not checked.
 qa_artifact_engages() {
   local msg="$1" values
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
+  if printf '%s' "$msg" | grep -qiE "$QA_PROD_VERIFIED_RE"; then
     echo yes; return 0
   fi
   if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[*`_[:space:]]*awaiting_human'; then
-    values=$(printf '%s\n' "$msg" | grep -oiE 'PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*')
+    values=$(printf '%s\n' "$msg" | grep -oiE "$QA_PHASE_TOKEN_RE")
     if [ -n "$values" ] \
-       && ! printf '%s\n' "$values" | grep -viqE '[^[:alnum:]-](dev|development)$' \
-       && ! printf '%s\n' "$msg" | grep -qiE 'PHASE.*(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)'; then
+       && ! printf '%s\n' "$values" | grep -viqE "$QA_PHASE_DEV_RE" \
+       && ! printf '%s\n' "$msg" | grep -qiE "PHASE.*${QA_PROD_WORD_RE}"; then
       echo no; return 0
     fi
     echo yes; return 0
@@ -237,19 +245,24 @@ qa_artifact_engages() {
 #   Why qa_artifact_engages said yes, for the block message, so an agent whose
 #   honest dev handoff was engaged by a stray mention (a "Phase" table header,
 #   a "PHASE: prod" remark) can see the exact text and reword it. Echoes the
-#   prod_verified posture if stated, else the first line pairing PHASE with
-#   prod, else the first non-dev PHASE token,
-#   else "no PHASE: dev stated" (truncated to 80 chars). Never changes the
-#   decision; it only explains it.
+#   prod_verified posture if stated, else the span from PHASE to prod on the
+#   first line pairing them, else the first non-dev PHASE token, else "no
+#   PHASE: dev stated". Every branch is cut to 80 chars. It reads the same
+#   QA_*_RE patterns as qa_artifact_engages, so the two cannot drift; it never
+#   changes the decision, it only explains it.
 qa_artifact_engage_reason() {
-  local msg="$1" why
-  if printf '%s' "$msg" | grep -qiE 'QA_STATUS:[[:space:]]*prod_verified'; then
+  local msg="$1" why line
+  if printf '%s' "$msg" | grep -qiE "$QA_PROD_VERIFIED_RE"; then
     echo "QA_STATUS: prod_verified"; return 0
   fi
-  why=$(printf '%s\n' "$msg" | grep -iE 'PHASE.*(^|[^[:alnum:]])(pre-?)?prod(uction)?([^[:alnum:]]|$)' | head -n 1)
-  if [ -z "$why" ]; then
-    why=$(printf '%s\n' "$msg" | grep -oiE 'PHASE[*`_[:space:]]*[:=|-][^[:alnum:]]*[[:alnum:]][[:alnum:]-]*' \
-          | grep -viE '[^[:alnum:]-](dev|development)$' | head -n 1)
+  line=$(printf '%s\n' "$msg" | grep -iE "PHASE.*${QA_PROD_WORD_RE}" | head -n 1)
+  if [ -n "$line" ]; then
+    # The span, so a trigger past column 80 of a wide row still shows.
+    why=$(printf '%s\n' "$line" | grep -oiE "PHASE.{0,60}${QA_PROD_WORD_RE}" | head -n 1)
+    [ -n "$why" ] || why=$(printf '%s\n' "$line" | grep -oiE 'PHASE.*' | head -n 1)
+  else
+    why=$(printf '%s\n' "$msg" | grep -oiE "$QA_PHASE_TOKEN_RE" \
+          | grep -viE "$QA_PHASE_DEV_RE" | head -n 1)
   fi
   [ -n "$why" ] || why="no PHASE: dev stated"
   printf '%s\n' "$why" | cut -c1-80
