@@ -198,7 +198,8 @@ qa_strip_fences() {
 #   must inspect. A `QA_STATUS: prod_verified` posture engages. So does an
 #   `awaiting_human` posture, UNLESS it has at least one PHASE line, every PHASE
 #   line's own value is a dev token (`dev` or `development`, then a word
-#   boundary), and no PHASE line mentions prod: its EVIDENCE closes the
+#   boundary), and no PHASE line mentions prod as a word (`prod`, `production`,
+#   `pre-prod`, `dev/prod`; not "product" or "reproduce"): its EVIDENCE closes the
 #   agent-runnable Production rows before the human's check, so a base / proxy
 #   artifact there is the same stale-image risk. Everything ambiguous resolves
 #   to "check" (fail closed): no PHASE line, an odd format, "dev and prod",
@@ -220,7 +221,7 @@ qa_artifact_engages() {
     phases=$(printf '%s\n' "$msg" | grep -iE "$key")
     if [ -n "$phases" ] \
        && ! printf '%s\n' "$phases" | grep -viqE "${key}[^[:alnum:]]*dev(elopment)?([^[:alnum:]]|\$)" \
-       && ! printf '%s\n' "$phases" | grep -qi 'prod'; then
+       && ! printf '%s\n' "$phases" | grep -qiE '(^|[^[:alnum:]])prod(uction)?([^[:alnum:]]|$)'; then
       echo no; return 0
     fi
     echo yes; return 0
@@ -231,8 +232,8 @@ qa_artifact_engages() {
 # qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
 #   ONLY when the message makes a Production-QA evidence claim
-#   (qa_artifact_engages: prod_verified, or awaiting_human unless it states
-#   only dev PHASE lines) AND
+#   (qa_artifact_engages decides: prod_verified, or an awaiting_human that is
+#   not plainly PHASE: dev) AND
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
 #   the plan named. Any other posture, missing evidence, or a non-blocking
 #   verdict -> allow.
@@ -244,8 +245,7 @@ qa_artifact_gate() {
   local clean
   clean=$(qa_strip_fences "$msg")
 
-  # Scope: Production-QA claims only (qa_artifact_engages: prod_verified, or
-  # awaiting_human unless it states only dev PHASE lines; no PHASE counts as prod). dev_verified and an
+  # Scope: Production-QA claims only, as qa_artifact_engages decides. dev_verified and an
   # awaiting_human PHASE: dev handoff are exercised against a dev / preview
   # artifact by design; enforcing them would be a category error and could
   # false-block correct dev QA.

@@ -303,6 +303,20 @@ setup() {
   done
 }
 
+@test "engages no: a dev PHASE whose words merely contain 'prod' (no false block)" {
+  for line in 'PHASE: dev (needs the product owner to eyeball the copy)' 'PHASE: dev (cannot reproduce headlessly; needs a real phone)'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
+    [ "$output" = "no" ] || { echo "engaged on a dev handoff: $line"; return 1; }
+  done
+}
+
+@test "engages yes: prod as a word inside a dev PHASE line still counts" {
+  for line in 'PHASE: dev, then pre-prod' 'PHASE: dev/prod' 'PHASE: dev, production next'; do
+    run qa_artifact_engages "$(printf 'QA_STATUS: awaiting_human\n%s' "$line")"
+    [ "$output" = "yes" ] || { echo "did not engage on: $line"; return 1; }
+  done
+}
+
 @test "engages no: dev_verified with PHASE: prod (only awaiting_human is widened)" {
   run qa_artifact_engages "$(printf 'QA_STATUS: dev_verified\nPHASE: prod')"
   [ "$output" = "no" ]

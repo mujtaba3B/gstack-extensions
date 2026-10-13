@@ -94,9 +94,8 @@ fi
 # upstream / proxy artifact instead of that one. Fail OPEN at every step: a
 # missing gh, no PR, or no `Production artifacts:` field leaves PROD_ARTIFACT
 # empty and the gate behaves exactly as before. The gh lookup is gated on the
-# Production-QA claim (qa_artifact_engages on the same fence-stripped text the
-# gate reads: prod_verified, or awaiting_human unless it states only dev PHASE
-# lines; a missing PHASE counts as prod)
+# Production-QA claim (qa_artifact_engages, on the same fence-stripped text the
+# gate reads)
 # so a normal turn never pays for a network call.
 if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
   PR_BODY=$( (cd "$CWD" && gh pr view --json body --jq '.body' 2>/dev/null) 2>/dev/null )
