@@ -79,10 +79,10 @@ finished: waiting on a named person for a named check.
   this chat: a comment on the merged PR naming the open Production QA row and
   the CHECK, or a TODO. After merge the Stop gate no longer fires on the
   branch, so a chat line alone is easy to lose.
-- `awaiting_human` claims nothing was verified, so it carries no `EVIDENCE:`
-  and the artifact-evidence rule above does not apply to it. Any Production QA
-  row an agent did run is still checked against the named production artifact
-  when `prod_verified` is stated.
+- `awaiting_human` claims nothing about the pending check, so it needs no
+  `EVIDENCE:`. An `EVIDENCE:` line may cite the rows the agent did run; it is
+  not a verification claim for the human's check, and the artifact-evidence
+  rule above applies only when `prod_verified` is stated.
 - `PHASE: dev` is a pre-merge check only the human can do that involves no
   branch deploy (e.g. a local install exercised in his own app). If you
   deployed the feature branch to a host for him, use

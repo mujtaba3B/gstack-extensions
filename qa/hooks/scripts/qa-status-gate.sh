@@ -81,7 +81,7 @@ LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-status-gate-lib.sh"
 DECISION=$(qa_gate_decision "$LAST" "$SHIPPABLE")
 if [ "$DECISION" = "block" ]; then
 
-REASON="QA gate: work declared done on a branch with commits ahead, but no QA posture stated. End the turn with one QA_STATUS line: dev_verified, deploy_branch_for_manual_qa, prod_verified, awaiting_human, blocked, skip_requested, or no_tracked_change (plus EVIDENCE: / DRIVER: / DEPLOYED: / CHECK: / PHASE: / REASON: as the posture requires).
+REASON="QA gate: work declared done on a branch with commits ahead, but no QA posture stated. End the turn with one QA_STATUS line: dev_verified, deploy_branch_for_manual_qa, prod_verified, awaiting_human, blocked, skip_requested, or no_tracked_change (plus EVIDENCE: / DRIVER: / DEPLOYED: / CHECK: / PHASE: dev|prod / REASON: as the posture requires).
 Full contract if unsure: read ~/.claude/docs/qa-status-postures.md"
 
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'

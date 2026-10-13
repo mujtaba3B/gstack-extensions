@@ -51,7 +51,7 @@ assert_short_block() { # validates $output as the short-pointer block form
   [ "$(printf '%s\n' "$reason" | wc -l | tr -d ' ')" -le 4 ]
   [ "${#reason}" -lt 600 ]
   for kw in dev_verified deploy_branch_for_manual_qa prod_verified awaiting_human \
-            blocked skip_requested no_tracked_change PHASE: qa-status-postures.md; do
+            blocked skip_requested no_tracked_change CHECK: PHASE: qa-status-postures.md; do
     printf '%s' "$reason" | grep -q "$kw"
   done
 }
