@@ -81,8 +81,12 @@ finished: waiting on a named person for a named check.
   branch, so a chat line alone is easy to lose.
 - `awaiting_human` claims nothing about the pending check, so it needs no
   `EVIDENCE:`. An `EVIDENCE:` line may cite the rows the agent did run; it is
-  not a verification claim for the human's check, and the artifact-evidence
-  rule above applies only when `prod_verified` is stated.
+  not a verification claim for the human's check.
+- While awaiting, do not write the literal `QA_STATUS: prod_verified` token
+  anywhere in the message, even as a promise. Say "I'll mark it verified once
+  you confirm" instead. Any unfenced `QA_STATUS: prod_verified` engages the
+  artifact-evidence check above, by design: a rule that tried to tell a
+  promise from a claim was beaten by markdown and HTML shapes and reverted.
 - `PHASE: dev` is a pre-merge check only the human can do that involves no
   branch deploy (e.g. a local install exercised in his own app). If you
   deployed the feature branch to a host for him, use

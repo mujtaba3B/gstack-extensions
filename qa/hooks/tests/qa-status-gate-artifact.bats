@@ -209,93 +209,53 @@ setup() {
   [ "$output" = "allow" ]
 }
 
-# ---- qa_artifact_scope (which stated posture the check applies to) ------------
+# ---- awaiting_human next to the artifact check (fail closed) ----------------
+# The check is not scoped by posture: any unfenced QA_STATUS: prod_verified token
+# engages it. A per-line "which posture is stated" carve-out was tried and lost
+# three red-team rounds to markdown and HTML shapes, each failing OPEN, so it was
+# reverted. While awaiting a human, the contract says to phrase the follow-up
+# without the literal token ("mark it verified"); these rows pin both halves.
 
-@test "scope skip: stated awaiting_human line + prose mention of prod_verified" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nPHASE: prod\nI will record QA_STATUS: prod_verified once you confirm.')"
-  [ "$output" = "skip" ]
+@test "awaiting gate allow: guided phrasing (no literal token) + base-family EVIDENCE" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested %s\nI will mark it verified once you confirm.' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "allow" ]
 }
 
-@test "scope skip: bold bullet awaiting_human posture line counts as stated" {
-  run qa_artifact_scope "$(printf -- '- **QA_STATUS:** awaiting_human\nlater: QA_STATUS: prod_verified')"
-  [ "$output" = "skip" ]
+@test "awaiting gate block: the literal token in prose still engages the check" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nEVIDENCE: smoke-tested %s\nI will record QA_STATUS: prod_verified once you confirm.' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
 }
 
-@test "scope check: inline prod_verified with no awaiting_human line (the incident shape)" {
-  run qa_artifact_scope "Deployed. QA_STATUS: prod_verified EVIDENCE: ran docker run base"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: both postures stated on their own lines -> fail closed" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: awaiting_human only mid-sentence is prose, not a stated posture" {
-  run qa_artifact_scope "$(printf 'Not QA_STATUS: awaiting_human after all.\nQA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope residual: stated awaiting_human + mid-sentence prod_verified claim is skipped" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nDone. QA_STATUS: prod_verified EVIDENCE: base')"
-  [ "$output" = "skip" ]
-}
-
-@test "scope check: task-box prod_verified line counts as stated (red-team bypass, [x])" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\n- [x] QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: task-box prod_verified line counts as stated ([X])" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\n- [X] QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: lettered list marker prod_verified line counts as stated" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\na. QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: bold or backticked prod_verified value counts as stated" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\n1. QA_STATUS: **prod_verified**')"
-  [ "$output" = "check" ]
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: `prod_verified`')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: blockquoted awaiting_human is a quotation, not a stated posture" {
-  run qa_artifact_scope "$(printf '> QA_STATUS: awaiting_human\nResult: QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: inline-code awaiting_human is a quotation, not a stated posture" {
-  run qa_artifact_scope "$(printf '`QA_STATUS: awaiting_human` was not needed.\nResult: QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: awaiting_human inside a tilde fence is a quotation" {
-  run qa_artifact_scope "$(printf '~~~\nQA_STATUS: awaiting_human\n~~~\nResult: QA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "scope check: bare-CR line breaks are honoured" {
-  run qa_artifact_scope "$(printf 'QA_STATUS: awaiting_human\rQA_STATUS: prod_verified')"
-  [ "$output" = "check" ]
-}
-
-@test "gate block: awaiting_human + task-box prod_verified + base-only evidence (red-team bypass)" {
+@test "awaiting gate block: task-box prod_verified line (red-team shape)" {
   msg=$(printf 'QA_STATUS: awaiting_human\n- [x] QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
-@test "gate allow: awaiting_human + EVIDENCE on the base family + prose prod_verified (red-team repro)" {
-  msg=$(printf 'Deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run the live agent\nPHASE: prod\nEVIDENCE: smoke-tested %s\nI will record QA_STATUS: prod_verified once you confirm.' "$BASE")
+@test "awaiting gate block: HTML tag before the token (red-team shape)" {
+  msg=$(printf 'QA_STATUS: awaiting_human\n<strong>QA_STATUS: prod_verified</strong>\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
-  [ "$output" = "allow" ]
+  [ "$output" = "block" ]
 }
 
-@test "gate block: both postures stated, base-only evidence -> still blocks" {
+@test "awaiting gate block: HTML entity before the token (red-team shape)" {
+  msg=$(printf 'QA_STATUS: awaiting_human\n&nbsp;QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate block: indented or mismatched tilde fences do not hide the claim" {
+  msg=$(printf 'QA_STATUS: awaiting_human\n    ~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+  msg=$(printf 'QA_STATUS: awaiting_human\n~~~~\n~~~\n~~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate block: both postures stated, base-only evidence" {
   msg=$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: prod_verified\nEVIDENCE: ran docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
