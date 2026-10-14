@@ -439,15 +439,44 @@ setup() {
   [ "$output" = "block" ]
 }
 
-@test "awaiting gate block: PHASE: prod handoff with NO EVIDENCE line when the plan names an artifact" {
+@test "awaiting gate block-uncited: PHASE: prod handoff with NO EVIDENCE line when the plan names an artifact" {
   msg=$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run /mu:pause from the desktop app\nPHASE: prod')
   run qa_artifact_gate "$msg" "$FIELD"
-  [ "$output" = "block" ]
+  [ "$output" = "block-uncited" ]
 }
 
-@test "awaiting gate block: no PHASE and no EVIDENCE (template shape, fail closed)" {
+@test "awaiting gate block-uncited: no PHASE and no EVIDENCE (template shape, fail closed)" {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: x')" "$FIELD"
-  [ "$output" = "block" ]
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate block-uncited: a placeholder EVIDENCE line does not cite the artifact" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: n/a, only the human row remains')" "$FIELD"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE:')" "$FIELD"
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate block-uncited: prose containing evidence: does not cite the artifact" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nThere is no new evidence: the human check is pending.')" "$FIELD"
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate allow: a bold or dashed label that cites the exact ref" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\n**EVIDENCE**: ran %s' "$PERAGENT")" "$FIELD"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\n- Evidence - ran %s' "$PERAGENT")" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate block-uncited: the only citation is inside a code fence" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\n```\nEVIDENCE: ran %s\n```' "$PERAGENT")" "$FIELD"
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate allow: the plan names no machine-matchable token (nothing to cite)" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" "Production artifact: release v1.4 of the desktop app"
+  [ "$output" = "allow" ]
 }
 
 @test "awaiting gate allow: PHASE: dev handoff with no EVIDENCE line" {

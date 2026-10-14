@@ -128,6 +128,19 @@ qa_extract_prod_artifact() {
   printf '%s\n' "$1" | grep -oiE '^[[:space:]]*[-*[:space:]]*Production artifacts?:.*'
 }
 
+# qa_artifact_refs / qa_artifact_digests <prod_artifact_field>  (PURE)
+#   The machine-matchable production tokens the plan named, one per line:
+#   image:tag refs (not sha256:...) and sha256 digests. URLs are stripped first
+#   so a "how it is exercised" URL like https://host:443/path is not read as an
+#   image:tag ref. Shared by the verdict and the awaiting_human citation rule.
+qa_artifact_refs() {
+  printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' \
+    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]+' | grep -viE '^sha256:' || true
+}
+qa_artifact_digests() {
+  printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE 'sha256:[0-9a-f]{12,}' || true
+}
+
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
 #   Echo one of:
 #     ok       -> evidence names the exact production artifact the plan named.
@@ -147,16 +160,9 @@ qa_evidence_artifact_verdict() {
   # Backward compat: no Production artifacts field -> enforcement disabled.
   [ -n "$(printf '%s' "$field" | tr -d '[:space:]')" ] || { echo "n/a"; return 0; }
 
-  # Strip URLs first so a "how it is exercised" URL like https://host:443/path
-  # is not mistaken for an image:tag ref.
-  local fclean
-  fclean=$(printf '%s' "$field" | sed -E 's#https?://[^[:space:]]*##g')
-
-  # Distinctive production refs the plan named: image:tag (excluding sha256:...,
-  # handled separately as a digest) and sha256 digests.
   local refs digests tok
-  refs=$(printf '%s\n' "$fclean" | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]+' | grep -viE '^sha256:' || true)
-  digests=$(printf '%s\n' "$fclean" | grep -oiE 'sha256:[0-9a-f]{12,}' || true)
+  refs=$(qa_artifact_refs "$field")
+  digests=$(qa_artifact_digests "$field")
 
   # 1) Evidence names the exact production artifact (full ref or digest) -> ok.
   while IFS= read -r tok; do
@@ -276,14 +282,15 @@ qa_artifact_engage_reason() {
   printf '%s\n' "$why" | cut -c1-80
 }
 
-# qa_artifact_gate <message> <prod_artifact_field>  -> block|allow  (PURE)
+# qa_artifact_gate <message> <prod_artifact_field>  -> block|block-uncited|allow  (PURE)
 #   The composable gate decision used by the Stop hook AND the bats tests. Blocks
 #   ONLY when the message makes a Production-QA evidence claim
 #   (qa_artifact_engages decides: prod_verified, or an awaiting_human that is
 #   not plainly PHASE: dev) AND
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
-#   the plan named. An engaged awaiting_human with NO EVIDENCE line also blocks
-#   when the plan names an artifact; prod_verified without one still allows.
+#   the plan named (block). An engaged awaiting_human must also cite the exact
+#   artifact when the plan names a matchable one, or it gets block-uncited;
+#   prod_verified with no EVIDENCE line still allows (follow-up).
 #   Any other posture or a non-blocking verdict -> allow.
 qa_artifact_gate() {
   local msg="$1" field="$2"
@@ -299,18 +306,26 @@ qa_artifact_gate() {
   # false-block correct dev QA.
   [ "$(qa_artifact_engages "$clean")" = "yes" ] || { echo allow; return 0; }
 
+  # An awaiting_human production handoff must CITE the artifact its agent rows
+  # ran against: anywhere in the unfenced message, so a bold or dashed label
+  # still counts, but a placeholder ("EVIDENCE: n/a"), a missing line, or prose
+  # that never names the ref does not. Only when the plan names a
+  # machine-matchable token; otherwise there is nothing to match (fail open).
+  # prod_verified keeps its EVIDENCE-line rule below, missing line included,
+  # until the follow-up gate change.
+  if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
+     && [ -n "$(qa_artifact_refs "$field")$(qa_artifact_digests "$field")" ]; then
+    case "$(qa_evidence_artifact_verdict "$clean" "$field")" in
+      ok) echo allow ;;
+      mismatch) echo block ;;
+      *) echo block-uncited ;;
+    esac
+    return 0
+  fi
+
   local evidence
   evidence=$(qa_extract_evidence "$clean")
-  if [ -z "$evidence" ]; then
-    # An awaiting_human production handoff must cite the artifact its agent rows
-    # ran against, or the check above never runs on the template shape and
-    # deleting EVIDENCE becomes the way past a block. prod_verified keeps its
-    # pre-existing allow-when-missing until the follow-up gate change.
-    if [ -n "$field" ] && printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
-      echo block; return 0
-    fi
-    echo allow; return 0   # no evidence to evaluate -> fail open
-  fi
+  [ -n "$evidence" ] || { echo allow; return 0; }   # no evidence to evaluate -> fail open
 
   if [ "$(qa_evidence_artifact_verdict "$evidence" "$field")" = "mismatch" ]; then
     echo block

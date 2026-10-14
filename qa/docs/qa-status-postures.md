@@ -88,9 +88,10 @@ finished: waiting on a named person for a named check.
 - `awaiting_human` claims nothing about the pending check. Its `EVIDENCE:`
   line cites the rows the agent did run, not the human's check. A `PHASE: dev`
   handoff may omit it. A production handoff (anything not plainly
-  `PHASE: dev`) must carry it when the plan names `Production artifacts:`,
-  citing that exact artifact, even when the human's check is the only row
-  left (name the deployed artifact): the gate blocks one without it.
+  `PHASE: dev`) must cite the exact artifact the plan's `Production
+  artifacts:` names, outside any code fence, even when the human's check is
+  the only row left (name the deployed artifact): the gate blocks a handoff
+  that never names it, whatever its EVIDENCE line says.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
   anywhere in it, every such token `dev` or `development`, and nothing
