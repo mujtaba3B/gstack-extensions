@@ -687,6 +687,18 @@ setup() {
   [ "$output" = "block" ]
 }
 
+@test "awaiting gate: a letter-tagged image beside a strong-tagged one on the same line still needs citing" {
+  f='**Production artifacts:** `nanoclaw-agent-ag1:main` and `nanoclaw-agent-ag2:ag-2-main` on mac-mini'
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: nanoclaw-agent-ag2:ag-2-main green; nanoclaw-base:main green')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: nanoclaw-agent-ag2:ag-2-main and nanoclaw-agent-ag1:main green')" "$f"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran agent-base:latest via deploy/build.sh:44')" '- Image: `agent-web:latest` on mac-mini (rebuilt by deploy/build.sh:44)'
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: the human runs it\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" '- `ghcr.io/acme/agent-web:v42` exercised by /mu:pause'
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
