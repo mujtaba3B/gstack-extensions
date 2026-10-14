@@ -143,21 +143,57 @@ qa_artifact_digests() {
 }
 
 # qa_citable_refs <prod_artifact_field>  (PURE)
-#   The refs an awaiting_human handoff must cite: image-like ones only, a
-#   DISTINCTIVE name (6+ chars with '/' or '-', the same bar the mismatch check
-#   uses) and a tag that is not all digits. A host:443 or a 14:05 in the field
-#   is not an artifact, so it never becomes a citation requirement.
+#   The refs an awaiting_human handoff must cite. A ref with a non-numeric tag
+#   always counts. An all-digit tag counts too (CI build numbers, timestamps,
+#   numeric short SHAs) UNLESS the token reads as a host:port or a time: no '/'
+#   before the colon, and a name that is a dotted hostname, localhost, all
+#   digits, or under 6 chars (sms-hero.example.com:443, localhost:8080,
+#   mini:22, 14:05). Those are never artifacts, so never citation targets.
 qa_citable_refs() {
   local tok base
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     base="${tok%:*}"
-    case "${tok##*:}" in *[!0-9]*) ;; *) continue ;; esac
-    [ "${#base}" -ge 6 ] || continue
-    case "$base" in *[/-]*) printf '%s\n' "$tok" ;; esac
+    case "${tok##*:}" in
+      *[!0-9]*) ;;
+      *) case "$base" in
+           */*) ;;
+           *.*|localhost|*[!0-9]*) case "$base" in *.*|localhost) continue ;; esac
+                                   [ "${#base}" -ge 6 ] || continue ;;
+           *) continue ;;
+         esac ;;
+    esac
+    printf '%s\n' "$tok"
   done <<EOF
 $(qa_artifact_refs "$1")
 EOF
+}
+
+# qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>
+#   -> allow|block|block-uncited  (PURE)
+#   allow when the message names a citable ref or digest; block when it names
+#   only a citable ref's distinctive family (6+ chars with '/' or '-', the
+#   base / proxy substitution); block-uncited otherwise. Non-artifact tokens in
+#   the field (a host:port, a time) neither satisfy nor engage it.
+qa_awaiting_citation_verdict() {
+  local msg="$1" field="$2" tok base cites
+  cites=$(qa_citable_refs "$field"; qa_artifact_digests "$field")
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    case "$msg" in *"$tok"*) echo allow; return 0 ;; esac
+  done <<EOF
+$cites
+EOF
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    base="${tok%:*}"
+    if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
+      case "$msg" in *"$base"*) echo block; return 0 ;; esac
+    fi
+  done <<EOF
+$(qa_citable_refs "$field")
+EOF
+  echo block-uncited
 }
 
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
@@ -336,11 +372,7 @@ qa_artifact_gate() {
   # until the follow-up gate change.
   if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
      && [ -n "$(qa_citable_refs "$field")$(qa_artifact_digests "$field")" ]; then
-    case "$(qa_evidence_artifact_verdict "$clean" "$field")" in
-      ok) echo allow ;;
-      mismatch) echo block ;;
-      *) echo block-uncited ;;
-    esac
+    qa_awaiting_citation_verdict "$clean" "$field"
     return 0
   fi
 

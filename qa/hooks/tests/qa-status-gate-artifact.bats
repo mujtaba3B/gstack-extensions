@@ -492,6 +492,30 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+@test "citable refs truth table: image refs in, host:port and times out" {
+  run qa_citable_refs 'app:latest emily-agent:v2 ghcr.io/org/app:v1 agent-web:1234 ghcr.io/acme/x:20261013'
+  [ "$output" = "$(printf 'app:latest\nemily-agent:v2\nghcr.io/org/app:v1\nagent-web:1234\nghcr.io/acme/x:20261013')" ]
+  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05'
+  [ -z "$output" ]
+}
+
+@test "awaiting gate block-uncited: numeric-tag and slash-less image refs still need the citation" {
+  for f in "ghcr.io/acme/agent-web:4718203" "agent-web:1234" "mutwo:2026.10.13" "agentmu:v3.1.0"; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: n/a')" "Production artifact: $f on the mini"
+    [ "$output" = "block-uncited" ]
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran %s' "$f")" "Production artifact: $f on the mini"
+    [ "$output" = "allow" ]
+  done
+}
+
+@test "awaiting gate block-uncited: naming only the field's host:port or time is not a citation" {
+  f="ghcr.io/acme/agent-web:v1.2.3 on host mini:22, health at localhost:8080, rolled out 14:05"
+  for e in 'Health on mini:22 fine' 'Deployed at 14:05' 'localhost:8080 returns 200'; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s' "$e")" "$f"
+    [ "$output" = "block-uncited" ]
+  done
+}
+
 @test "awaiting gate allow: the plan names no machine-matchable token (nothing to cite)" {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" "Production artifact: release v1.4 of the desktop app"
   [ "$output" = "allow" ]
