@@ -439,6 +439,32 @@ setup() {
   [ "$output" = "block" ]
 }
 
+@test "awaiting gate block: PHASE: prod handoff with NO EVIDENCE line when the plan names an artifact" {
+  msg=$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run /mu:pause from the desktop app\nPHASE: prod')
+  run qa_artifact_gate "$msg" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate block: no PHASE and no EVIDENCE (template shape, fail closed)" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: x')" "$FIELD"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate allow: PHASE: dev handoff with no EVIDENCE line" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: x\nPHASE: dev')" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate allow: PHASE: prod with no EVIDENCE and no Production artifacts field" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" ""
+  [ "$output" = "allow" ]
+}
+
+@test "prod_verified with no EVIDENCE line still allows (pre-existing; follow-up gate change)" {
+  run qa_artifact_gate "Deployed. QA_STATUS: prod_verified" "$FIELD"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting gate allow: PHASE: dev handoff is out of scope (preview artifact)" {
   msg=$(printf 'QA_STATUS: awaiting_human\nCHECK: open the local build\nPHASE: dev\nEVIDENCE: docker run %s in preview' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"

@@ -191,6 +191,17 @@ stub_pr_body() { # $1 = Production artifacts value
   [ "$(echo "$output" | jq -r '.decision')" = "block" ]
 }
 
+@test "hook blocks: awaiting_human PHASE: prod handoff with no EVIDENCE line" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nDRIVER: mujtaba\nCHECK: run /mu:pause from the desktop app\nPHASE: prod')"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+  r=$(echo "$output" | jq -r '.reason')
+  printf '%s' "$r" | grep -qF 'It has no EVIDENCE line'
+  printf '%s' "$r" | grep -qF 'nanoclaw-agent-v2-83c915c8:ag-1-main'
+}
+
 @test "hook allows: awaiting_human PHASE: prod handoff citing the exact production ref" {
   commit_ahead
   stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"

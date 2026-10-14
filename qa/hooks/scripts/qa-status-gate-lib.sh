@@ -282,8 +282,9 @@ qa_artifact_engage_reason() {
 #   (qa_artifact_engages decides: prod_verified, or an awaiting_human that is
 #   not plainly PHASE: dev) AND
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
-#   the plan named. Any other posture, missing evidence, or a non-blocking
-#   verdict -> allow.
+#   the plan named. An engaged awaiting_human with NO EVIDENCE line also blocks
+#   when the plan names an artifact; prod_verified without one still allows.
+#   Any other posture or a non-blocking verdict -> allow.
 qa_artifact_gate() {
   local msg="$1" field="$2"
 
@@ -300,7 +301,16 @@ qa_artifact_gate() {
 
   local evidence
   evidence=$(qa_extract_evidence "$clean")
-  [ -n "$evidence" ] || { echo allow; return 0; }   # no evidence to evaluate -> fail open
+  if [ -z "$evidence" ]; then
+    # An awaiting_human production handoff must cite the artifact its agent rows
+    # ran against, or the check above never runs on the template shape and
+    # deleting EVIDENCE becomes the way past a block. prod_verified keeps its
+    # pre-existing allow-when-missing until the follow-up gate change.
+    if [ -n "$field" ] && printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
+      echo block; return 0
+    fi
+    echo allow; return 0   # no evidence to evaluate -> fail open
+  fi
 
   if [ "$(qa_evidence_artifact_verdict "$evidence" "$field")" = "mismatch" ]; then
     echo block

@@ -104,6 +104,15 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ]; then
       AWHY=$(qa_artifact_engage_reason "$(qa_strip_fences "$LAST")")
+      if [ -z "$(qa_extract_evidence "$(qa_strip_fences "$LAST")")" ]; then
+        AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA handoff (an awaiting_human handoff), engaged by: ${AWHY}
+It has no EVIDENCE line. A production handoff must cite the exact production artifact its agent-runnable rows ran against, as your approved QA plan named it:
+${PROD_ARTIFACT}
+Close those rows THROUGH that artifact, then restate with an EVIDENCE: line that cites it (the human's pending CHECK is not part of the claim).
+Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
+        jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
+        exit 0
+      fi
       AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
 Your EVIDENCE names a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
 ${PROD_ARTIFACT}

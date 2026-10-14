@@ -85,9 +85,12 @@ finished: waiting on a named person for a named check.
   this chat: a comment on the merged PR naming the open Production QA row and
   the CHECK, or a TODO. After merge the Stop gate no longer fires on the
   branch, so a chat line alone is easy to lose.
-- `awaiting_human` claims nothing about the pending check, so it needs no
-  `EVIDENCE:`. An `EVIDENCE:` line may cite the rows the agent did run; it is
-  not a verification claim for the human's check.
+- `awaiting_human` claims nothing about the pending check. Its `EVIDENCE:`
+  line cites the rows the agent did run, not the human's check. A `PHASE: dev`
+  handoff may omit it. A production handoff (anything not plainly
+  `PHASE: dev`) must carry it when the plan names `Production artifacts:`,
+  citing that exact artifact, even when the human's check is the only row
+  left (name the deployed artifact): the gate blocks one without it.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
   anywhere in it, every such token `dev` or `development`, and nothing
