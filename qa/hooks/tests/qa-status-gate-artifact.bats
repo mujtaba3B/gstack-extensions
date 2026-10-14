@@ -649,6 +649,17 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+@test "awaiting gate: two images, one pinned by digest and one by ref, are each checked on their own line" {
+  d=sha256:aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000
+  f=$(printf -- '- agent-a digest: `%s` on mac-mini\n- agent-b: `ghcr.io/acme/agent-b:v1.4.2` on mac-mini' "$d")
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: agent-b ghcr.io/acme/agent-b:v1.4.2 ; agent-a checked on ghcr.io/acme/agent-base:v1.4.2')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s ; agent-b checked on ghcr.io/acme/agent-base:v1.4.2' "$d")" "$f"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s and ghcr.io/acme/agent-b:v1.4.2' "$d")" "$f"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]

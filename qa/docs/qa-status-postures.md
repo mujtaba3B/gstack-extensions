@@ -95,10 +95,12 @@ finished: waiting on a named person for a named check.
   it as a whole token (every image ref, when it names several), whatever its
   EVIDENCE line says; citing every planned sha256 digest satisfies it on its
   own (a base's digest listed beside the image's cannot stand in for it).
-  A short numeric tag on a single-label name of 6+ characters (agent-web:1234,
-  also mac-mini:8080) is treated as a possible image when nothing stronger is
-  named, and then every such ref must be cited. The block names the missing
-  refs. A field naming only a bundle id,
+  Each artifact line of the field is checked on its own: cite all of that
+  line's image refs, or all of its digests. An all-letter tag (app:latest, but
+  also a skill named in the field such as /mu:pause) or a short numeric tag on
+  a single-label name of 6+ characters (agent-web:1234, also mac-mini:8080) is
+  treated as a possible image when nothing stronger is named, and then every
+  such ref must be cited. The block names the missing refs. A field naming only a bundle id,
   deploy id, dotted hostname or localhost falls back to the `prod_verified`
   EVIDENCE check. The field is prose, so picking its image out is a heuristic; a
   dedicated machine-readable line is a planned follow-up.

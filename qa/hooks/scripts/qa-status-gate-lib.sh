@@ -164,7 +164,8 @@ qa_artifact_digests() {
 # qa_citable_refs <prod_artifact_field> [strong|all]  (PURE)
 #   The refs an awaiting_human handoff must cite, from the free-text field.
 #   STRONG refs are unambiguously images: a '/' in the name, a tag mixing
-#   letters and digits (v1.4.2, 2026.10.13, 7f3c2a1, ag-1-main), or an
+#   digits with any non-digit (letters, dots, hyphens: v1.4.2, 2026.10.13,
+#   7f3c2a1, ag-1-main), or an
 #   all-digit tag of 6+ digits (no port or HH:MM is that long). An ISO time
 #   such as 2026-10-13T14:05Z, or an all-digit name, is never a ref.
 #   WEAK refs could be an image or not: an all-letter tag (app:latest, but also
@@ -197,40 +198,44 @@ EOF
 }
 
 # qa_awaiting_missing_refs <fence_stripped_message> <prod_artifact_field>  (PURE)
-#   The planned refs an awaiting_human handoff has NOT cited, one per line;
-#   empty means satisfied. Citing EVERY planned digest (a full digest citing a
-#   short planned one counts) satisfies it outright: a digest is the strongest
-#   pin, but a base's digest listed beside the image's cannot stand in for it.
-#   Otherwise EVERY required ref must appear as a whole token (a different
-#   build that merely extends a tag does not count): the strong refs when the
-#   plan names any, else every weak ref. So neither a base listed beside the
-#   image nor a host:port listed beside it can stand in for the image.
+#   The planned tokens an awaiting_human handoff has NOT cited, one per line;
+#   empty means satisfied. Checked PER ARTIFACT LINE of the field (one bullet,
+#   or the one inline line), so citing one image can never satisfy another: a
+#   line is satisfied when every required ref on it is cited as a whole token
+#   (a different build that merely extends a tag does not count), or every
+#   digest on it is cited (a full digest citing a short planned one counts).
+#   Required refs are the strong ones when the field names any strong ref or
+#   digest, else every weak ref. Lines naming nothing required are skipped.
 qa_awaiting_missing_refs() {
-  local msg="$1" field="$2" tok req mrefs mdigs
+  local msg="$1" field="$2" tok line mode lrefs ldigs mrefs mdigs rmiss dmiss
+  mrefs=$(qa_artifact_refs "$msg")
   mdigs=$(qa_artifact_digests "$msg")
-  local pdigs dmiss=""
-  pdigs=$(qa_artifact_digests "$field")
-  if [ -n "$pdigs" ]; then
+  mode=all
+  [ -n "$(qa_citable_refs "$field" strong)$(qa_artifact_digests "$field")" ] && mode=strong
+  while IFS= read -r line; do
+    lrefs=$(qa_citable_refs "$line" "$mode")
+    ldigs=$(qa_artifact_digests "$line")
+    [ -n "$lrefs$ldigs" ] || continue
+    rmiss=""; dmiss=""
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || rmiss="${rmiss}${tok}
+"
+    done <<EOF
+$lrefs
+EOF
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       printf '%s\n' "$mdigs" | grep -qiE "^${tok}" || dmiss="${dmiss}${tok}
 "
     done <<EOF
-$pdigs
+$ldigs
 EOF
-    [ -n "$dmiss" ] || return 0
-  fi
-  req=$(qa_citable_refs "$field" strong)
-  [ -n "$req" ] || req=$(qa_citable_refs "$field" all)
-  if [ -z "$req" ]; then
-    printf '%s' "$dmiss"; return 0
-  fi
-  mrefs=$(qa_artifact_refs "$msg")
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || printf '%s\n' "$tok"
+    [ -n "$lrefs" ] && [ -z "$rmiss" ] && continue
+    [ -n "$ldigs" ] && [ -z "$dmiss" ] && continue
+    printf '%s%s' "$rmiss" "$dmiss"
   done <<EOF
-$req
+$field
 EOF
   return 0
 }
@@ -428,8 +433,8 @@ qa_artifact_gate() {
   # ran against: anywhere in the unfenced message, so a bold or dashed label
   # still counts, but a placeholder ("EVIDENCE: n/a"), a missing line, or prose
   # that never names the ref does not. Only when the plan names a citable ref
-  # (strong, or weak: a short numeric tag on a 6+ char single-label name such
-  # as agent-web:1234 or mac-mini:8080) or a digest; otherwise fail open.
+  # (see qa_citable_refs: strong, or weak such as app:latest, mu:pause,
+  # agent-web:1234 or mac-mini:8080) or a digest; otherwise fail open.
   # prod_verified keeps its EVIDENCE-line rule below, missing line included,
   # until the follow-up gate change.
   if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
