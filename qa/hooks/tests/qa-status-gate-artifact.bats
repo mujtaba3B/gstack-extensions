@@ -683,6 +683,8 @@ setup() {
   [ "$output" = "allow" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: curl sms-hero.example.com/health 200')" "Production artifacts: sms-hero.example.com:443 (the live site)"
   [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nQA_STATUS: prod_verified\nEVIDENCE: curl sms-hero.example.com/health 200')" "Production artifacts: sms-hero.example.com:443 (the live site)"
+  [ "$output" = "block" ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {
