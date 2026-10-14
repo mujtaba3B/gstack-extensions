@@ -637,7 +637,7 @@ setup() {
   f="ghcr.io/acme/agent-web:2026.10.13 (sha256:1111aaaa2222bbbb3333) built from ghcr.io/acme/agent-base:3.2 (sha256:9999eeee8888dddd7777)"
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: agent rows green against sha256:9999eeee8888dddd7777')" "$f"
   [ "$output" = "block-uncited" ]
-  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: green against sha256:1111aaaa2222bbbb3333 and sha256:9999eeee8888dddd7777')" "$f"
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: green against ghcr.io/acme/agent-web:2026.10.13 and ghcr.io/acme/agent-base:3.2')" "$f"
   [ "$output" = "allow" ]
 }
 
@@ -657,6 +657,22 @@ setup() {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s ; agent-b checked on ghcr.io/acme/agent-base:v1.4.2' "$d")" "$f"
   [ "$output" = "block" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s and ghcr.io/acme/agent-b:v1.4.2' "$d")" "$f"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate: one line naming two images and one digest cannot be satisfied by that digest" {
+  m=$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran sha256:aaaaaaaaaaaa1111 (agent-api) and in ghcr.io/acme/agent-worker-base:v1.4.2')
+  run qa_artifact_gate "$m" '**Production artifacts:** `ghcr.io/acme/agent-api:v1.4.2@sha256:aaaaaaaaaaaa1111` and `ghcr.io/acme/agent-worker:v1.4.2`'
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$m" '- `agent-api:v1.4.2` (`sha256:aaaaaaaaaaaa1111`) and `agent-worker:v1.4.2`'
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate: a strong-image line cannot hide a weak-tagged image on another line" {
+  f=$(printf -- '- agent-a: `ghcr.io/acme/agent-a:v1.4.2`\n- agent-b: `agent-web:4412`')
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-a:v1.4.2 ; agent-b on agent-web-base:4400')" "$f"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-a:v1.4.2 and agent-web:4412')" "$f"
   [ "$output" = "allow" ]
 }
 

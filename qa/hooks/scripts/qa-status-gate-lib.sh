@@ -92,11 +92,14 @@ qa_gate_decision() {
 # it in.
 #
 # Conservative by construction (this gate fails OPEN and has fleet-wide blast
-# radius). The only verdict that blocks is `mismatch`, returned ONLY when the
-# evidence references the SAME image family as a named plan artifact but NOT the
-# exact production ref -- the precise shape of a base/proxy substitution.
-# Evidence that does not reference the family at all, a plan field with no
-# machine-matchable token, or an absent field all return a non-blocking verdict.
+# radius). For prod_verified the only blocking verdict is `mismatch`, returned
+# ONLY when the EVIDENCE references the SAME image family as a named plan
+# artifact but NOT the exact production ref: the precise shape of a base/proxy
+# substitution; evidence that does not reference the family at all passes. An
+# engaged awaiting_human handoff is stricter: it must cite every required ref
+# or digest of each artifact line (qa_awaiting_missing_refs), or it gets
+# `block-uncited`. Both fail open when the field is absent or names no citable
+# ref or digest.
 # Enforcement engages only when a `Production artifacts:` field is actually
 # present, so PRs without it behave exactly as before this change.
 
@@ -204,17 +207,18 @@ EOF
 #   line is satisfied when every required ref on it is cited as a whole token
 #   (a different build that merely extends a tag does not count), or every
 #   digest on it is cited (a full digest citing a short planned one counts).
-#   Required refs are the strong ones when the field names any strong ref or
-#   digest, else every weak ref. Lines naming nothing required are skipped.
+#   Decided per line: the line's strong refs when it names any strong ref or
+#   digest, else its weak refs; a line's digests count only when it names at
+#   most one required ref. Lines naming nothing required are skipped.
 qa_awaiting_missing_refs() {
   local msg="$1" field="$2" tok line mode lrefs ldigs mrefs mdigs rmiss dmiss
   mrefs=$(qa_artifact_refs "$msg")
   mdigs=$(qa_artifact_digests "$msg")
-  mode=all
-  [ -n "$(qa_citable_refs "$field" strong)$(qa_artifact_digests "$field")" ] && mode=strong
   while IFS= read -r line; do
-    lrefs=$(qa_citable_refs "$line" "$mode")
     ldigs=$(qa_artifact_digests "$line")
+    mode=all
+    [ -n "$(qa_citable_refs "$line" strong)$ldigs" ] && mode=strong
+    lrefs=$(qa_citable_refs "$line" "$mode")
     [ -n "$lrefs$ldigs" ] || continue
     rmiss=""; dmiss=""
     while IFS= read -r tok; do
@@ -232,7 +236,11 @@ EOF
 $ldigs
 EOF
     [ -n "$lrefs" ] && [ -z "$rmiss" ] && continue
-    [ -n "$ldigs" ] && [ -z "$dmiss" ] && continue
+    # A line's digests stand in for its refs only when it names at most one
+    # required ref: one image's digest cannot vouch for a second image.
+    if [ "$(printf '%s' "$lrefs" | grep -c .)" -le 1 ]; then
+      [ -n "$ldigs" ] && [ -z "$dmiss" ] && continue
+    fi
     printf '%s%s' "$rmiss" "$dmiss"
   done <<EOF
 $field
