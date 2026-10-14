@@ -91,10 +91,13 @@ finished: waiting on a named person for a named check.
   `PHASE: dev`) must cite the exact artifact the plan's `Production
   artifacts:` names, outside any code fence, even when the human's check is
   the only row left (name the deployed artifact). When that field names an
-  image ref or a sha256 digest, the gate blocks a handoff that never cites it
-  as a whole token, whatever its EVIDENCE line says; a field naming only a
-  bundle id, deploy id or host falls back to the `prod_verified` EVIDENCE
-  check. The field is prose, so picking its image out is a heuristic; a
+  image ref or a sha256 digest, the gate blocks a handoff that does not cite
+  it as a whole token (every image ref, when it names several), whatever its
+  EVIDENCE line says. A short numeric tag on a single-label name of 6+
+  characters (agent-web:1234, also mac-mini:8080) is treated as a possible
+  image when nothing stronger is named. A field naming only a bundle id,
+  deploy id, dotted hostname or localhost falls back to the `prod_verified`
+  EVIDENCE check. The field is prose, so picking its image out is a heuristic; a
   dedicated machine-readable line is a planned follow-up.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`

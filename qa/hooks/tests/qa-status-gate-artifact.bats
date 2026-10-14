@@ -540,6 +540,21 @@ setup() {
   done
 }
 
+@test "awaiting gate: a field naming the derived image AND its base cannot be satisfied by the base alone" {
+  f="per-agent image nanoclaw-agent-v2-83c915c8:ag-1-main on the mac mini (rebuilt FROM the shared base nanoclaw-base:2026.10.13)"
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: docker run nanoclaw-base:2026.10.13 smoke passed')" "$f"
+  [ "$output" != "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-v2-83c915c8:base')" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-agent-v2-83c915c8:base)"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main and nanoclaw-base:2026.10.13')" "$f"
+  [ "$output" = "allow" ]
+}
+
+@test "prod_verified: a sentence-ending period on the field's ref no longer turns an exact citation into a mismatch" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran ghcr.io/mutwo/emily-agent:v1.4.2 on mini')" "**Production artifacts:** ghcr.io/mutwo/emily-agent:v1.4.2."
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting gate allow: the plan names no machine-matchable token (nothing to cite)" {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" "Production artifact: release v1.4 of the desktop app"
   [ "$output" = "allow" ]

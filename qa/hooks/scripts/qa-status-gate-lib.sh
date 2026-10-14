@@ -176,33 +176,48 @@ EOF
 
 # qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>
 #   -> allow|block|block-uncited  (PURE)
-#   allow when the message cites a required ref as a WHOLE token (a different
-#   build that merely extends it does not count) or a planned digest (a full
-#   digest citing a short planned one counts). Strong refs and digests are
-#   required when the plan names any; weak refs only when it names nothing
-#   stronger, so a host:port beside a real image never satisfies it. block
-#   when it names only a required ref's distinctive family (6+ chars with '/'
-#   or '-', the base / proxy substitution), from the same ranked set, so a
-#   host beside an image is never read as a base; block-uncited otherwise.
+#   When the plan names strong refs, the message must cite EVERY one of them
+#   as a whole token (a different build that merely extends a tag does not
+#   count): a field that also names the base an image was built from cannot
+#   be satisfied by citing the base alone. With no strong ref, any planned
+#   digest (a full digest citing a short planned one counts), else any weak
+#   ref, satisfies it; a host:port beside a real image never does. When not
+#   satisfied: block if the message names an uncited required ref's
+#   distinctive family (6+ chars with '/' or '-', the base / proxy
+#   substitution), block-uncited otherwise.
 qa_awaiting_citation_verdict() {
-  local msg="$1" field="$2" tok base cites mrefs mdigs
-  cites=$(qa_citable_refs "$field" strong; qa_artifact_digests "$field")
-  [ -n "$cites" ] || cites=$(qa_citable_refs "$field" all)
+  local msg="$1" field="$2" tok base strong cites mrefs mdigs missing=""
   mrefs=$(qa_artifact_refs "$msg")
   mdigs=$(qa_artifact_digests "$msg")
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    case "$tok" in
-      sha256:*|SHA256:*)
-        printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && { echo allow; return 0; } ;;
-      *)
-        printf '%s\n' "$mrefs" | grep -qxF -- "$tok" && { echo allow; return 0; } ;;
-    esac
-  done <<EOF
+  strong=$(qa_citable_refs "$field" strong)
+  if [ -n "$strong" ]; then
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || missing="${missing}${tok}
+"
+    done <<EOF
+$strong
+EOF
+    [ -n "$missing" ] || { echo allow; return 0; }
+    cites="$missing"
+  else
+    cites=$(qa_artifact_digests "$field")
+    [ -n "$cites" ] || cites=$(qa_citable_refs "$field" all)
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      case "$tok" in
+        sha256:*|SHA256:*)
+          printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && { echo allow; return 0; } ;;
+        *)
+          printf '%s\n' "$mrefs" | grep -qxF -- "$tok" && { echo allow; return 0; } ;;
+      esac
+    done <<EOF
 $cites
 EOF
+  fi
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
+    case "$tok" in sha256:*|SHA256:*) continue ;; esac
     base="${tok%:*}"
     if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
       case "$msg" in *"$base"*) echo block; return 0 ;; esac
@@ -383,8 +398,9 @@ qa_artifact_gate() {
   # An awaiting_human production handoff must CITE the artifact its agent rows
   # ran against: anywhere in the unfenced message, so a bold or dashed label
   # still counts, but a placeholder ("EVIDENCE: n/a"), a missing line, or prose
-  # that never names the ref does not. Only when the plan names an image-like
-  # ref or a digest (qa_citable_refs); otherwise nothing to match (fail open).
+  # that never names the ref does not. Only when the plan names a citable ref
+  # (strong, or weak: a short numeric tag on a 6+ char single-label name such
+  # as agent-web:1234 or mac-mini:8080) or a digest; otherwise fail open.
   # prod_verified keeps its EVIDENCE-line rule below, missing line included,
   # until the follow-up gate change.
   if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
