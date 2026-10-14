@@ -176,8 +176,9 @@ EOF
 
 # qa_awaiting_missing_refs <fence_stripped_message> <prod_artifact_field>  (PURE)
 #   The planned refs an awaiting_human handoff has NOT cited, one per line;
-#   empty means satisfied. A cited planned digest (a full digest citing a short
-#   planned one counts) satisfies it outright: it is the strongest pin.
+#   empty means satisfied. Citing EVERY planned digest (a full digest citing a
+#   short planned one counts) satisfies it outright: a digest is the strongest
+#   pin, but a base's digest listed beside the image's cannot stand in for it.
 #   Otherwise EVERY required ref must appear as a whole token (a different
 #   build that merely extends a tag does not count): the strong refs when the
 #   plan names any, else every weak ref. So neither a base listed beside the
@@ -185,12 +186,17 @@ EOF
 qa_awaiting_missing_refs() {
   local msg="$1" field="$2" tok req mrefs mdigs
   mdigs=$(qa_artifact_digests "$msg")
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && return 0
-  done <<EOF
-$(qa_artifact_digests "$field")
+  local pdigs dmiss=""
+  pdigs=$(qa_artifact_digests "$field")
+  if [ -n "$pdigs" ]; then
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      printf '%s\n' "$mdigs" | grep -qiE "^${tok}" || dmiss=1
+    done <<EOF
+$pdigs
 EOF
+    [ -n "$dmiss" ] || return 0
+  fi
   req=$(qa_citable_refs "$field" strong)
   [ -n "$req" ] || req=$(qa_citable_refs "$field" all)
   if [ -z "$req" ]; then

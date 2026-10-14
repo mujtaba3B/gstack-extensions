@@ -104,7 +104,10 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ] || [ "$ADECISION" = "block-uncited" ]; then
       AWHY=$(qa_artifact_engage_reason "$(qa_strip_fences "$LAST")")
-      AMISSING=$(qa_awaiting_missing_refs "$(qa_strip_fences "$LAST")" "$PROD_ARTIFACT" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
+      AMISSING=""
+      if printf '%s' "$(qa_strip_fences "$LAST")" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
+        AMISSING=$(qa_awaiting_missing_refs "$(qa_strip_fences "$LAST")" "$PROD_ARTIFACT" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
+      fi
       if [ "$ADECISION" = "block-uncited" ]; then
         AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA handoff (an awaiting_human handoff), engaged by: ${AWHY}
 It does not cite every production artifact your approved QA plan named. Missing: ${AMISSING}
@@ -114,11 +117,18 @@ Only if nothing from this branch is merged or deployed yet (a pre-merge handoff)
         jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
         exit 0
       fi
-      if [ "$AWHY" = "QA_STATUS: prod_verified" ]; then
+      # The noun phrase follows the path that decided (the awaiting_human
+      # citation rule lists what is missing; the EVIDENCE-line verdict does
+      # not); the tail follows the posture (the PHASE: dev label cannot change
+      # a prod_verified result).
+      if [ -n "$AMISSING" ]; then
+        ANAMES="This turn names the family of a planned image but not the exact ref (missing: ${AMISSING}), i.e."
+      else
         ANAMES="Your EVIDENCE names"
+      fi
+      if [ "$AWHY" = "QA_STATUS: prod_verified" ]; then
         ATAIL="While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
       else
-        ANAMES="This turn names the family of a planned image but not the exact ref (missing: ${AMISSING}), i.e."
         ATAIL="Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
       fi
       AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}

@@ -573,6 +573,14 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+@test "awaiting gate: a base digest listed beside the image digest cannot stand in for it" {
+  f="ghcr.io/acme/agent-web:2026.10.13 (sha256:1111aaaa2222bbbb3333) built from ghcr.io/acme/agent-base:3.2 (sha256:9999eeee8888dddd7777)"
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: agent rows green against sha256:9999eeee8888dddd7777')" "$f"
+  [ "$output" != "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: green against sha256:1111aaaa2222bbbb3333 and sha256:9999eeee8888dddd7777')" "$f"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
