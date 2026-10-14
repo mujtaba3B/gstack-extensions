@@ -492,11 +492,35 @@ setup() {
   [ "$output" = "allow" ]
 }
 
-@test "citable refs truth table: image refs in, host:port and times out" {
-  run qa_citable_refs 'app:latest emily-agent:v2 ghcr.io/org/app:v1 agent-web:1234 ghcr.io/acme/x:20261013'
-  [ "$output" = "$(printf 'app:latest\nemily-agent:v2\nghcr.io/org/app:v1\nagent-web:1234\nghcr.io/acme/x:20261013')" ]
-  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05'
+@test "citable refs truth table: strong, weak and dropped tokens" {
+  run qa_citable_refs 'app:latest emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234' strong
+  [ "$output" = "$(printf 'app:latest\nemily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234')" ]
+  run qa_citable_refs 'agent-web:1234 mac-mini:8080' strong
   [ -z "$output" ]
+  run qa_citable_refs 'agent-web:1234 mac-mini:8080'
+  [ "$output" = "$(printf 'agent-web:1234\nmac-mini:8080')" ]
+  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05 2026-10-13T14:05Z 14:05pm'
+  [ -z "$output" ]
+}
+
+@test "awaiting gate block-uncited: a weak host:port beside a real image never satisfies the citation" {
+  f="ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: Health on mac-mini:8080 is green')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: Deployed 2026-10-13T14:05Z, please check')" "ghcr.io/acme/agent-web:v42 (deployed 2026-10-13T14:05Z)"
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate block: citing a different build that extends the planned tag is a mismatch" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran agent-web:12345')" "Production artifact: agent-web:1234 on the mini"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting gate: a short-named image with a long build tag still needs citing; a full digest cites a short one" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: n/a')" "Production artifact: api:4718203"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789abcdef0123456789abcdef')" "Production artifact: sha256:0123456789abcdef0123"
+  [ "$output" = "allow" ]
 }
 
 @test "awaiting gate block-uncited: numeric-tag and slash-less image refs still need the citation" {

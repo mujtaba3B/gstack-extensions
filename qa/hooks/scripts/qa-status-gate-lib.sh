@@ -142,45 +142,62 @@ qa_artifact_digests() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE 'sha256:[0-9a-f]{12,}' || true
 }
 
-# qa_citable_refs <prod_artifact_field>  (PURE)
-#   The refs an awaiting_human handoff must cite. A ref with a non-numeric tag
-#   always counts. An all-digit tag counts too (CI build numbers, timestamps,
-#   numeric short SHAs) UNLESS the token reads as a host:port or a time: no '/'
-#   before the colon, and a name that is a dotted hostname, localhost, all
-#   digits, or under 6 chars (sms-hero.example.com:443, localhost:8080,
-#   mini:22, 14:05). Those are never artifacts, so never citation targets.
+# qa_citable_refs <prod_artifact_field> [strong|all]  (PURE)
+#   The refs an awaiting_human handoff must cite, from the free-text field.
+#   STRONG refs are unambiguously images: a '/' in the name, a tag that is not
+#   all digits (an ISO time such as 2026-10-13T14:05Z, or an all-digit name,
+#   is not), or an all-digit tag of 6+ digits (no port or HH:MM is that long).
+#   WEAK refs are a short all-digit tag on a single-label name of 6+ chars
+#   (agent-web:1234, but also mac-mini:8080): image or host, cannot tell.
+#   Dropped: dotted hostnames, localhost, all-digit names, names under 6 chars
+#   with a short numeric tag (mini:22, 14:05). `all` (default) prints both.
 qa_citable_refs() {
-  local tok base
+  local tok base tag mode="${2:-all}"
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
-    base="${tok%:*}"
-    case "${tok##*:}" in
-      *[!0-9]*) ;;
-      *) case "$base" in
-           */*) ;;
-           *.*|localhost|*[!0-9]*) case "$base" in *.*|localhost) continue ;; esac
-                                   [ "${#base}" -ge 6 ] || continue ;;
-           *) continue ;;
-         esac ;;
+    base="${tok%:*}"; tag="${tok##*:}"
+    case "$base" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) continue ;; esac
+    case "$base" in *[!0-9]*) ;; *) continue ;; esac
+    case "$base" in
+      */*) printf '%s\n' "$tok"; continue ;;
     esac
-    printf '%s\n' "$tok"
+    case "$tag" in
+      *[!0-9]*) printf '%s\n' "$tok"; continue ;;
+    esac
+    [ "${#tag}" -ge 6 ] && { printf '%s\n' "$tok"; continue; }
+    [ "$mode" = all ] || continue
+    case "$base" in *.*|localhost) continue ;; esac
+    [ "${#base}" -ge 6 ] && printf '%s\n' "$tok"
   done <<EOF
 $(qa_artifact_refs "$1")
 EOF
+  return 0
 }
 
 # qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>
 #   -> allow|block|block-uncited  (PURE)
-#   allow when the message names a citable ref or digest; block when it names
-#   only a citable ref's distinctive family (6+ chars with '/' or '-', the
-#   base / proxy substitution); block-uncited otherwise. Non-artifact tokens in
-#   the field (a host:port, a time) neither satisfy nor engage it.
+#   allow when the message cites a required ref as a WHOLE token (a different
+#   build that merely extends it does not count) or a planned digest (a full
+#   digest citing a short planned one counts). Strong refs and digests are
+#   required when the plan names any; weak refs only when it names nothing
+#   stronger, so a host:port beside a real image never satisfies it. block
+#   when it names only a required ref's distinctive family (6+ chars with '/'
+#   or '-', the base / proxy substitution), from the same ranked set, so a
+#   host beside an image is never read as a base; block-uncited otherwise.
 qa_awaiting_citation_verdict() {
-  local msg="$1" field="$2" tok base cites
-  cites=$(qa_citable_refs "$field"; qa_artifact_digests "$field")
+  local msg="$1" field="$2" tok base cites mrefs mdigs
+  cites=$(qa_citable_refs "$field" strong; qa_artifact_digests "$field")
+  [ -n "$cites" ] || cites=$(qa_citable_refs "$field" all)
+  mrefs=$(qa_artifact_refs "$msg")
+  mdigs=$(qa_artifact_digests "$msg")
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
-    case "$msg" in *"$tok"*) echo allow; return 0 ;; esac
+    case "$tok" in
+      sha256:*|SHA256:*)
+        printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && { echo allow; return 0; } ;;
+      *)
+        printf '%s\n' "$mrefs" | grep -qxF -- "$tok" && { echo allow; return 0; } ;;
+    esac
   done <<EOF
 $cites
 EOF
@@ -191,7 +208,7 @@ EOF
       case "$msg" in *"$base"*) echo block; return 0 ;; esac
     fi
   done <<EOF
-$(qa_citable_refs "$field")
+$cites
 EOF
   echo block-uncited
 }

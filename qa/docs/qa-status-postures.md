@@ -90,16 +90,21 @@ finished: waiting on a named person for a named check.
   handoff may omit it. A production handoff (anything not plainly
   `PHASE: dev`) must cite the exact artifact the plan's `Production
   artifacts:` names, outside any code fence, even when the human's check is
-  the only row left (name the deployed artifact): the gate blocks a handoff
-  that never names it, whatever its EVIDENCE line says.
+  the only row left (name the deployed artifact). When that field names an
+  image ref or a sha256 digest, the gate blocks a handoff that never cites it
+  as a whole token, whatever its EVIDENCE line says; a field naming only a
+  bundle id, deploy id or host falls back to the `prod_verified` EVIDENCE
+  check. The field is prose, so picking its image out is a heuristic; a
+  dedicated machine-readable line is a planned follow-up.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
   anywhere in it, every such token `dev` or `development`, and nothing
   pairing PHASE with
   prod), the handoff is checked against the plan's `Production artifacts:`.
   Unlike `prod_verified`, which is judged on its `EVIDENCE:` line, the whole
-  message outside code fences is matched: it must name the exact artifact,
-  and a handoff naming only a base / proxy artifact is blocked. A missing or oddly formatted
+  message outside code fences is matched (when the field names an image ref
+  or digest): it must name the exact artifact, and a handoff naming only a
+  base / proxy artifact is blocked. A missing or oddly formatted
   `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
   with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
   preview artifact. The check reads `Production artifacts:` from the PR of
