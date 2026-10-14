@@ -235,6 +235,20 @@ stub_pr_body() { # $1 = Production artifacts value
   [ -e "$BATS_TEST_TMPDIR/gh-called" ]
 }
 
+@test "hook: an artifact past line 20 of the field is still required" {
+  commit_ahead
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  { printf '#!/bin/sh\ncat <<"BODY"\n**Production artifacts:**\n'
+    for i in 1 2 3 4 5 6 7 8; do printf -- '- image `ghcr.io/acme/svc%s:v1.0.%s`\n- host: mini\n- exercised by a curl\n' "$i" "$i"; done
+    printf 'BODY\n'; } > "$BATS_TEST_TMPDIR/bin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  cites=$(for i in 1 2 3 4 5 6 7; do printf 'ghcr.io/acme/svc%s:v1.0.%s ' "$i" "$i"; done)
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran %s' "$cites")"
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+  echo "$output" | jq -r '.reason' | grep -qF 'Missing: ghcr.io/acme/svc8:v1.0.8'
+}
+
 @test "hook allows: awaiting_human PHASE: prod handoff citing the exact production ref" {
   commit_ahead
   stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"

@@ -450,6 +450,14 @@ qa_artifact_gate() {
     qa_awaiting_citation_verdict "$clean" "$field"
     return 0
   fi
+  # Nothing citable means nothing the gate could match is an image (a dotted
+  # host, a bundle or deploy id): the EVIDENCE-line verdict below would read a
+  # host named in EVIDENCE as an image "family" and false-block an honest
+  # handoff, so an awaiting_human-only turn fails open here.
+  if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
+     && ! printf '%s' "$clean" | grep -qiE "$QA_PROD_VERIFIED_RE"; then
+    echo allow; return 0
+  fi
 
   local evidence
   evidence=$(qa_extract_evidence "$clean")

@@ -93,16 +93,16 @@ finished: waiting on a named person for a named check.
   the only row left (name the deployed artifact). When that field names an
   image ref or a sha256 digest, the gate blocks a handoff that does not cite
   it as a whole token (every image ref, when it names several), whatever its
-  EVIDENCE line says; citing every planned sha256 digest satisfies it on its
-  own (a base's digest listed beside the image's cannot stand in for it).
-  Each artifact line of the field is checked on its own: cite all of that
-  line's image refs, or all of its digests. An all-letter tag (app:latest, but
+  EVIDENCE line says. Each artifact line of the field is checked on its own:
+  cite all of that line's image refs; citing its digests counts instead only
+  when that line names a single image (a base's digest listed beside the
+  image's cannot stand in for it). An all-letter tag (app:latest, but
   also a skill named in the field such as /mu:pause) or a short numeric tag on
   a single-label name of 6+ characters (agent-web:1234, also mac-mini:8080) is
   treated as a possible image when nothing stronger is named, and then every
-  such ref must be cited. The block names the missing refs. A field naming only a bundle id,
-  deploy id, dotted hostname or localhost falls back to the `prod_verified`
-  EVIDENCE check. The field is prose, so picking its image out is a heuristic; a
+  such ref must be cited. The block names the missing refs. A field naming no citable ref or
+  digest (only a bundle id, deploy id, dotted hostname or localhost) is not
+  checked: there is nothing the gate can match. The field is prose, so picking its image out is a heuristic; a
   dedicated machine-readable line is a planned follow-up.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`

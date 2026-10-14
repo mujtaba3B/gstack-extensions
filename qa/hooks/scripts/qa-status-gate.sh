@@ -99,7 +99,10 @@ fi
 # so a normal turn never pays for a network call.
 if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
   PR_BODY=$( (cd "$CWD" && gh pr view --json body --jq '.body' 2>/dev/null) 2>/dev/null )
-  PROD_ARTIFACT=$(qa_extract_prod_artifact "$PR_BODY" | head -n 20)
+  # The whole field decides; only the copy shown in a block message is capped
+  # (a 20-line cut here once left every artifact past line 20 unchecked).
+  PROD_ARTIFACT=$(qa_extract_prod_artifact "$PR_BODY")
+  PROD_SHOWN=$(printf '%s\n' "$PROD_ARTIFACT" | head -n 20)
   if [ -n "$PROD_ARTIFACT" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ] || [ "$ADECISION" = "block-uncited" ]; then
@@ -111,7 +114,7 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
       if [ "$ADECISION" = "block-uncited" ]; then
         AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA handoff (an awaiting_human handoff), engaged by: ${AWHY}
 It does not cite every production artifact your approved QA plan named. Missing: ${AMISSING}
-Plan field: ${PROD_ARTIFACT}
+Plan field: ${PROD_SHOWN}
 Close the agent-runnable rows THROUGH that artifact, then restate with a plain EVIDENCE: line, outside any code fence, that names it (the human's pending CHECK is not part of the claim).
 Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
         jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
@@ -133,7 +136,7 @@ Only if nothing from this branch is merged or deployed yet (a pre-merge handoff)
       fi
       AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
 ${ANAMES} a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
-${PROD_ARTIFACT}
+${PROD_SHOWN}
 Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before restating your posture.
 ${ATAIL}"
       jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'

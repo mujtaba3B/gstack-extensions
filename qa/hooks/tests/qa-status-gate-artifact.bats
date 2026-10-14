@@ -569,6 +569,8 @@ setup() {
   [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: Deployed 2026-10-13T14:05Z, please check')" "ghcr.io/acme/agent-web:v42 (deployed 2026-10-13T14:05Z)"
   [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" "ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
+  [ "$output" = "allow" ]
 }
 
 @test "awaiting gate block: citing a different build that extends the planned tag is a mismatch" {
@@ -674,6 +676,13 @@ setup() {
   [ "$output" = "block" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-a:v1.4.2 and agent-web:4412')" "$f"
   [ "$output" = "allow" ]
+}
+
+@test "awaiting gate allow: a host-only field is not checked, even when EVIDENCE names the host" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: curl sms-hero.example.com/health 200')" "Production artifacts: sms-hero.example.com:443 (the live site)"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: curl sms-hero.example.com/health 200')" "Production artifacts: sms-hero.example.com:443 (the live site)"
+  [ "$output" = "block" ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {
