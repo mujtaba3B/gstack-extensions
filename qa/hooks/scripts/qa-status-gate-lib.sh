@@ -128,17 +128,18 @@ qa_extract_evidence() {
 #   character class `[-*[:space:]]*` now absorbs `**`, bullets, and indent alike.
 qa_extract_prod_artifact() {
   # The label line, plus what belongs to it: bullets and indented lines, even
-  # across blank lines (a label, a blank, then bullets; or a loose list), and a
-  # lead-in line directly under the label. It ends at a heading, a table row, a
-  # top-level bold `**Label:**` (a bulleted `- **Image:**` sub-label is part of
-  # the field), or a plain paragraph after a blank line. /qa:plan writes the
+  # across blank lines (a label, a blank, then bullets; or a loose list), and
+  # plain lead-in lines directly under the label. It ends at a heading, a table
+  # row, an unindented bold `**Label:**` (a bulleted `- **Image:**` or indented
+  # `  **Image:**` sub-label is part of the field), or a plain paragraph after
+  # a blank line. /qa:plan writes the
   # field as a label with bullets underneath; a label-line-only match read that
   # as an EMPTY field, leaving the artifact check dormant on the common shape.
   printf '%s\n' "$1" | awk '
     { l = tolower($0) }
     l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; gap = 0; next }
     !on { next }
-    /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^[[:space:]]*\*\*[^*]+:\*\*/ { on = 0; next }
+    /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^\*\*[^*]+:\*\*/ { on = 0; next }
     /^[[:space:]]*$/ { gap = 1; next }
     /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]][[:space:]]+[^[:space:]]/ { print; gap = 0; next }
     gap { on = 0; next }

@@ -72,7 +72,8 @@ setup() {
     '**Production artifacts:**\n- **Image:** `%s` on mac-mini\n- **Exercised by:** a live agent run' \
     '**Production artifacts:**\n\n- `%s` on mac-mini' \
     '**Production artifacts:** the exact things production runs, per Prod row.\n\n- `%s` on mac-mini' \
-    '**Production artifacts:**\n- host: mac-mini\n\n- `%s` (loose list)'; do
+    '**Production artifacts:**\n- host: mac-mini\n\n- `%s` (loose list)' \
+    '**Production artifacts:**\n  **Image:** `%s`\n  **Host:** mini'; do
     body=$(printf "$fmt" "$PERAGENT")
     run qa_extract_prod_artifact "$body"
     case "$output" in *"$PERAGENT"*) ;; *) echo "lost in: $fmt -> $output"; false ;; esac
@@ -598,7 +599,7 @@ setup() {
 @test "awaiting gate: a field naming the derived image AND its base cannot be satisfied by the base alone" {
   f="per-agent image nanoclaw-agent-v2-83c915c8:ag-1-main on the mac mini (rebuilt FROM the shared base nanoclaw-base:2026.10.13)"
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: docker run nanoclaw-base:2026.10.13 smoke passed')" "$f"
-  [ "$output" != "allow" ]
+  [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-v2-83c915c8:base')" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-agent-v2-83c915c8:base)"
   [ "$output" = "block" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main and nanoclaw-base:2026.10.13')" "$f"
@@ -631,7 +632,7 @@ setup() {
 @test "awaiting gate: a base digest listed beside the image digest cannot stand in for it" {
   f="ghcr.io/acme/agent-web:2026.10.13 (sha256:1111aaaa2222bbbb3333) built from ghcr.io/acme/agent-base:3.2 (sha256:9999eeee8888dddd7777)"
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: agent rows green against sha256:9999eeee8888dddd7777')" "$f"
-  [ "$output" != "allow" ]
+  [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: green against sha256:1111aaaa2222bbbb3333 and sha256:9999eeee8888dddd7777')" "$f"
   [ "$output" = "allow" ]
 }
