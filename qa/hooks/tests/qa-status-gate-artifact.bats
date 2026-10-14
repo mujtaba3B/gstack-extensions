@@ -555,6 +555,31 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+@test "awaiting gate: an image plus its digest; the digest alone, the image alone, or both satisfy it" {
+  f="ghcr.io/acme/app:v1 digest sha256:0123456789abcdef0123"
+  for e in 'pulled sha256:0123456789abcdef0123' 'ran ghcr.io/acme/app:v1' 'ran ghcr.io/acme/app:v1 sha256:0123456789abcdef0123'; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: %s' "$e")" "$f"
+    [ "$output" = "allow" ]
+  done
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: n/a')" "$f"
+  [ "$output" = "block-uncited" ]
+}
+
+@test "awaiting gate block: a weak host:port cannot stand in for a weak image beside it (base-only handoff)" {
+  f='`agent-web:4412` on mac-mini:8080, exercised by curl'
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: smoke against agent-web-base:4400 on mac-mini:8080 passed')" "$f"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: curl via mac-mini:8080 against agent-web:4412 ok')" "$f"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting missing refs: lists exactly the uncited required refs" {
+  run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
+  [ "$output" = "nanoclaw-base:2026.10.13" ]
+  run qa_awaiting_missing_refs "EVIDENCE: ran ghcr.io/acme/app:v1" "ghcr.io/acme/app:v1"
+  [ -z "$output" ]
+}
+
 @test "awaiting gate allow: the plan names no machine-matchable token (nothing to cite)" {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" "Production artifact: release v1.4 of the desktop app"
   [ "$output" = "allow" ]

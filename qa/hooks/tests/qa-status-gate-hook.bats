@@ -198,7 +198,8 @@ stub_pr_body() { # $1 = Production artifacts value
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | jq -r '.decision')" = "block" ]
   r=$(echo "$output" | jq -r '.reason')
-  printf '%s' "$r" | grep -qF 'It does not cite the exact production artifact'
+  printf '%s' "$r" | grep -qF 'It does not cite every production artifact'
+  printf '%s' "$r" | grep -qF 'Missing: nanoclaw-agent-v2-83c915c8:ag-1-main'
   printf '%s' "$r" | grep -qF 'nanoclaw-agent-v2-83c915c8:ag-1-main'
 }
 

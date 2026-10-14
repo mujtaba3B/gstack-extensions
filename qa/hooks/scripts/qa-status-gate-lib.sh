@@ -174,47 +174,47 @@ EOF
   return 0
 }
 
+# qa_awaiting_missing_refs <fence_stripped_message> <prod_artifact_field>  (PURE)
+#   The planned refs an awaiting_human handoff has NOT cited, one per line;
+#   empty means satisfied. A cited planned digest (a full digest citing a short
+#   planned one counts) satisfies it outright: it is the strongest pin.
+#   Otherwise EVERY required ref must appear as a whole token (a different
+#   build that merely extends a tag does not count): the strong refs when the
+#   plan names any, else every weak ref. So neither a base listed beside the
+#   image nor a host:port listed beside it can stand in for the image.
+qa_awaiting_missing_refs() {
+  local msg="$1" field="$2" tok req mrefs mdigs
+  mdigs=$(qa_artifact_digests "$msg")
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && return 0
+  done <<EOF
+$(qa_artifact_digests "$field")
+EOF
+  req=$(qa_citable_refs "$field" strong)
+  [ -n "$req" ] || req=$(qa_citable_refs "$field" all)
+  if [ -z "$req" ]; then
+    qa_artifact_digests "$field"; return 0
+  fi
+  mrefs=$(qa_artifact_refs "$msg")
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || printf '%s\n' "$tok"
+  done <<EOF
+$req
+EOF
+  return 0
+}
+
 # qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>
 #   -> allow|block|block-uncited  (PURE)
-#   When the plan names strong refs, the message must cite EVERY one of them
-#   as a whole token (a different build that merely extends a tag does not
-#   count): a field that also names the base an image was built from cannot
-#   be satisfied by citing the base alone. With no strong ref, any planned
-#   digest (a full digest citing a short planned one counts), else any weak
-#   ref, satisfies it; a host:port beside a real image never does. When not
-#   satisfied: block if the message names an uncited required ref's
-#   distinctive family (6+ chars with '/' or '-', the base / proxy
-#   substitution), block-uncited otherwise.
+#   allow when nothing is missing (qa_awaiting_missing_refs). Otherwise block
+#   if the message names a missing ref's distinctive family (6+ chars with '/'
+#   or '-', the base / proxy substitution), block-uncited if it does not.
 qa_awaiting_citation_verdict() {
-  local msg="$1" field="$2" tok base strong cites mrefs mdigs missing=""
-  mrefs=$(qa_artifact_refs "$msg")
-  mdigs=$(qa_artifact_digests "$msg")
-  strong=$(qa_citable_refs "$field" strong)
-  if [ -n "$strong" ]; then
-    while IFS= read -r tok; do
-      [ -n "$tok" ] || continue
-      printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || missing="${missing}${tok}
-"
-    done <<EOF
-$strong
-EOF
-    [ -n "$missing" ] || { echo allow; return 0; }
-    cites="$missing"
-  else
-    cites=$(qa_artifact_digests "$field")
-    [ -n "$cites" ] || cites=$(qa_citable_refs "$field" all)
-    while IFS= read -r tok; do
-      [ -n "$tok" ] || continue
-      case "$tok" in
-        sha256:*|SHA256:*)
-          printf '%s\n' "$mdigs" | grep -qiE "^${tok}" && { echo allow; return 0; } ;;
-        *)
-          printf '%s\n' "$mrefs" | grep -qxF -- "$tok" && { echo allow; return 0; } ;;
-      esac
-    done <<EOF
-$cites
-EOF
-  fi
+  local msg="$1" field="$2" tok base missing
+  missing=$(qa_awaiting_missing_refs "$msg" "$field")
+  [ -n "$missing" ] || { echo allow; return 0; }
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     case "$tok" in sha256:*|SHA256:*) continue ;; esac
@@ -223,7 +223,7 @@ EOF
       case "$msg" in *"$base"*) echo block; return 0 ;; esac
     fi
   done <<EOF
-$cites
+$missing
 EOF
   echo block-uncited
 }

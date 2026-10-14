@@ -104,10 +104,11 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ] || [ "$ADECISION" = "block-uncited" ]; then
       AWHY=$(qa_artifact_engage_reason "$(qa_strip_fences "$LAST")")
+      AMISSING=$(qa_awaiting_missing_refs "$(qa_strip_fences "$LAST")" "$PROD_ARTIFACT" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
       if [ "$ADECISION" = "block-uncited" ]; then
         AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA handoff (an awaiting_human handoff), engaged by: ${AWHY}
-It does not cite the exact production artifact your approved QA plan named:
-${PROD_ARTIFACT}
+It does not cite every production artifact your approved QA plan named. Missing: ${AMISSING}
+Plan field: ${PROD_ARTIFACT}
 Close the agent-runnable rows THROUGH that artifact, then restate with a plain EVIDENCE: line, outside any code fence, that names it (the human's pending CHECK is not part of the claim).
 Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
         jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
@@ -117,7 +118,7 @@ Only if nothing from this branch is merged or deployed yet (a pre-merge handoff)
         ANAMES="Your EVIDENCE names"
         ATAIL="While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
       else
-        ANAMES="This turn names"
+        ANAMES="This turn names the family of a planned image but not the exact ref (missing: ${AMISSING}), i.e."
         ATAIL="Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
       fi
       AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
