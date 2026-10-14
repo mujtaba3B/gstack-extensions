@@ -570,6 +570,8 @@ setup() {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: Deployed 2026-10-13T14:05Z, please check')" "ghcr.io/acme/agent-web:v42 (deployed 2026-10-13T14:05Z)"
   [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" "ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42, health via mac-mini:8080')" "ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
   [ "$output" = "allow" ]
 }
 
@@ -695,8 +697,18 @@ setup() {
   [ "$output" = "allow" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran agent-base:latest via deploy/build.sh:44')" '- Image: `agent-web:latest` on mac-mini (rebuilt by deploy/build.sh:44)'
   [ "$output" = "block-uncited" ]
-  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: the human runs it\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" '- `ghcr.io/acme/agent-web:v42` exercised by /mu:pause'
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: run /mu:pause from the desktop app\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" '- `ghcr.io/acme/agent-web:v42` exercised by /mu:pause'
   [ "$output" = "allow" ]
+}
+
+@test "awaiting gate block-uncited: a strong ref on the line never lowers the bar for a second image" {
+  m=$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: nanoclaw-orch:v2.1.55 healthy; ran nanoclaw-agent-base:1532 in docker run')
+  run qa_artifact_gate "$m" '**Production artifacts:** the orchestrator `nanoclaw-orch:v2.1.55` and the per-agent image `nanoclaw-agent-mutwo:1532` on mutwos-mac-mini'
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ghcr.io/mujtaba3b/orch:v2.1.55 ok; nanoclaw-base:latest ok')" '- `ghcr.io/mujtaba3b/orch:v2.1.55` and `nanoclaw:latest`'
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789ab')" '- `nanoclaw-agent-ag1:v1.4.2` @ sha256:0123456789ab plus `nanoclaw-agent-ag2:1532`'
+  [ "$output" = "block-uncited" ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {

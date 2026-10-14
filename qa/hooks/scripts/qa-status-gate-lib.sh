@@ -200,24 +200,6 @@ EOF
   return 0
 }
 
-# qa_imagelike_weak_refs <text>  (PURE)
-#   The weak refs that still read as images: an all-letter tag on a
-#   distinctive name (6+ chars with '/' or '-'), e.g. nanoclaw-agent-ag1:main.
-#   Host-like and short tokens (mac-mini:8080, mu:pause) are not returned.
-qa_imagelike_weak_refs() {
-  local tok base
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    case "${tok##*:}" in *[0-9]*) continue ;; esac
-    base="${tok%:*}"
-    [ "${#base}" -ge 6 ] || continue
-    case "$base" in *[/-]*) printf '%s\n' "$tok" ;; esac
-  done <<EOF
-$(qa_citable_refs "$1" all)
-EOF
-  return 0
-}
-
 # qa_awaiting_missing_refs <fence_stripped_message> <prod_artifact_field>  (PURE)
 #   The planned tokens an awaiting_human handoff has NOT cited, one per line;
 #   empty means satisfied. Checked PER ARTIFACT LINE of the field (one bullet,
@@ -225,27 +207,19 @@ EOF
 #   line is satisfied when every required ref on it is cited as a whole token
 #   (a different build that merely extends a tag does not count), or every
 #   digest on it is cited (a full digest citing a short planned one counts).
-#   Decided per line: the line's strong refs (plus any weak ref that reads as
-#   an image: an all-letter tag on a distinctive name) when it names any strong
-#   ref or digest, else its weak refs; a line's digests count only when it
-#   names at most one required ref. Lines naming nothing required are skipped.
+#   Every citable ref on a line is required, strong or weak: letting a strong
+#   ref lower the bar for its neighbours was masking second images on the same
+#   line every way it was tried. A host or skill token beside an image (such as
+#   mac-mini:8080 or /mu:pause) must be cited too; the block names it. A line's
+#   digests count only when it names at most one required ref. Lines naming
+#   nothing citable are skipped.
 qa_awaiting_missing_refs() {
-  local msg="$1" field="$2" tok line mode lrefs ldigs mrefs mdigs rmiss dmiss
+  local msg="$1" field="$2" tok line lrefs ldigs mrefs mdigs rmiss dmiss
   mrefs=$(qa_artifact_refs "$msg")
   mdigs=$(qa_artifact_digests "$msg")
   while IFS= read -r line; do
     ldigs=$(qa_artifact_digests "$line")
-    mode=all
-    [ -n "$(qa_citable_refs "$line" strong)$ldigs" ] && mode=strong
-    lrefs=$(qa_citable_refs "$line" "$mode")
-    if [ "$mode" = strong ]; then
-      # A weak ref that reads as an image (an all-letter tag on a distinctive
-      # name: nanoclaw-agent-ag1:main) stays required beside a strong one, so
-      # two images on one line each need citing. Only host-like and short
-      # tokens (mac-mini:8080, mu:pause) drop.
-      lrefs=$(printf '%s\n' "$lrefs"; qa_imagelike_weak_refs "$line")
-      lrefs=$(printf '%s\n' "$lrefs" | awk 'NF && !seen[$0]++')
-    fi
+    lrefs=$(qa_citable_refs "$line" all)
     [ -n "$lrefs$ldigs" ] || continue
     rmiss=""; dmiss=""
     while IFS= read -r tok; do
