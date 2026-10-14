@@ -120,23 +120,29 @@ qa_extract_evidence() {
 #   for a declared artifact. Pure, so the hook's one impure step (the gh fetch) is
 #   the only untested line.
 #
-#   The lines under the label (bullets) belong to the field too, up to a blank
-#   line, a heading or the next bold label.
+#   The bullets under the label belong to the field too (see the function).
 #
 #   History: the anchor once required the singular `Production artifact:` with at
 #   most one bullet char, so it never matched the template's bold plural label and
 #   the artifact-evidence gate below sat DORMANT (fail-open on every PR). The
 #   character class `[-*[:space:]]*` now absorbs `**`, bullets, and indent alike.
 qa_extract_prod_artifact() {
-  # The label line, plus the lines under it up to a blank line, a heading or
-  # the next bold `**Label:**`: /qa:plan writes the field as a bare label with
-  # its artifacts as bullets underneath, which a label-line-only match read as
-  # an EMPTY field, leaving the artifact check dormant on the common shape.
+  # The label line, plus what belongs to it: bullets and indented lines, even
+  # across blank lines (a label, a blank, then bullets; or a loose list), and a
+  # lead-in line directly under the label. It ends at a heading, a table row, a
+  # top-level bold `**Label:**` (a bulleted `- **Image:**` sub-label is part of
+  # the field), or a plain paragraph after a blank line. /qa:plan writes the
+  # field as a label with bullets underneath; a label-line-only match read that
+  # as an EMPTY field, leaving the artifact check dormant on the common shape.
   printf '%s\n' "$1" | awk '
     { l = tolower($0) }
-    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; next }
-    on && ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*[-*[:space:]]*\*\*[^*]+:\*\*/) { on = 0 }
-    on { print }
+    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; gap = 0; next }
+    !on { next }
+    /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^[[:space:]]*\*\*[^*]+:\*\*/ { on = 0; next }
+    /^[[:space:]]*$/ { gap = 1; next }
+    /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]][[:space:]]+[^[:space:]]/ { print; gap = 0; next }
+    gap { on = 0; next }
+    { print }
   '
 }
 

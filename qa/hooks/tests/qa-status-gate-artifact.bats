@@ -67,6 +67,33 @@ setup() {
   case "$output" in *"$PERAGENT"*) ;; *) echo "got: $output"; false ;; esac
 }
 
+@test "extract prod artifact: real template shapes keep their bullets" {
+  for fmt in \
+    '**Production artifacts:**\n- **Image:** `%s` on mac-mini\n- **Exercised by:** a live agent run' \
+    '**Production artifacts:**\n\n- `%s` on mac-mini' \
+    '**Production artifacts:** the exact things production runs, per Prod row.\n\n- `%s` on mac-mini' \
+    '**Production artifacts:**\n- host: mac-mini\n\n- `%s` (loose list)'; do
+    body=$(printf "$fmt" "$PERAGENT")
+    run qa_extract_prod_artifact "$body"
+    case "$output" in *"$PERAGENT"*) ;; *) echo "lost in: $fmt -> $output"; false ;; esac
+  done
+}
+
+@test "extract prod artifact: the field ends at a heading, a table or a top-level bold label with no blank line" {
+  for stop in '**Definition of Done:**' '### Next' '| a | b |'; do
+    body=$(printf '**Production artifacts:**\n- `%s`\n%s\n- ghcr.io/x/other:v9' "$PERAGENT" "$stop")
+    run qa_extract_prod_artifact "$body"
+    case "$output" in *"other:v9"*) echo "overran past: $stop"; false ;; *) ;; esac
+    case "$output" in *"$PERAGENT"*) ;; *) echo "got: $output"; false ;; esac
+  done
+}
+
+@test "bulleted field after a blank line: a base-only awaiting_human handoff still blocks" {
+  field=$(qa_extract_prod_artifact "$(printf '**Production artifacts:** per Prod row.\n\n- `ghcr.io/acme/agent-alpha:7f3c2a1` on the mini')")
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-base:latest')" "$field"
+  [ "$output" = "block-uncited" ]
+}
+
 @test "bulleted field: a base-only awaiting_human handoff and a base-family prod_verified both block" {
   body=$(printf '**Production artifacts:**\n- per-agent image `%s` on mac-mini' "$PERAGENT")
   field=$(qa_extract_prod_artifact "$body")
