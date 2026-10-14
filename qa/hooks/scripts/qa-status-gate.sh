@@ -113,11 +113,18 @@ Only if nothing from this branch is merged or deployed yet (a pre-merge handoff)
         jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
         exit 0
       fi
+      if [ "$AWHY" = "QA_STATUS: prod_verified" ]; then
+        ANAMES="Your EVIDENCE names"
+        ATAIL="While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
+      else
+        ANAMES="This turn names"
+        ATAIL="Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
+      fi
       AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
-Your EVIDENCE names a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
+${ANAMES} a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
 ${PROD_ARTIFACT}
 Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before restating your posture.
-Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture. While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
+${ATAIL}"
       jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
       exit 0
     fi

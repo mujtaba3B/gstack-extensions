@@ -96,9 +96,10 @@ finished: waiting on a named person for a named check.
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
   anywhere in it, every such token `dev` or `development`, and nothing
   pairing PHASE with
-  prod), its `EVIDENCE:` is checked against the plan's
-  `Production artifacts:` exactly as `prod_verified` is, so a handoff citing
-  only a base / proxy artifact is blocked. A missing or oddly formatted
+  prod), the handoff is checked against the plan's `Production artifacts:`.
+  Unlike `prod_verified`, which is judged on its `EVIDENCE:` line, the whole
+  message outside code fences is matched: it must name the exact artifact,
+  and a handoff naming only a base / proxy artifact is blocked. A missing or oddly formatted
   `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
   with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
   preview artifact. The check reads `Production artifacts:` from the PR of

@@ -474,6 +474,24 @@ setup() {
   [ "$output" = "block-uncited" ]
 }
 
+@test "awaiting gate allow: a host:port or clock time in the field is not a citation requirement" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: Heroku release v87 of sms-hero, health 200')" "Heroku release v87 of app sms-hero (slug abc1234), served at sms-hero.example.com:443 since 14:05"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate allow: a sentence-ending period on the field's ref does not turn a citation into a mismatch" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/mutwo/emily-agent:v1.4.2 on mini')" "**Production artifacts:** ghcr.io/mutwo/emily-agent:v1.4.2."
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate: a digest-only plan still requires the citation" {
+  d="Production artifact: sha256:0123456789abcdef0123 on the mini"
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: n/a')" "$d"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789abcdef0123')" "$d"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting gate allow: the plan names no machine-matchable token (nothing to cite)" {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod')" "Production artifact: release v1.4 of the desktop app"
   [ "$output" = "allow" ]

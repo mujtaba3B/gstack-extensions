@@ -202,6 +202,34 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s' "$r" | grep -qF 'nanoclaw-agent-v2-83c915c8:ag-1-main'
 }
 
+@test "hook blocks prod_verified on a base image without the PHASE: dev relabel hint" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed and verified.\nQA_STATUS: prod_verified\nEVIDENCE: smoke-tested nanoclaw-agent-v2-83c915c8')"
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+  r=$(echo "$output" | jq -r '.reason')
+  printf '%s' "$r" | grep -qF 'Your EVIDENCE names'
+  printf '%s' "$r" | grep -qF 'engaged by: QA_STATUS: prod_verified'
+  printf '%s' "$r" | grep -qF 'Re-verify THROUGH'
+  [ "$(printf '%s\n' "$r" | grep -c 'PHASE: dev the right label')" -eq 0 ]
+}
+
+@test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {
+  commit_ahead
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\ntouch "%s/gh-called"\nprintf "%%s\\n" "**Production artifacts:** nanoclaw-agent-v2-83c915c8:ag-1-main"\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  run run_gate "$(printf 'Done.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: dev')"
+  [ -z "$output" ]
+  [ ! -e "$BATS_TEST_TMPDIR/gh-called" ]
+  run run_gate 'Done. QA_STATUS: dev_verified EVIDENCE: ran it'
+  [ -z "$output" ]
+  [ ! -e "$BATS_TEST_TMPDIR/gh-called" ]
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: live on nanoclaw-agent-v2-83c915c8:ag-1-main')"
+  [ -e "$BATS_TEST_TMPDIR/gh-called" ]
+}
+
 @test "hook allows: awaiting_human PHASE: prod handoff citing the exact production ref" {
   commit_ahead
   stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"

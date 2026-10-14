@@ -135,10 +135,29 @@ qa_extract_prod_artifact() {
 #   image:tag ref. Shared by the verdict and the awaiting_human citation rule.
 qa_artifact_refs() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' \
-    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]+' | grep -viE '^sha256:' || true
+    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]+' | grep -viE '^sha256:' \
+    | sed -E 's/[._-]+$//' || true
 }
 qa_artifact_digests() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE 'sha256:[0-9a-f]{12,}' || true
+}
+
+# qa_citable_refs <prod_artifact_field>  (PURE)
+#   The refs an awaiting_human handoff must cite: image-like ones only, a
+#   DISTINCTIVE name (6+ chars with '/' or '-', the same bar the mismatch check
+#   uses) and a tag that is not all digits. A host:443 or a 14:05 in the field
+#   is not an artifact, so it never becomes a citation requirement.
+qa_citable_refs() {
+  local tok base
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    base="${tok%:*}"
+    case "${tok##*:}" in *[!0-9]*) ;; *) continue ;; esac
+    [ "${#base}" -ge 6 ] || continue
+    case "$base" in *[/-]*) printf '%s\n' "$tok" ;; esac
+  done <<EOF
+$(qa_artifact_refs "$1")
+EOF
 }
 
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
@@ -288,8 +307,10 @@ qa_artifact_engage_reason() {
 #   (qa_artifact_engages decides: prod_verified, or an awaiting_human that is
 #   not plainly PHASE: dev) AND
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
-#   the plan named (block). An engaged awaiting_human must also cite the exact
-#   artifact when the plan names a matchable one, or it gets block-uncited;
+#   the plan named (block). For an engaged awaiting_human the WHOLE unfenced
+#   message is matched instead of the EVIDENCE line: it must cite the exact
+#   artifact when the plan names an image-like ref or digest, or it gets
+#   block-uncited (a base-only mention is block);
 #   prod_verified with no EVIDENCE line still allows (follow-up).
 #   Any other posture or a non-blocking verdict -> allow.
 qa_artifact_gate() {
@@ -309,12 +330,12 @@ qa_artifact_gate() {
   # An awaiting_human production handoff must CITE the artifact its agent rows
   # ran against: anywhere in the unfenced message, so a bold or dashed label
   # still counts, but a placeholder ("EVIDENCE: n/a"), a missing line, or prose
-  # that never names the ref does not. Only when the plan names a
-  # machine-matchable token; otherwise there is nothing to match (fail open).
+  # that never names the ref does not. Only when the plan names an image-like
+  # ref or a digest (qa_citable_refs); otherwise nothing to match (fail open).
   # prod_verified keeps its EVIDENCE-line rule below, missing line included,
   # until the follow-up gate change.
   if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \
-     && [ -n "$(qa_artifact_refs "$field")$(qa_artifact_digests "$field")" ]; then
+     && [ -n "$(qa_citable_refs "$field")$(qa_artifact_digests "$field")" ]; then
     case "$(qa_evidence_artifact_verdict "$clean" "$field")" in
       ok) echo allow ;;
       mismatch) echo block ;;
