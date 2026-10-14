@@ -164,34 +164,26 @@ qa_artifact_digests() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE 'sha256:[0-9a-f]{12,}' || true
 }
 
-# qa_citable_refs <prod_artifact_field> [strong|all]  (PURE)
+# qa_citable_refs <prod_artifact_field>  (PURE)
 #   The refs an awaiting_human handoff must cite, from the free-text field.
-#   STRONG refs are unambiguously images: a '/' in the name, a tag mixing
-#   digits with any non-digit (letters, dots, hyphens: v1.4.2, 2026.10.13,
-#   7f3c2a1, ag-1-main), or an
-#   all-digit tag of 6+ digits (no port or HH:MM is that long). An ISO time
-#   such as 2026-10-13T14:05Z, or an all-digit name, is never a ref.
-#   WEAK refs could be an image or not: an all-letter tag (app:latest, but also
-#   a skill such as mu:pause from "/mu:pause"), or a short all-digit tag on a
-#   single-label name of 6+ chars (agent-web:1234, but also mac-mini:8080).
-#   Dropped: dotted hostnames, localhost, all-digit names, names under 6 chars
-#   with a short numeric tag (mini:22, 14:05). `all` (default) prints both.
+#   Included: a '/' in the name; a tag mixing digits with any non-digit
+#   (letters, dots, hyphens: v1.4.2, 2026.10.13, 7f3c2a1, ag-1-main); an
+#   all-digit tag of 6+ digits (no port or HH:MM is that long); an all-letter
+#   tag (app:latest, but also a skill such as mu:pause from "/mu:pause"); a
+#   short all-digit tag on a single-label name of 6+ chars (agent-web:1234, but
+#   also mac-mini:8080). Dropped: an ISO time such as 2026-10-13T14:05Z, an
+#   all-digit name, dotted hostnames, localhost, and names under 6 chars with
+#   a short numeric tag (mini:22, 14:05).
 qa_citable_refs() {
-  local tok base tag mode="${2:-all}"
+  local tok base tag
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     base="${tok%:*}"; tag="${tok##*:}"
     case "$base" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) continue ;; esac
     case "$base" in *[!0-9]*) ;; *) continue ;; esac
-    case "$base" in
-      */*) printf '%s\n' "$tok"; continue ;;
-    esac
-    case "$tag" in
-      *[0-9]*[!0-9]*|*[!0-9]*[0-9]*) printf '%s\n' "$tok"; continue ;;
-      *[!0-9]*) [ "$mode" = all ] && printf '%s\n' "$tok"; continue ;;
-    esac
+    case "$base" in */*) printf '%s\n' "$tok"; continue ;; esac
+    case "$tag" in *[!0-9]*) printf '%s\n' "$tok"; continue ;; esac
     [ "${#tag}" -ge 6 ] && { printf '%s\n' "$tok"; continue; }
-    [ "$mode" = all ] || continue
     case "$base" in *.*|localhost) continue ;; esac
     [ "${#base}" -ge 6 ] && printf '%s\n' "$tok"
   done <<EOF
@@ -207,9 +199,9 @@ EOF
 #   line is satisfied when every required ref on it is cited as a whole token
 #   (a different build that merely extends a tag does not count), or every
 #   digest on it is cited (a full digest citing a short planned one counts).
-#   Every citable ref on a line is required, strong or weak: letting a strong
-#   ref lower the bar for its neighbours was masking second images on the same
-#   line every way it was tried. A host or skill token beside an image (such as
+#   Every citable ref on a line is required: letting an unambiguous image ref
+#   lower the bar for its neighbours masked second images on the same line
+#   every way it was tried. A host or skill token beside an image (such as
 #   mac-mini:8080 or /mu:pause) must be cited too; the block names it. A line's
 #   digests count only when it names at most one required ref. Lines naming
 #   nothing citable are skipped.
@@ -219,7 +211,7 @@ qa_awaiting_missing_refs() {
   mdigs=$(qa_artifact_digests "$msg")
   while IFS= read -r line; do
     ldigs=$(qa_artifact_digests "$line")
-    lrefs=$(qa_citable_refs "$line" all)
+    lrefs=$(qa_citable_refs "$line")
     [ -n "$lrefs$ldigs" ] || continue
     rmiss=""; dmiss=""
     while IFS= read -r tok; do
@@ -442,8 +434,8 @@ qa_artifact_gate() {
   # ran against: anywhere in the unfenced message, so a bold or dashed label
   # still counts, but a placeholder ("EVIDENCE: n/a"), a missing line, or prose
   # that never names the ref does not. Only when the plan names a citable ref
-  # (see qa_citable_refs: strong, or weak such as app:latest, mu:pause,
-  # agent-web:1234 or mac-mini:8080) or a digest; otherwise fail open.
+  # (see qa_citable_refs: an image ref, or a token such as app:latest,
+  # mu:pause, agent-web:1234 or mac-mini:8080) or a digest; otherwise fail open.
   # prod_verified keeps its EVIDENCE-line rule below, missing line included,
   # until the follow-up gate change.
   if printf '%s' "$clean" | grep -qiE "$QA_AWAITING_HUMAN_RE" \

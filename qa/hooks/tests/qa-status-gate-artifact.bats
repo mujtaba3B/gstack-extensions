@@ -552,13 +552,9 @@ setup() {
   [ "$output" = "allow" ]
 }
 
-@test "citable refs truth table: strong, weak and dropped tokens" {
-  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 ghcr.io/acme/app:latest' strong
-  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nghcr.io/acme/app:latest')" ]
-  run qa_citable_refs 'agent-web:1234 mac-mini:8080 app:latest mu:pause' strong
-  [ -z "$output" ]
-  run qa_citable_refs 'agent-web:1234 mac-mini:8080 app:latest mu:pause'
-  [ "$output" = "$(printf 'agent-web:1234\nmac-mini:8080\napp:latest\nmu:pause')" ]
+@test "citable refs truth table: image refs and image-or-host tokens in, times and plain hosts out" {
+  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause'
+  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause')" ]
   run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05 2026-10-13T14:05Z 14:05pm'
   [ -z "$output" ]
 }
@@ -708,6 +704,14 @@ setup() {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ghcr.io/mujtaba3b/orch:v2.1.55 ok; nanoclaw-base:latest ok')" '- `ghcr.io/mujtaba3b/orch:v2.1.55` and `nanoclaw:latest`'
   [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789ab')" '- `nanoclaw-agent-ag1:v1.4.2` @ sha256:0123456789ab plus `nanoclaw-agent-ag2:1532`'
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: nanoclaw-orch:v2.1.55 and nanoclaw-agent-mutwo:1532 healthy')" '**Production artifacts:** the orchestrator `nanoclaw-orch:v2.1.55` and the per-agent image `nanoclaw-agent-mutwo:1532` on mutwos-mac-mini'
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ghcr.io/mujtaba3b/orch:v2.1.55 and nanoclaw:latest ok')" '- `ghcr.io/mujtaba3b/orch:v2.1.55` and `nanoclaw:latest`'
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-ag1:v1.4.2 and nanoclaw-agent-ag2:1532')" '- `nanoclaw-agent-ag1:v1.4.2` @ sha256:0123456789ab plus `nanoclaw-agent-ag2:1532`'
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789ab and ran nanoclaw-agent-ag2:1532')" '- `nanoclaw-agent-ag1:v1.4.2` @ sha256:0123456789ab plus `nanoclaw-agent-ag2:1532`'
   [ "$output" = "block-uncited" ]
 }
 
