@@ -130,9 +130,10 @@ qa_extract_evidence() {
 #   the artifact-evidence gate below sat DORMANT (fail-open on every PR). The
 #   character class `[-*[:space:]]*` now absorbs `**`, bullets, and indent alike.
 qa_extract_prod_artifact() {
-  # The label line, plus what belongs to it: bullets and indented lines, even
-  # across blank lines (a label, a blank, then bullets; or a loose list), and
-  # plain lead-in lines directly under the label. It ends at a heading, a table
+  # The label line, plus what belongs to it: bullets, numbered items and
+  # indented lines, even across blank lines (a label, a blank, then a list; or
+  # a loose list), plain lead-in lines directly under the label, and the first
+  # paragraph after a blank line when nothing else has been captured yet. It ends at a heading, a table
   # row, an unindented bold `**Label:**` (a bulleted `- **Image:**` or indented
   # `  **Image:**` sub-label is part of the field), or a plain paragraph after
   # a blank line. /qa:plan writes the
@@ -140,13 +141,13 @@ qa_extract_prod_artifact() {
   # as an EMPTY field, leaving the artifact check dormant on the common shape.
   printf '%s\n' "$1" | awk '
     { l = tolower($0) }
-    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; gap = 0; next }
+    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; gap = 0; got = 0; next }
     !on { next }
     /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^\*\*[^*]+:\*\*/ { on = 0; next }
     /^[[:space:]]*$/ { gap = 1; next }
-    /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]][[:space:]]+[^[:space:]]/ { print; gap = 0; next }
-    gap { on = 0; next }
-    { print }
+    /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]]*[0-9]+[.)][[:space:]]/ || /^[[:space:]][[:space:]]+[^[:space:]]/ { print; gap = 0; got = 1; next }
+    gap && got { on = 0; next }
+    { print; gap = 0; got = 1 }
   '
 }
 
@@ -157,7 +158,7 @@ qa_extract_prod_artifact() {
 #   image:tag ref. Shared by the verdict and the awaiting_human citation rule.
 qa_artifact_refs() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' \
-    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]+' | grep -viE '^sha256:' \
+    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*' | grep -viE '^sha256:' \
     | sed -E 's/[._-]+$//' || true
 }
 qa_artifact_digests() {

@@ -715,6 +715,23 @@ setup() {
   [ "$output" = "block-uncited" ]
 }
 
+@test "awaiting gate: a one-character image tag still needs citing" {
+  for f in '**Production artifacts:** ghcr.io/org/agent-web:7 on the mini' '**Production artifacts:** org/app:1 on the mini'; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/org/agent-base:7')" "$f"
+    [ "$output" = "block-uncited" ]
+  done
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/org/agent-web:7')" '**Production artifacts:** ghcr.io/org/agent-web:7 on the mini'
+  [ "$output" = "allow" ]
+}
+
+@test "extract prod artifact: a numbered list or a first paragraph after a blank line stays in the field" {
+  for fmt in '**Production artifacts:**\n\n1. `%s` on mac-mini\n2. exercised by a live run' '**Production artifacts:**\n\nThe per-agent image `%s` on mac-mini.'; do
+    body=$(printf "$fmt" "$PERAGENT")
+    run qa_extract_prod_artifact "$body"
+    case "$output" in *"$PERAGENT"*) ;; *) echo "lost in: $fmt -> $output"; false ;; esac
+  done
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
