@@ -120,12 +120,24 @@ qa_extract_evidence() {
 #   for a declared artifact. Pure, so the hook's one impure step (the gh fetch) is
 #   the only untested line.
 #
+#   The lines under the label (bullets) belong to the field too, up to a blank
+#   line, a heading or the next bold label.
+#
 #   History: the anchor once required the singular `Production artifact:` with at
 #   most one bullet char, so it never matched the template's bold plural label and
 #   the artifact-evidence gate below sat DORMANT (fail-open on every PR). The
 #   character class `[-*[:space:]]*` now absorbs `**`, bullets, and indent alike.
 qa_extract_prod_artifact() {
-  printf '%s\n' "$1" | grep -oiE '^[[:space:]]*[-*[:space:]]*Production artifacts?:.*'
+  # The label line, plus the lines under it up to a blank line, a heading or
+  # the next bold `**Label:**`: /qa:plan writes the field as a bare label with
+  # its artifacts as bullets underneath, which a label-line-only match read as
+  # an EMPTY field, leaving the artifact check dormant on the common shape.
+  printf '%s\n' "$1" | awk '
+    { l = tolower($0) }
+    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; next }
+    on && ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*[-*[:space:]]*\*\*[^*]+:\*\*/) { on = 0 }
+    on { print }
+  '
 }
 
 # qa_artifact_refs / qa_artifact_digests <prod_artifact_field>  (PURE)
@@ -191,7 +203,8 @@ qa_awaiting_missing_refs() {
   if [ -n "$pdigs" ]; then
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
-      printf '%s\n' "$mdigs" | grep -qiE "^${tok}" || dmiss=1
+      printf '%s\n' "$mdigs" | grep -qiE "^${tok}" || dmiss="${dmiss}${tok}
+"
     done <<EOF
 $pdigs
 EOF
@@ -200,7 +213,7 @@ EOF
   req=$(qa_citable_refs "$field" strong)
   [ -n "$req" ] || req=$(qa_citable_refs "$field" all)
   if [ -z "$req" ]; then
-    qa_artifact_digests "$field"; return 0
+    printf '%s' "$dmiss"; return 0
   fi
   mrefs=$(qa_artifact_refs "$msg")
   while IFS= read -r tok; do

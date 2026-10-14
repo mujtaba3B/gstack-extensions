@@ -93,7 +93,8 @@ finished: waiting on a named person for a named check.
   the only row left (name the deployed artifact). When that field names an
   image ref or a sha256 digest, the gate blocks a handoff that does not cite
   it as a whole token (every image ref, when it names several), whatever its
-  EVIDENCE line says; citing a planned sha256 digest satisfies it on its own.
+  EVIDENCE line says; citing every planned sha256 digest satisfies it on its
+  own (a base's digest listed beside the image's cannot stand in for it).
   A short numeric tag on a single-label name of 6+ characters (agent-web:1234,
   also mac-mini:8080) is treated as a possible image when nothing stronger is
   named, and then every such ref must be cited. The block names the missing

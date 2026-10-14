@@ -173,6 +173,9 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s' "$r" | grep -qF 'nothing from this branch is merged or deployed yet'
   # Only the guarded pre-merge sentence may name the dev label.
   [ "$(printf '%s\n' "$r" | grep -c 'PHASE: dev')" -eq 1 ]
+  printf '%s' "$r" | grep -qF 'names the family of a planned image'
+  printf '%s' "$r" | grep -qF 'missing: nanoclaw-agent-v2-83c915c8:ag-1-main'
+  [ "$(printf '%s\n' "$r" | grep -c 'Your EVIDENCE names')" -eq 0 ]
 }
 
 @test "hook blocks: a fenced PHASE: dev example above the real PHASE: prod handoff" {
@@ -213,6 +216,7 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s' "$r" | grep -qF 'engaged by: QA_STATUS: prod_verified'
   printf '%s' "$r" | grep -qF 'Re-verify THROUGH'
   [ "$(printf '%s\n' "$r" | grep -c 'PHASE: dev the right label')" -eq 0 ]
+  printf '%s' "$r" | grep -qF 'write awaiting_human, not a literal'
 }
 
 @test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {

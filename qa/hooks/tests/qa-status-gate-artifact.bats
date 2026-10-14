@@ -53,6 +53,34 @@ setup() {
   [ -z "$output" ]
 }
 
+@test "extract prod artifact: a bare label with bulleted artifacts underneath captures the bullets" {
+  body=$(printf '### Production\n\n**Production artifacts:**\n- per-agent image `%s` on mac-mini\n- exercised by a live agent run\n\n**Definition of Done:**\n- [ ] Tests' "$PERAGENT")
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"$PERAGENT"*) ;; *) echo "got: $output"; false ;; esac
+  case "$output" in *"Definition of Done"*|*"Tests"*) echo "overran: $output"; false ;; *) ;; esac
+}
+
+@test "extract prod artifact: the field ends at a blank line even before plain prose" {
+  body=$(printf '**Production artifacts:**\n- `%s` on mac-mini\n\nNotes: the old ghcr.io/x/other:v9 is retired.' "$PERAGENT")
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"other:v9"*) echo "overran: $output"; false ;; *) ;; esac
+  case "$output" in *"$PERAGENT"*) ;; *) echo "got: $output"; false ;; esac
+}
+
+@test "bulleted field: a base-only awaiting_human handoff and a base-family prod_verified both block" {
+  body=$(printf '**Production artifacts:**\n- per-agent image `%s` on mac-mini' "$PERAGENT")
+  field=$(qa_extract_prod_artifact "$body")
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran nanoclaw-agent-base:latest')" "$field"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")" "$field"
+  [ "$output" = "block" ]
+}
+
+@test "awaiting missing refs: lists only the uncited digests" {
+  run qa_awaiting_missing_refs "EVIDENCE: pulled sha256:1111aaaa2222bbbb3333" "img digest sha256:1111aaaa2222bbbb3333 and sha256:9999eeee8888dddd7777"
+  [ "$output" = "sha256:9999eeee8888dddd7777" ]
+}
+
 # ---- broadened label matching (the arming fix) ------------------------------
 # The /qa:plan template writes the field as `**Production artifacts:**` (bold,
 # plural). The extractor once required a singular, unbolded `Production artifact:`
@@ -621,40 +649,40 @@ setup() {
 }
 
 @test "awaiting gate block: the literal token in prose still engages the check" {
-  msg=$(printf 'QA_STATUS: awaiting_human\nEVIDENCE: smoke-tested %s\nI will record QA_STATUS: prod_verified once you confirm.' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\nEVIDENCE: smoke-tested %s\nI will record QA_STATUS: prod_verified once you confirm.' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
 @test "awaiting gate block: task-box prod_verified line (red-team shape)" {
-  msg=$(printf 'QA_STATUS: awaiting_human\n- [x] QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n- [x] QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
 @test "awaiting gate block: HTML tag before the token (red-team shape)" {
-  msg=$(printf 'QA_STATUS: awaiting_human\n<strong>QA_STATUS: prod_verified</strong>\nEVIDENCE: docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n<strong>QA_STATUS: prod_verified</strong>\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
 @test "awaiting gate block: HTML entity before the token (red-team shape)" {
-  msg=$(printf 'QA_STATUS: awaiting_human\n&nbsp;QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n&nbsp;QA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
 @test "awaiting gate block: indented or mismatched tilde fences do not hide the claim" {
-  msg=$(printf 'QA_STATUS: awaiting_human\n    ~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n    ~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
-  msg=$(printf 'QA_STATUS: awaiting_human\n~~~~\n~~~\n~~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\n~~~~\n~~~\n~~~~\nQA_STATUS: prod_verified\nEVIDENCE: docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
 
 @test "awaiting gate block: both postures stated, base-only evidence" {
-  msg=$(printf 'QA_STATUS: awaiting_human\nQA_STATUS: prod_verified\nEVIDENCE: ran docker run %s' "$BASE")
+  msg=$(printf 'QA_STATUS: awaiting_human\nPHASE: dev\nQA_STATUS: prod_verified\nEVIDENCE: ran docker run %s' "$BASE")
   run qa_artifact_gate "$msg" "$FIELD"
   [ "$output" = "block" ]
 }
