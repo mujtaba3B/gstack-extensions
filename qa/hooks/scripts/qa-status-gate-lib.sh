@@ -163,11 +163,13 @@ qa_artifact_digests() {
 
 # qa_citable_refs <prod_artifact_field> [strong|all]  (PURE)
 #   The refs an awaiting_human handoff must cite, from the free-text field.
-#   STRONG refs are unambiguously images: a '/' in the name, a tag that is not
-#   all digits (an ISO time such as 2026-10-13T14:05Z, or an all-digit name,
-#   is not), or an all-digit tag of 6+ digits (no port or HH:MM is that long).
-#   WEAK refs are a short all-digit tag on a single-label name of 6+ chars
-#   (agent-web:1234, but also mac-mini:8080): image or host, cannot tell.
+#   STRONG refs are unambiguously images: a '/' in the name, a tag mixing
+#   letters and digits (v1.4.2, 2026.10.13, 7f3c2a1, ag-1-main), or an
+#   all-digit tag of 6+ digits (no port or HH:MM is that long). An ISO time
+#   such as 2026-10-13T14:05Z, or an all-digit name, is never a ref.
+#   WEAK refs could be an image or not: an all-letter tag (app:latest, but also
+#   a skill such as mu:pause from "/mu:pause"), or a short all-digit tag on a
+#   single-label name of 6+ chars (agent-web:1234, but also mac-mini:8080).
 #   Dropped: dotted hostnames, localhost, all-digit names, names under 6 chars
 #   with a short numeric tag (mini:22, 14:05). `all` (default) prints both.
 qa_citable_refs() {
@@ -181,7 +183,8 @@ qa_citable_refs() {
       */*) printf '%s\n' "$tok"; continue ;;
     esac
     case "$tag" in
-      *[!0-9]*) printf '%s\n' "$tok"; continue ;;
+      *[0-9]*[!0-9]*|*[!0-9]*[0-9]*) printf '%s\n' "$tok"; continue ;;
+      *[!0-9]*) [ "$mode" = all ] && printf '%s\n' "$tok"; continue ;;
     esac
     [ "${#tag}" -ge 6 ] && { printf '%s\n' "$tok"; continue; }
     [ "$mode" = all ] || continue

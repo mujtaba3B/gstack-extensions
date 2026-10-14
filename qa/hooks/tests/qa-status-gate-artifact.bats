@@ -73,7 +73,8 @@ setup() {
     '**Production artifacts:**\n\n- `%s` on mac-mini' \
     '**Production artifacts:** the exact things production runs, per Prod row.\n\n- `%s` on mac-mini' \
     '**Production artifacts:**\n- host: mac-mini\n\n- `%s` (loose list)' \
-    '**Production artifacts:**\n  **Image:** `%s`\n  **Host:** mini'; do
+    '**Production artifacts:**\n  **Image:** `%s`\n  **Host:** mini' \
+    '**Production artifacts:**\nThe per-agent image `%s` on mac-mini'; do
     body=$(printf "$fmt" "$PERAGENT")
     run qa_extract_prod_artifact "$body"
     case "$output" in *"$PERAGENT"*) ;; *) echo "lost in: $fmt -> $output"; false ;; esac
@@ -447,7 +448,10 @@ setup() {
   for m in 'PHASE: post-deploy' 'PHASE=staging' 'PHASE: dev and prod' '| Phase | Check |' 'PHASE: dev, then PHASE: prod'; do
     msg=$(printf 'QA_STATUS: awaiting_human\n%s' "$m")
     [ "$(qa_artifact_engages "$msg")" = "yes" ]
-    [ "$(qa_artifact_engage_reason "$msg")" != "awaiting_human with no PHASE stated (treated as prod)" ]
+    why=$(qa_artifact_engage_reason "$msg")
+    [ -n "$why" ]
+    [ "$why" != "awaiting_human with no PHASE stated (treated as prod)" ]
+    case "$why" in *[Pp][Hh][Aa][Ss][Ee]*) ;; *) echo "no cause for: $m -> $why"; false ;; esac
   done
 }
 
@@ -549,12 +553,12 @@ setup() {
 }
 
 @test "citable refs truth table: strong, weak and dropped tokens" {
-  run qa_citable_refs 'app:latest emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234' strong
-  [ "$output" = "$(printf 'app:latest\nemily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234')" ]
-  run qa_citable_refs 'agent-web:1234 mac-mini:8080' strong
+  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 ghcr.io/acme/app:latest' strong
+  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nghcr.io/acme/app:latest')" ]
+  run qa_citable_refs 'agent-web:1234 mac-mini:8080 app:latest mu:pause' strong
   [ -z "$output" ]
-  run qa_citable_refs 'agent-web:1234 mac-mini:8080'
-  [ "$output" = "$(printf 'agent-web:1234\nmac-mini:8080')" ]
+  run qa_citable_refs 'agent-web:1234 mac-mini:8080 app:latest mu:pause'
+  [ "$output" = "$(printf 'agent-web:1234\nmac-mini:8080\napp:latest\nmu:pause')" ]
   run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05 2026-10-13T14:05Z 14:05pm'
   [ -z "$output" ]
 }
@@ -634,6 +638,14 @@ setup() {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: agent rows green against sha256:9999eeee8888dddd7777')" "$f"
   [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: green against sha256:1111aaaa2222bbbb3333 and sha256:9999eeee8888dddd7777')" "$f"
+  [ "$output" = "allow" ]
+}
+
+@test "awaiting gate block-uncited: a skill name in the field cannot push a weak-tagged image out of the required set" {
+  f=$(printf -- '- `agent-web:417` on host `mutwos-mac-mini`\n- Exercised by invoking `/mu:pause` from the desktop app')
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: run /mu:pause from the desktop app\nPHASE: prod\nEVIDENCE: docker run agent-base:417 smoke passed')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: run /mu:pause from the desktop app\nPHASE: prod\nEVIDENCE: ran agent-web:417 on the mini')" "$f"
   [ "$output" = "allow" ]
 }
 
