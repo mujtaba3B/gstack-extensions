@@ -141,13 +141,18 @@ qa_extract_prod_artifact() {
   # a blank line. /qa:plan writes the
   # field as a label with bullets underneath; a label-line-only match read that
   # as an EMPTY field, leaving the artifact check dormant on the common shape.
-  local label_re='^[[:space:]]*[-*[:space:]]*production artifacts?:' rest lg=0
-  rest=$(printf '%s\n' "$1" | awk -v re="$label_re" '
-    tolower($0) ~ re { r = substr($0, index(tolower($0), "production artifact")); sub(/^[^:]*:/, "", r); print r; exit }')
-  if [ -n "$(qa_citable_refs "$rest")$(qa_artifact_digests "$rest")" ]; then lg=1; fi
-  printf '%s\n' "$1" | awk -v re="$label_re" -v lg="$lg" '
+  # One capture flag per label line, in order, so a second field is judged
+  # on its own label line rather than inheriting the first one's.
+  local label_re='^[[:space:]]*[-*[:space:]]*production artifacts?:' rest lgs=""
+  while IFS= read -r rest; do
+    if [ -n "$(qa_citable_refs "$rest")$(qa_artifact_digests "$rest")" ]; then lgs="${lgs}1"; else lgs="${lgs}0"; fi
+  done <<LABELS
+$(printf '%s\n' "$1" | awk -v re="$label_re" '
+    tolower($0) ~ re { r = substr($0, index(tolower($0), "production artifact")); sub(/^[^:]*:/, "", r); print r }')
+LABELS
+  printf '%s\n' "$1" | awk -v re="$label_re" -v lgs="$lgs" '
     { l = tolower($0) }
-    l ~ re { print; on = 1; gap = 0; got = lg; next }
+    l ~ re { n++; print; on = 1; gap = 0; got = substr(lgs, n, 1) + 0; next }
     !on { next }
     /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^\*\*[^*]+:\*\*/ { on = 0; next }
     /^[[:space:]]*$/ { gap = 1; next }
@@ -420,7 +425,7 @@ qa_artifact_engage_reason() {
 #   its EVIDENCE names a base/proxy artifact instead of the production artifact
 #   the plan named (block). For an engaged awaiting_human the WHOLE unfenced
 #   message is matched instead of the EVIDENCE line: it must cite the exact
-#   artifact when the plan names an image-like ref or digest, or it gets
+#   artifact when the plan names a citable ref (qa_citable_refs) or digest, or it gets
 #   block-uncited (a base-only mention is block);
 #   prod_verified with no EVIDENCE line still allows (follow-up).
 #   Any other posture or a non-blocking verdict -> allow.

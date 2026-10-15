@@ -90,17 +90,25 @@ finished: waiting on a named person for a named check.
   handoff may omit it. A production handoff (anything not plainly
   `PHASE: dev`) must cite the exact artifact the plan's `Production
   artifacts:` names, outside any code fence, even when the human's check is
-  the only row left (name the deployed artifact). When that field names an
-  image ref or a sha256 digest, the gate blocks a handoff that does not cite
-  it as a whole token (every image ref, when it names several), whatever its
+  the only row left (name the deployed artifact). When that field names a
+  citable ref or a sha256 digest, the gate blocks a handoff that does not cite
+  it as a whole token (every citable ref, when it names several), whatever its
   EVIDENCE line says. Each artifact line of the field is checked on its own:
   cite every citable ref on it, the image refs and any host or skill token
   written beside them (mac-mini:8080, /mu:pause); citing its digests counts
   instead only when that line names a single ref (a base's digest listed
   beside the image's cannot stand in for it). The block names the missing
-  refs. A field naming no citable ref or
-  digest (only a bundle id, deploy id, dotted hostname or localhost) is not
-  checked: there is nothing the gate can match. The field is prose, so picking its image out is a heuristic; a
+  refs. A citable ref is any colon-joined `name:tag` token: image refs
+  (ghcr.io/acme/app:v1, agent:42), a host:port on a single-label host
+  (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
+  run id (run:4567). Dropped, so never required: ISO times
+  (2026-10-13T14:05Z), all-digit names (14:05), dotted hostnames
+  (sms-hero.example.com:443) and localhost. A dotted image name with a short
+  all-digit tag (acme.agent:42) reads as a dotted host:port and is not
+  checked; give such an image a registry path or a non-numeric tag. A field
+  naming no citable ref or digest (only a bundle id, a deploy id written
+  without a colon, a dotted hostname or localhost) is not checked: there is
+  nothing the gate can match. The field is prose, so picking its image out is a heuristic; a
   dedicated machine-readable line is a planned follow-up.
 - The gate enforces the Production bar: unless the message is plainly
   `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`

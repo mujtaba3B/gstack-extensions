@@ -91,9 +91,11 @@ fi
 # Posture is stated, so the "did you decide?" gate allows. Incident hardening:
 # if the agent makes a Production-QA claim and the PR's approved QA plan named a
 # specific `Production artifacts:`, reject EVIDENCE that names only a base /
-# upstream / proxy artifact instead of that one. Fail OPEN at every step: a
-# missing gh, no PR, or no `Production artifacts:` field leaves PROD_ARTIFACT
-# empty and the gate behaves exactly as before. The gh lookup is gated on the
+# upstream / proxy artifact instead of that one (block), and an awaiting_human
+# handoff that does not cite every citable ref the field names (block-uncited).
+# Engagement fails CLOSED (qa_artifact_engages: a missing or mixed PHASE
+# engages); the lookup fails OPEN: a missing gh, no PR, or no `Production
+# artifacts:` field leaves PROD_ARTIFACT empty and the gate allows. The gh lookup is gated on the
 # Production-QA claim (qa_artifact_engages, on the same fence-stripped text the
 # gate reads)
 # so a normal turn never pays for a network call.

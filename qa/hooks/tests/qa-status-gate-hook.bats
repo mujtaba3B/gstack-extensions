@@ -231,17 +231,23 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s' "$r" | grep -qF 'write awaiting_human, not a literal'
 }
 
-@test "hook: more than five missing refs are counted, not silently cut" {
+@test "hook: more than five missing refs are counted, not silently cut; five or fewer carry no count" {
   commit_ahead
   mkdir -p "$BATS_TEST_TMPDIR/bin"
-  { printf '#!/bin/sh\ncat <<"BODY"\n**Production artifacts:**\n'
-    for i in 1 2 3 4 5 6 7; do printf -- '- `ghcr.io/acme/s%s:v1`\n' "$i"; done
-    printf 'BODY\n'; } > "$BATS_TEST_TMPDIR/bin/gh"
-  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
-  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: none')"
-  r=$(echo "$output" | jq -r '.reason')
-  printf '%s' "$r" | grep -qF 'ghcr.io/acme/s5:v1 (+2 more)'
+  for n in 5 6 7; do
+    { printf '#!/bin/sh\ncat <<"BODY"\n**Production artifacts:**\n'
+      i=1; while [ "$i" -le "$n" ]; do printf -- '- `ghcr.io/acme/s%s:v1`\n' "$i"; i=$((i + 1)); done
+      printf 'BODY\n'; } > "$BATS_TEST_TMPDIR/bin/gh"
+    chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+    run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: none')"
+    r=$(echo "$output" | jq -r '.reason')
+    case "$n" in
+      5) printf '%s\n' "$r" | grep -qx 'It does not cite every production artifact your approved QA plan named. Missing: ghcr.io/acme/s1:v1, ghcr.io/acme/s2:v1, ghcr.io/acme/s3:v1, ghcr.io/acme/s4:v1, ghcr.io/acme/s5:v1' ;;
+      6) printf '%s' "$r" | grep -qF 'ghcr.io/acme/s5:v1 (+1 more)' ;;
+      7) printf '%s' "$r" | grep -qF 'ghcr.io/acme/s5:v1 (+2 more)' ;;
+    esac
+  done
 }
 
 @test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {

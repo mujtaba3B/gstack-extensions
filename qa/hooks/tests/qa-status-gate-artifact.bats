@@ -779,6 +779,20 @@ setup() {
   [ "$output" = "block-uncited" ]
 }
 
+# Value: protects=a label line naming only a sha256 digest ends the field at a blank line before prose,
+#   and a second field is judged on its own label line; fails_when=the digest half of the label-line
+#   capture is dropped, or the flag is taken from the first label only; why_new=specialists, cycle 14 pass 2; seam=none
+@test "extract prod artifact: a digest-only label line ends the field, and each label line is judged on its own" {
+  body=$(printf '**Production artifacts:** sha256:0123456789abcdef0123 on the mini\n\nNotes: the old ghcr.io/x/other:v9 is retired.')
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"other:v9"*) echo "overran: $output"; false ;; *) ;; esac
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: pulled sha256:0123456789abcdef0123')" "$(qa_extract_prod_artifact "$body")"
+  [ "$output" = "allow" ]
+  body=$(printf -- '- Production artifact: agent-x:v2 (summary)\n\n**Production artifacts:**\n\nghcr.io/acme/agent-y:v3 on the mini')
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"agent-y:v3"*) ;; *) echo "dropped: $output"; false ;; esac
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
