@@ -96,7 +96,8 @@ finished: waiting on a named person for a named check.
   EVIDENCE line says. Each artifact line of the field is checked on its own:
   cite every citable ref on it, the image refs and any host or skill token
   written beside them (mac-mini:8080, /mu:pause); citing its digests counts
-  instead only when that line names a single ref (a base's digest listed
+  instead only when that line names at most one citable ref (a digest-only
+  line is satisfied by its digest; a base's digest listed
   beside the image's cannot stand in for it). The block names the missing
   refs. A citable ref is any colon-joined `name:tag` token: image refs
   (ghcr.io/acme/app:v1, agent:42), a host:port on a single-label host

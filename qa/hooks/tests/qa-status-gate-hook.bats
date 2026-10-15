@@ -250,6 +250,17 @@ stub_pr_body() { # $1 = Production artifacts value
   done
 }
 
+@test "hook: a ref repeated on several artifact lines is listed missing once" {
+  commit_ahead
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\ncat <<"BODY"\n**Production artifacts:**\n- ghcr.io/x/a:v1 on mac-mini:8080\n- ghcr.io/x/b:v2 on mac-mini:8080\nBODY\n' > "$BATS_TEST_TMPDIR/bin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/x/a:v1 and ghcr.io/x/b:v2')"
+  r=$(echo "$output" | jq -r '.reason')
+  printf '%s\n' "$r" | grep -qx 'It does not cite every production artifact your approved QA plan named. Missing: mac-mini:8080'
+}
+
 @test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {
   commit_ahead
   mkdir -p "$BATS_TEST_TMPDIR/bin"

@@ -109,7 +109,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 |---|---|---|---|
 | <tester> | <one line: live check after deploy> | <one line: result> | <extra detail, or blank> |
 
-**Production artifacts:** for each Prod QA row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host + how it is exercised.
+**Production artifacts:** for each Prod QA row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host (a dotted hostname or plain words) + how it is exercised (prose, no colon-joined host:port or skill names); name only what production runs, never the base image.
 
 **Definition of Done:**
 - [ ] Tests written and green

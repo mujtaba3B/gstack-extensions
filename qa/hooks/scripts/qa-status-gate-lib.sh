@@ -297,10 +297,13 @@ EOF
 #     n/a      -> enforcement does not apply / cannot be decided -> fail open:
 #                 no field, no machine-matchable token in the field, or the
 #                 evidence does not reference the family at all.
-#   Matchable tokens are container image refs (`image:tag`) and sha256 digests,
-#   the shapes that carry the base-vs-derived staleness risk. Non-image
-#   artifacts (a release version, a bundle id with no `:`) yield no token and
-#   return n/a; for those the plan prose carries the discipline, not this gate.
+#   Matchable tokens come from qa_artifact_refs / qa_artifact_digests: any
+#   colon-joined name:tag (image refs, but also host:port, skills, run ids)
+#   and sha256 digests. Artifacts with no `:` (a release version, a bundle id)
+#   yield no token and return n/a; for those the plan prose carries the
+#   discipline, not this gate. The family match is not limited to images, so
+#   a planned host:port family (mac-mini) can drive mismatch here; the
+#   awaiting_human verdict narrows that (qa_awaiting_citation_verdict).
 qa_evidence_artifact_verdict() {
   local evidence="$1" field="$2"
 

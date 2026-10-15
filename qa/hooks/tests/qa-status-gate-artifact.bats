@@ -812,6 +812,18 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+# Value: protects=a path, digest or bare-registry mention of a numeric-tagged family gets the substitution verdict;
+#   fails_when=the family/, family@ or image-shaped (slash) arm is dropped; why_new=coverage + testing, run 15; seam=none;
+#   no_claim=message wording only, both verdicts block
+@test "awaiting gate block: a numeric-tagged family named by path, digest or bare registry ref is a substitution" {
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: checked mac-mini/healthz')" "- svc on mac-mini:8080"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran agent-web@sha256:abc123')" "- agent-web:42 on the mini"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/app latest build')" "- ghcr.io/acme/app:42 on the mini"
+  [ "$output" = "block" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]

@@ -112,7 +112,9 @@ if [ "$(qa_artifact_engages "$CLEAN")" = "yes" ]; then
       AWHY=$(qa_artifact_engage_reason "$CLEAN")
       AMISSING=""
       if printf '%s' "$CLEAN" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
-        AMISSING_ALL=$(qa_awaiting_missing_refs "$CLEAN" "$PROD_ARTIFACT")
+        # One entry per ref: a host:port repeated on several artifact lines is
+        # missing once, and the "+N more" count is of distinct refs.
+        AMISSING_ALL=$(qa_awaiting_missing_refs "$CLEAN" "$PROD_ARTIFACT" | awk 'NF && !seen[$0]++')
         AMISSING=$(printf '%s\n' "$AMISSING_ALL" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
         AMORE=$(( $(printf '%s\n' "$AMISSING_ALL" | grep -c .) - 5 ))
         if [ "$AMORE" -gt 0 ]; then AMISSING="${AMISSING} (+${AMORE} more)"; fi
