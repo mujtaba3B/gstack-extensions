@@ -833,6 +833,23 @@ setup() {
   [ -z "$output" ]
 }
 
+# Value: protects=a citation is a whole token, matched literally: a truncated or prefix ref, or one whose '.'
+#   sits where the plan has another character, never cites the planned ref; and the set difference still
+#   blocks when bash runs in POSIX mode; fails_when=-F is dropped from the per-ref grep (-x is pinned by
+#   "extends the planned tag"), or the difference is rebuilt on process substitution, which POSIX-mode
+#   /bin/bash 3.2 disables so it fails open (the truncated row guards a pattern-file rewrite);
+#   why_new=coverage + red team, run 16; seam=none
+@test "awaiting missing refs: a truncated or dot-wildcard citation does not count, even in POSIX mode" {
+  run qa_awaiting_citation_verdict "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1" "- nanoclaw-agent-v2-83c915c8:ag-17769-main"
+  [ "$output" = "block" ]
+  run qa_awaiting_missing_refs "EVIDENCE: ran app:v1.4" "ghcr.io/acme/app:v1.4.2"
+  [ "$output" = "ghcr.io/acme/app:v1.4.2" ]
+  run qa_awaiting_citation_verdict "EVIDENCE: ran ghcr.io/acme/app:v1-2" "- ghcr.io/acme/app:v1.2"
+  [ "$output" = "block" ]
+  run env POSIXLY_CORRECT=1 /bin/bash -c '. "$1"; qa_awaiting_citation_verdict "QA_STATUS: awaiting_human done" "- ghcr.io/acme/web:v1.4.2"' _ "$BATS_TEST_DIRNAME/../scripts/qa-status-gate-lib.sh"
+  [ "$output" = "block-uncited" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]

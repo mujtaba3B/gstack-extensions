@@ -229,11 +229,14 @@ qa_awaiting_missing_refs() {
     ldigs=$(qa_artifact_digests "$line")
     lrefs=$(qa_citable_refs "$line")
     [ -n "$lrefs$ldigs" ] || continue
-    # The line's required refs that the message does not name as whole tokens.
-    rmiss=$(printf '%s\n' "$lrefs" | grep . | grep -vxF -f <(printf '%s\n' "$mrefs" | grep .))
-    [ -z "$rmiss" ] || rmiss="${rmiss}
+    rmiss=""; dmiss=""
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      printf '%s\n' "$mrefs" | grep -qxF -- "$tok" || rmiss="${rmiss}${tok}
 "
-    dmiss=""
+    done <<EOF
+$lrefs
+EOF
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       printf '%s\n' "$mdigs" | grep -qiE "^${tok}" || dmiss="${dmiss}${tok}
