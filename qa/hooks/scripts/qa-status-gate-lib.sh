@@ -133,15 +133,21 @@ qa_extract_prod_artifact() {
   # The label line, plus what belongs to it: bullets, numbered items and
   # indented lines, even across blank lines (a label, a blank, then a list; or
   # a loose list), plain lead-in lines directly under the label, and the first
-  # paragraph after a blank line when nothing else has been captured yet. It ends at a heading, a table
+  # paragraph after a blank line when nothing else has been captured yet (a
+  # label line naming a citable ref or digest, by the same qa_citable_refs /
+  # qa_artifact_digests rule the gate uses, counts as captured). It ends at a heading, a table
   # row, an unindented bold `**Label:**` (a bulleted `- **Image:**` or indented
   # `  **Image:**` sub-label is part of the field), or a plain paragraph after
   # a blank line. /qa:plan writes the
   # field as a label with bullets underneath; a label-line-only match read that
   # as an EMPTY field, leaving the artifact check dormant on the common shape.
-  printf '%s\n' "$1" | awk '
+  local label_re='^[[:space:]]*[-*[:space:]]*production artifacts?:' rest lg=0
+  rest=$(printf '%s\n' "$1" | awk -v re="$label_re" '
+    tolower($0) ~ re { r = substr($0, index(tolower($0), "production artifact")); sub(/^[^:]*:/, "", r); print r; exit }')
+  if [ -n "$(qa_citable_refs "$rest")$(qa_artifact_digests "$rest")" ]; then lg=1; fi
+  printf '%s\n' "$1" | awk -v re="$label_re" -v lg="$lg" '
     { l = tolower($0) }
-    l ~ /^[[:space:]]*[-*[:space:]]*production artifacts?:/ { print; on = 1; gap = 0; got = 0; next }
+    l ~ re { print; on = 1; gap = 0; got = lg; next }
     !on { next }
     /^[[:space:]]*#/ || /^[[:space:]]*\|/ || /^\*\*[^*]+:\*\*/ { on = 0; next }
     /^[[:space:]]*$/ { gap = 1; next }
@@ -171,10 +177,11 @@ qa_artifact_digests() {
 #   (letters, dots, hyphens: v1.4.2, 2026.10.13, 7f3c2a1, ag-1-main); an
 #   all-digit tag of 6+ digits (no port or HH:MM is that long); an all-letter
 #   tag (app:latest, but also a skill such as mu:pause from "/mu:pause"); a
-#   short all-digit tag on a single-label name of 6+ chars (agent-web:1234, but
-#   also mac-mini:8080). Dropped: an ISO time such as 2026-10-13T14:05Z, an
-#   all-digit name, dotted hostnames, localhost, and names under 6 chars with
-#   a short numeric tag (mini:22, 14:05).
+#   short all-digit tag on a single-label name (agent:42, agent-web:1234, but
+#   also host:port such as mini:22 or mac-mini:8080: a false block that names
+#   it beats letting a short image name go unchecked). Dropped: an ISO time
+#   such as 2026-10-13T14:05Z, an all-digit name (14:05), dotted hostnames and
+#   localhost.
 qa_citable_refs() {
   local tok base tag
   while IFS= read -r tok; do
@@ -186,7 +193,7 @@ qa_citable_refs() {
     case "$tag" in *[!0-9]*) printf '%s\n' "$tok"; continue ;; esac
     [ "${#tag}" -ge 6 ] && { printf '%s\n' "$tok"; continue; }
     case "$base" in *.*|localhost) continue ;; esac
-    [ "${#base}" -ge 6 ] && printf '%s\n' "$tok"
+    printf '%s\n' "$tok"
   done <<EOF
 $(qa_artifact_refs "$1")
 EOF

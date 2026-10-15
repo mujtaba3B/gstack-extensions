@@ -97,7 +97,8 @@ fi
 # Production-QA claim (qa_artifact_engages, on the same fence-stripped text the
 # gate reads)
 # so a normal turn never pays for a network call.
-if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
+CLEAN=$(qa_strip_fences "$LAST")
+if [ "$(qa_artifact_engages "$CLEAN")" = "yes" ]; then
   PR_BODY=$( (cd "$CWD" && gh pr view --json body --jq '.body' 2>/dev/null) 2>/dev/null )
   # The whole field decides; only the copy shown in a block message is capped
   # (a 20-line cut here once left every artifact past line 20 unchecked).
@@ -106,39 +107,42 @@ if [ "$(qa_artifact_engages "$(qa_strip_fences "$LAST")")" = "yes" ]; then
   if [ -n "$PROD_ARTIFACT" ]; then
     ADECISION=$(qa_artifact_gate "$LAST" "$PROD_ARTIFACT")
     if [ "$ADECISION" = "block" ] || [ "$ADECISION" = "block-uncited" ]; then
-      AWHY=$(qa_artifact_engage_reason "$(qa_strip_fences "$LAST")")
+      AWHY=$(qa_artifact_engage_reason "$CLEAN")
       AMISSING=""
-      if printf '%s' "$(qa_strip_fences "$LAST")" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
-        AMISSING=$(qa_awaiting_missing_refs "$(qa_strip_fences "$LAST")" "$PROD_ARTIFACT" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
+      if printf '%s' "$CLEAN" | grep -qiE "$QA_AWAITING_HUMAN_RE"; then
+        AMISSING_ALL=$(qa_awaiting_missing_refs "$CLEAN" "$PROD_ARTIFACT")
+        AMISSING=$(printf '%s\n' "$AMISSING_ALL" | head -n 5 | paste -sd ',' - | sed 's/,/, /g')
+        AMORE=$(( $(printf '%s\n' "$AMISSING_ALL" | grep -c .) - 5 ))
+        if [ "$AMORE" -gt 0 ]; then AMISSING="${AMISSING} (+${AMORE} more)"; fi
+      fi
+      # The tail follows the posture: the PHASE: dev label cannot change a
+      # prod_verified result, so that turn gets the awaiting_human hint instead.
+      if [ "$AWHY" = "QA_STATUS: prod_verified" ]; then
+        ATAIL="While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
+      else
+        ATAIL="Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
       fi
       if [ "$ADECISION" = "block-uncited" ]; then
         AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA handoff (an awaiting_human handoff), engaged by: ${AWHY}
 It does not cite every production artifact your approved QA plan named. Missing: ${AMISSING}
 Plan field: ${PROD_SHOWN}
 Close the agent-runnable rows THROUGH that artifact, then restate with a plain EVIDENCE: line, outside any code fence, that names it (the human's pending CHECK is not part of the claim).
-Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
-        jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
-        exit 0
-      fi
-      # The noun phrase follows the path that decided (the awaiting_human
-      # citation rule lists what is missing; the EVIDENCE-line verdict does
-      # not); the tail follows the posture (the PHASE: dev label cannot change
-      # a prod_verified result).
-      if [ -n "$AMISSING" ]; then
-        ANAMES="This turn names the family of a planned image but not the exact ref (missing: ${AMISSING}), i.e."
+${ATAIL}"
       else
-        ANAMES="Your EVIDENCE names"
-      fi
-      if [ "$AWHY" = "QA_STATUS: prod_verified" ]; then
-        ATAIL="While a human check is pending, write awaiting_human, not a literal QA_STATUS: prod_verified."
-      else
-        ATAIL="Only if nothing from this branch is merged or deployed yet (a pre-merge handoff) is PHASE: dev the right label; relabelling a post-deploy handoff as dev is a false posture."
-      fi
-      AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
+        # The noun phrase follows the path that decided (the awaiting_human
+        # citation rule lists what is missing; the EVIDENCE-line verdict does
+        # not).
+        if [ -n "$AMISSING" ]; then
+          ANAMES="This turn names the family of a planned image but not the exact ref (missing: ${AMISSING}), i.e."
+        else
+          ANAMES="Your EVIDENCE names"
+        fi
+        AREASON="QA gate (artifact-evidence): this turn reads as a Production-QA claim (prod_verified, or an awaiting_human handoff), engaged by: ${AWHY}
 ${ANAMES} a base / upstream / proxy artifact, not the exact production artifact your approved QA plan named:
 ${PROD_SHOWN}
 Production runs a DERIVED artifact, not the upstream you exercised. This is the exact failure mode that shipped a stale per-agent image: the shared base was tested, but the per-agent image that actually runs was never rebuilt and went stale. Re-verify THROUGH the production artifact named above (the exact image digest/tag on its host / running container), then restate your posture with EVIDENCE that cites that artifact. If the plan's named artifact is itself wrong, fix it with /qa:plan and re-approve before restating your posture.
 ${ATAIL}"
+      fi
       jq -nc --arg r "$AREASON" '{decision: "block", reason: $r}'
       exit 0
     fi

@@ -219,6 +219,31 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s' "$r" | grep -qF 'write awaiting_human, not a literal'
 }
 
+@test "hook block-uncited engaged by a literal prod_verified drops the PHASE: dev relabel hint" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: dev\nQA_STATUS: prod_verified\nEVIDENCE: n/a')"
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+  r=$(echo "$output" | jq -r '.reason')
+  printf '%s' "$r" | grep -qF 'engaged by: QA_STATUS: prod_verified'
+  printf '%s' "$r" | grep -qF 'Missing: nanoclaw-agent-v2-83c915c8:ag-1-main'
+  [ "$(printf '%s\n' "$r" | grep -c 'PHASE: dev the right label')" -eq 0 ]
+  printf '%s' "$r" | grep -qF 'write awaiting_human, not a literal'
+}
+
+@test "hook: more than five missing refs are counted, not silently cut" {
+  commit_ahead
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  { printf '#!/bin/sh\ncat <<"BODY"\n**Production artifacts:**\n'
+    for i in 1 2 3 4 5 6 7; do printf -- '- `ghcr.io/acme/s%s:v1`\n' "$i"; done
+    printf 'BODY\n'; } > "$BATS_TEST_TMPDIR/bin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  run run_gate "$(printf 'Deployed.\nQA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: none')"
+  r=$(echo "$output" | jq -r '.reason')
+  printf '%s' "$r" | grep -qF 'ghcr.io/acme/s5:v1 (+2 more)'
+}
+
 @test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {
   commit_ahead
   mkdir -p "$BATS_TEST_TMPDIR/bin"

@@ -553,9 +553,9 @@ setup() {
 }
 
 @test "citable refs truth table: image refs and image-or-host tokens in, times and plain hosts out" {
-  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause'
-  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause')" ]
-  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 mini:22 14:05 2026-10-13T14:05Z 14:05pm'
+  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause agent:42 mini:22'
+  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause\nagent:42\nmini:22')" ]
+  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 14:05 2026-10-13T14:05Z 14:05pm'
   [ -z "$output" ]
 }
 
@@ -568,6 +568,17 @@ setup() {
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42')" "ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
   [ "$output" = "block-uncited" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v42, health via mac-mini:8080')" "ghcr.io/acme/agent-web:v42, health via mac-mini:8080"
+  [ "$output" = "allow" ]
+}
+
+# Value: protects=a short bare image name with a numeric tag must be cited;
+#   fails_when=qa_citable_refs drops short names again (a base-only handoff then passes); why_new=red team, cycle 14; seam=none
+@test "awaiting gate block-uncited: a short bare image name with a number tag still needs citing, inline or bulleted" {
+  for f in "**Production artifacts:** agent:42 on the mac mini" "$(printf '**Production artifacts:**\n- web:7 (per-agent image) on the mac mini')"; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran base:42 and base:7 via docker run')" "$(qa_extract_prod_artifact "$f")"
+    [ "$output" = "block-uncited" ]
+  done
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran agent:42 on the mac mini')" "$(qa_extract_prod_artifact "**Production artifacts:** agent:42 on the mac mini")"
   [ "$output" = "allow" ]
 }
 
@@ -724,12 +735,48 @@ setup() {
   [ "$output" = "allow" ]
 }
 
+# The loose numbered row is the one that needs the numbered-item rule: a first
+# item after a gap is read as the first paragraph anyway, a later one is not.
 @test "extract prod artifact: a numbered list or a first paragraph after a blank line stays in the field" {
-  for fmt in '**Production artifacts:**\n\n1. `%s` on mac-mini\n2. exercised by a live run' '**Production artifacts:**\n\nThe per-agent image `%s` on mac-mini.'; do
+  for fmt in '**Production artifacts:**\n\n1. `%s` on mac-mini\n2. exercised by a live run' '**Production artifacts:**\n\nThe per-agent image `%s` on mac-mini.' '**Production artifacts:**\n1. host is the mini\n\n2. `%s` (loose numbered list)'; do
     body=$(printf "$fmt" "$PERAGENT")
     run qa_extract_prod_artifact "$body"
     case "$output" in *"$PERAGENT"*) ;; *) echo "lost in: $fmt -> $output"; false ;; esac
   done
+}
+
+# Value: protects=only the FIRST paragraph after a gap joins the field, a second one ends it;
+#   fails_when=the plain-line branch stops setting got, so later prose is captured;
+#   why_new=the blank-line stop rows all capture a bullet first; seam=none; no_claim=none beyond protects
+@test "extract prod artifact: a second paragraph after another blank line ends the field" {
+  body=$(printf '**Production artifacts:**\n\nThe per-agent image `%s` on mac-mini.\n\nNotes: the old ghcr.io/x/other:v9 is retired.' "$PERAGENT")
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"$PERAGENT"*) ;; *) echo "got: $output"; false ;; esac
+  case "$output" in *"other:v9"*) echo "overran: $output"; false ;; *) ;; esac
+}
+
+# Value: protects=a label line that already names an artifact ends the field at a blank line before prose;
+#   fails_when=the first-paragraph-after-gap rule ignores what the label line captured (it does at 7c593f9);
+#   why_new=only bullet-first fields pin the blank-line stop; seam=none; no_claim=PR bodies with this shape exist (unit, literal body)
+# Regression (7c593f9): before it, this shape yielded only the label line and a
+# handoff citing the one planned image was allowed; now the trailing note's ref
+# is required too, so a correct awaiting_human handoff is blocked.
+@test "extract prod artifact: an inline artifact on the label line still ends the field at a blank line before prose" {
+  body=$(printf '**Production artifacts:** `ghcr.io/acme/agent-alpha:7f3c2a1` on the mini\n\nNotes: the old ghcr.io/x/other:v9 is retired.')
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"other:v9"*) echo "overran: $output"; false ;; *) ;; esac
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-alpha:7f3c2a1')" "$(qa_extract_prod_artifact "$body")"
+  [ "$output" = "allow" ]
+}
+
+# Value: protects=a label line naming only a time or other uncitable token still reads the next paragraph;
+#   fails_when=the label-line capture test drifts from qa_citable_refs (a loose name:tag shape counted 14:05); why_new=maintainability, cycle 14; seam=none
+@test "extract prod artifact: a label line naming only a time still reads the paragraph after a blank line" {
+  body=$(printf 'Production artifacts: deployed at 14:05 UTC\n\nghcr.io/acme/agent-web:v2 on the mini')
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"agent-web:v2"*) ;; *) echo "dropped: $output"; false ;; esac
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-base:v2')" "$(qa_extract_prod_artifact "$body")"
+  [ "$output" = "block-uncited" ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {
