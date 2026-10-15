@@ -264,6 +264,14 @@ stub_pr_body() { # $1 = Production artifacts value
   printf '%s\n' "$r" | grep -qx 'It does not cite every production artifact your approved QA plan named. Missing: mac-mini:8080'
 }
 
+@test "hook: an inherited GREP_OPTIONS=--color=always cannot turn a base-only claim into an allow" {
+  commit_ahead
+  stub_pr_body "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  export GREP_OPTIONS=--color=always GREP_COLOR='1;31'
+  run run_gate "$(printf 'Deployed and verified.\nQA_STATUS: prod_verified\nEVIDENCE: smoke-tested nanoclaw-agent-v2-83c915c8:latest')"
+  [ "$(echo "$output" | jq -r '.decision')" = "block" ]
+}
+
 @test "hook prefilter: a dev handoff or dev_verified never calls gh; a PHASE: prod handoff does" {
   commit_ahead
   mkdir -p "$BATS_TEST_TMPDIR/bin"

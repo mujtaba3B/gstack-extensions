@@ -838,7 +838,8 @@ setup() {
 #   blocks when bash runs in POSIX mode; fails_when=-F is dropped from the per-ref grep (-x is pinned by
 #   "extends the planned tag"), or the difference is rebuilt on process substitution, which POSIX-mode
 #   /bin/bash 3.2 disables so it fails open (the truncated row guards a pattern-file rewrite);
-#   why_new=coverage + red team, run 16; seam=none
+#   why_new=coverage + red team, run 16; seam=none; no_claim=the POSIX row bites only where /bin/bash is
+#   3.2 (macOS): Linux CI bash >= 5.1 allows <(...) in POSIX mode, so the next test is the CI-side guard
 @test "awaiting missing refs: a truncated or dot-wildcard citation does not count, even in POSIX mode" {
   run qa_awaiting_citation_verdict "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1" "- nanoclaw-agent-v2-83c915c8:ag-17769-main"
   [ "$output" = "block" ]
@@ -848,6 +849,16 @@ setup() {
   [ "$output" = "block" ]
   run env POSIXLY_CORRECT=1 /bin/bash -c '. "$1"; qa_awaiting_citation_verdict "QA_STATUS: awaiting_human done" "- ghcr.io/acme/web:v1.4.2"' _ "$BATS_TEST_DIRNAME/../scripts/qa-status-gate-lib.sh"
   [ "$output" = "block-uncited" ]
+}
+
+# Value: protects=the gate's scripts use no process substitution (POSIX-mode /bin/bash 3.2 disables it and the
+#   gate then fails open); fails_when=a rewrite reintroduces <(...) in code; why_new=the POSIX row above cannot
+#   bite on Linux CI; seam=none; no_claim=a <( inside a comment line is ignored, one inside a string is a false red
+@test "gate scripts: no process substitution outside comments (POSIX-mode bash 3.2 fails it open)" {
+  for f in "$BATS_TEST_DIRNAME/../scripts/qa-status-gate-lib.sh" "$BATS_TEST_DIRNAME/../scripts/qa-status-gate.sh"; do
+    run grep -nE '^[[:space:]]*[^#[:space:]][^#]*<\(' "$f"
+    [ "$status" -eq 1 ]
+  done
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {

@@ -18,6 +18,10 @@
 # docs/qa-status-postures.md (in this repo). Keep the details there, not here.
 
 set -u
+# The hook inherits the user's environment. macOS /usr/bin/grep still honors
+# GREP_OPTIONS, and --color=always there wraps every extracted ref in escape
+# codes so no citation ever matches (fail open), so drop grep's env knobs.
+unset GREP_OPTIONS GREP_COLOR GREP_COLORS
 
 PAYLOAD=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
