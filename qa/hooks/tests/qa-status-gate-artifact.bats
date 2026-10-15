@@ -824,6 +824,15 @@ setup() {
   [ "$output" = "block" ]
 }
 
+# Value: protects=the /qa:plan template's Production artifacts sentence names nothing the gate would require;
+#   fails_when=a template edit adds a colon-joined example (host:port) that an author keeps on the label line; why_new=maintainability, run 15; seam=none
+@test "qa-plan template: the Production artifacts sentence holds no citable ref" {
+  line=$(grep -m1 '^\*\*Production artifacts:\*\* for each Prod QA row' "$BATS_TEST_DIRNAME/../../skills/qa-plan/SKILL.md")
+  [ -n "$line" ]
+  run qa_citable_refs "$line"
+  [ -z "$output" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]

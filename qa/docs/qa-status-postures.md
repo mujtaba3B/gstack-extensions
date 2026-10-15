@@ -59,8 +59,8 @@ and passed.
   `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
   or deploy id), the EVIDENCE must cite THAT artifact (this also applies to an
   `awaiting_human` handoff unless it is plainly `PHASE: dev`). The gate rejects evidence
-  that names only a base / upstream / proxy artifact from the same image
-  family. This is incident hardening: a shared base image was once "verified"
+  that names only a base / upstream / proxy artifact from the same family
+  (an image, or any colon-joined name the field gives, such as a host:port). This is incident hardening: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
   went silently stale.
 

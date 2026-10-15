@@ -98,8 +98,10 @@ qa_gate_decision() {
 # substitution; evidence that does not reference the family at all passes. An
 # engaged awaiting_human handoff is stricter: it must cite every required ref
 # or digest of each artifact line (qa_awaiting_missing_refs), or it gets
-# `block-uncited`. Both fail open when the field is absent or names no citable
-# ref or digest.
+# `block-uncited`. The awaiting_human path fails open when the field is absent
+# or names no citable ref or digest (qa_citable_refs); the prod_verified path
+# fails open when the field is absent or has no colon-joined token or digest
+# at all (qa_artifact_refs / qa_artifact_digests).
 # Enforcement engages only when a `Production artifacts:` field is actually
 # present, so PRs without it behave exactly as before this change.
 

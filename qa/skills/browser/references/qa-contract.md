@@ -18,7 +18,7 @@ QA_STATUS: awaiting_human
 DRIVER: <roster id, usually mujtaba>
 CHECK: <the exact thing the human must do, and what they should see>
 PHASE: <dev or prod>      # only a human can do the last check; nothing failed
-EVIDENCE: <the rows you ran; for PHASE: prod, cite the exact production artifact>
+EVIDENCE: <the rows you ran; unless PHASE is plainly dev, cite the exact production artifact>
 
 QA_STATUS: blocked
 REASON: <what prevents QA right now>
