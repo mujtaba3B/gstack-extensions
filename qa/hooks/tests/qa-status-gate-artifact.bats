@@ -853,10 +853,11 @@ setup() {
 
 # Value: protects=the gate's scripts use no process substitution (POSIX-mode /bin/bash 3.2 disables it and the
 #   gate then fails open); fails_when=a rewrite reintroduces <(...) in code; why_new=the POSIX row above cannot
-#   bite on Linux CI; seam=none; no_claim=a <( inside a comment line is ignored, one inside a string is a false red
+#   bite on Linux CI; seam=none; no_claim=whole comment lines are ignored; a <( or >( anywhere else (a string,
+#   a trailing comment) is a false red, which is the safe direction
 @test "gate scripts: no process substitution outside comments (POSIX-mode bash 3.2 fails it open)" {
   for f in "$BATS_TEST_DIRNAME/../scripts/qa-status-gate-lib.sh" "$BATS_TEST_DIRNAME/../scripts/qa-status-gate.sh"; do
-    run grep -nE '^[[:space:]]*[^#[:space:]][^#]*<\(' "$f"
+    run sh -c 'grep -vE "^[[:space:]]*#" "$1" | grep -nE "[<>]\("' _ "$f"
     [ "$status" -eq 1 ]
   done
 }

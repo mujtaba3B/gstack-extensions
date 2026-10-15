@@ -19,8 +19,9 @@
 
 set -u
 # The hook inherits the user's environment. macOS /usr/bin/grep still honors
-# GREP_OPTIONS, and --color=always there wraps every extracted ref in escape
-# codes so no citation ever matches (fail open), so drop grep's env knobs.
+# GREP_OPTIONS, and --color=always there wraps grep output in escape codes,
+# which let a base-only prod_verified claim through (fail open), so drop
+# grep's env knobs.
 unset GREP_OPTIONS GREP_COLOR GREP_COLORS
 
 PAYLOAD=$(cat)
