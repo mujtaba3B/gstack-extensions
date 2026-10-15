@@ -164,7 +164,8 @@ LABELS
 
 # qa_artifact_refs / qa_artifact_digests <prod_artifact_field>  (PURE)
 #   The machine-matchable production tokens the plan named, one per line:
-#   image:tag refs (not sha256:...) and sha256 digests. URLs are stripped first
+#   every colon-joined name:tag token (image refs, host:port, skills, run ids;
+#   not sha256:...) and sha256 digests. URLs are stripped first
 #   so a "how it is exercised" URL like https://host:443/path is not read as an
 #   image:tag ref. Shared by the verdict and the awaiting_human citation rule.
 qa_artifact_refs() {
@@ -258,7 +259,10 @@ EOF
 #   -> allow|block|block-uncited  (PURE)
 #   allow when nothing is missing (qa_awaiting_missing_refs). Otherwise block
 #   if the message names a missing ref's distinctive family (6+ chars with '/'
-#   or '-', the base / proxy substitution), block-uncited if it does not.
+#   or '-', the base / proxy substitution): with another tag, path, digest or
+#   suffix (family: family/ family@ family-), or bare when the token is image-shaped (a '/'
+#   or a non-numeric tag). block-uncited otherwise, so a bare host named
+#   beside its uncited host:port reads as a missing citation.
 qa_awaiting_citation_verdict() {
   local msg="$1" field="$2" tok base missing
   missing=$(qa_awaiting_missing_refs "$msg" "$field")
@@ -268,7 +272,15 @@ qa_awaiting_citation_verdict() {
     case "$tok" in sha256:*|SHA256:*) continue ;; esac
     base="${tok%:*}"
     if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
-      case "$msg" in *"$base"*) echo block; return 0 ;; esac
+      # Another tag, path, digest or suffixed name (family-base) of the family
+      # is a substitution. A bare
+      # mention counts only for an image-shaped token (a '/' or a non-numeric
+      # tag): a bare host such as mac-mini beside an uncited mac-mini:8080 is
+      # a missing citation, not a stale image.
+      case "$msg" in *"$base:"*|*"$base/"*|*"$base@"*|*"$base-"*) echo block; return 0 ;; esac
+      case "$base:${tok##*:}" in */*:*|*:*[!0-9]*)
+        case "$msg" in *"$base"*) echo block; return 0 ;; esac ;;
+      esac
     fi
   done <<EOF
 $missing

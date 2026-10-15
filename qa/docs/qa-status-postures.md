@@ -116,8 +116,8 @@ finished: waiting on a named person for a named check.
   pairing PHASE with
   prod), the handoff is checked against the plan's `Production artifacts:`.
   Unlike `prod_verified`, which is judged on its `EVIDENCE:` line, the whole
-  message outside code fences is matched (when the field names an image ref
-  or digest): it must name the exact artifact, and a handoff naming only a
+  message outside code fences is matched (when the field names a citable ref
+  or digest, see above): it must name the exact artifact, and a handoff naming only a
   base / proxy artifact is blocked. A missing or oddly formatted
   `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
   with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a

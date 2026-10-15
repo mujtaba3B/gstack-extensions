@@ -793,6 +793,25 @@ setup() {
   case "$output" in *"agent-y:v3"*) ;; *) echo "dropped: $output"; false ;; esac
 }
 
+# Value: protects=label-line capture flags are read at each label's own index, in either order;
+#   fails_when=the flag is read from the last (or a fixed) label; why_new=testing + coverage, cycle 14 pass 3; seam=none
+@test "extract prod artifact: label lines judged on their own in the reverse order too" {
+  body=$(printf '**Production artifacts:** deployed 14:05\n\nghcr.io/acme/a:v1 here\n\n- Production artifact: ghcr.io/acme/b:v2\n\nNotes: ghcr.io/x/other:v9 retired')
+  run qa_extract_prod_artifact "$body"
+  case "$output" in *"acme/a:v1"*) ;; *) echo "dropped: $output"; false ;; esac
+  case "$output" in *"other:v9"*) echo "overran: $output"; false ;; *) ;; esac
+}
+
+# Value: protects=a bare host named beside its uncited host:port gets the missing-citation verdict, not the stale-image one;
+#   fails_when=any bare mention of a numeric-tagged family counts as a base substitution; why_new=red team, cycle 14 pass 3; seam=none
+@test "awaiting gate block-uncited: the bare host beside an uncited host:port is a missing citation, not a stale image" {
+  f='- ghcr.io/acme/agent-web:v1.4.2 on mac-mini:8080'
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v1.4.2, dashboard served from mac-mini')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran ghcr.io/acme/agent-web:v1.4.2 on mac-mini:8080')" "$f"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
