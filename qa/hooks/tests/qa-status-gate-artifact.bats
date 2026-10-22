@@ -553,9 +553,9 @@ setup() {
 }
 
 @test "citable refs truth table: image refs and image-or-host tokens in, times and plain hosts out" {
-  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause agent:42 mini:22 registry.acme.io:20261013 localhost:20261013'
-  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause\nagent:42\nmini:22\nregistry.acme.io:20261013\nlocalhost:20261013')" ]
-  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 14:05 2026-10-13T14:05Z 14:05pm'
+  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause agent:42 mini:22 registry.acme.io:20261013 localhost:20261013 registry.acme.io:123456'
+  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause\nagent:42\nmini:22\nregistry.acme.io:20261013\nlocalhost:20261013\nregistry.acme.io:123456')" ]
+  run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 localhost:65535 registry.acme.io:12345 14:05 2026-10-13T14:05Z 14:05pm'
   [ -z "$output" ]
 }
 

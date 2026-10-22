@@ -83,15 +83,16 @@ finished: waiting on a named person for a named check.
   `/mu:pause` from the desktop app after a restart). Record `prod_verified`
   after the human reports back. Also record the open check where it outlives
   this chat: a comment on the merged PR naming the open Production QA row and
-  the CHECK, or a TODO. After merge the Stop gate no longer fires on the
-  branch, so a chat line alone is easy to lose.
+  the CHECK, or a TODO. Once you are back on main nothing re-prompts for
+  the open check, so a chat line alone is easy to lose.
 - `awaiting_human` claims nothing about the pending check. Its `EVIDENCE:`
   line cites the rows the agent did run, not the human's check. A `PHASE: dev`
   handoff may omit it. A production handoff (anything not plainly
   `PHASE: dev`) must cite the exact artifact the plan's `Production
   artifacts:` names, outside any code fence, even when the human's check is
   the only row left (name the deployed artifact). When that field names a
-  citable ref or a sha256 digest, the gate blocks a handoff that does not cite
+  citable ref or a sha256 digest (12+ hex characters; a shorter digest is
+  not matched), the gate blocks a handoff that does not cite
   it as a whole token (every citable ref, when it names several), whatever its
   EVIDENCE line says. Each artifact line of the field is checked on its own:
   cite every citable ref on it, the image refs and any host or skill token
