@@ -950,6 +950,16 @@ setup() {
   [ "$output" = "allow" ]
   run pv "ran ghcr.io/other/tool:v3" "- ghcr.io/acme/agent-runner@sha256:$d"
   [ "$output" = "allow" ]
+  # A registry with a port in a digest-pinned plan keeps its stripped family.
+  run pv "ran team/agent:old" "- registry.acme.io:5000/team/agent@sha256:$d"
+  [ "$output" = "block" ]
+  run pv "ran mirror.io/team/agent:v0" "- registry.acme.io:5000/team/agent@sha256:$d"
+  [ "$output" = "block" ]
+  run pv "ran registry.acme.io:5000/team/agent@sha256:$d" "- registry.acme.io:5000/team/agent@sha256:$d"
+  [ "$output" = "allow" ]
+  # A tag-plus-digest ref adds no family from its tag.
+  run pv "restarted pod ag-1-main-7f on the mini" "- ghcr.io/acme/app:ag-1-main@sha256:$d"
+  [ "$output" = "allow" ]
   run qa_citable_refs "maintenance window 14:05/15:30 ghcr.io/acme/app:v1"
   [ "$output" = "ghcr.io/acme/app:v1" ]
 }

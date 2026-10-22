@@ -337,7 +337,9 @@ EOF
 #   yield no token and return n/a; for those the plan prose carries the
 #   discipline, not this gate. The family match is not limited to images, so
 #   a planned host:port family (mac-mini) can drive mismatch here; the
-#   awaiting_human verdict narrows that (qa_awaiting_citation_verdict).
+#   awaiting_human verdict narrows that (qa_awaiting_citation_verdict). An
+#   image pinned by digest only (repo@sha256:...) also adds its repo as a
+#   family (mismatch only, never ok).
 qa_evidence_artifact_verdict() {
   local evidence="$1" field="$2"
 
@@ -349,9 +351,12 @@ qa_evidence_artifact_verdict() {
   digests=$(qa_artifact_digests "$field")
   # An image pinned by digest only (repo@sha256:...) has no name:tag token, so
   # its repo goes into the family check as repo:@ (the tag is never read).
+  # The match must not start right after a ':' or a name character, so a
+  # name:tag@sha256 ref (whose name:tag is already in $refs) adds nothing and
+  # its tag never becomes a family.
   pinned=$(printf '%s\n' "$field" | sed -E 's#https?://[^[:space:]]*##g' \
-    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?@sha256:' \
-    | sed -E 's/@sha256:$/:@/' || true)
+    | grep -oE '(^|[^:A-Za-z0-9._/-])[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?@sha256:' \
+    | sed -E 's/^[^A-Za-z0-9]//; s/@sha256:$/:@/' || true)
 
   # 1) Evidence names the exact production artifact (full ref or digest) -> ok.
   while IFS= read -r tok; do
