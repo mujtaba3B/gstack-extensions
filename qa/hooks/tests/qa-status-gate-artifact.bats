@@ -936,6 +936,20 @@ setup() {
   [ "$output" = "allow" ]
   run qa_awaiting_citation_verdict "EVIDENCE: pulled mirror.io/myapp:v1" "- ghcr.io/myapp:v1"
   [ "$output" = "block" ]
+  run pv "deployed mirror.io/myapp@sha256:0123456789abcdef" "- ghcr.io/myapp:v1"
+  [ "$output" = "block" ]
+  run qa_awaiting_citation_verdict "EVIDENCE: ran mirror.io/myapp@sha256:0123456789abcdef" "- ghcr.io/myapp:v1"
+  [ "$output" = "block" ]
+  # A plan pinned by digest only still has a family on prod_verified.
+  d=$(printf 'a%.0s' $(seq 64)); o=$(printf 'b%.0s' $(seq 64))
+  run pv "ran ghcr.io/acme/agent-runner:latest" "- ghcr.io/acme/agent-runner@sha256:$d"
+  [ "$output" = "block" ]
+  run pv "ran ghcr.io/acme/agent-runner@sha256:$o" "- ghcr.io/acme/agent-runner@sha256:$d"
+  [ "$output" = "block" ]
+  run pv "ran ghcr.io/acme/agent-runner@sha256:$d" "- ghcr.io/acme/agent-runner@sha256:$d"
+  [ "$output" = "allow" ]
+  run pv "ran ghcr.io/other/tool:v3" "- ghcr.io/acme/agent-runner@sha256:$d"
+  [ "$output" = "allow" ]
   run qa_citable_refs "maintenance window 14:05/15:30 ghcr.io/acme/app:v1"
   [ "$output" = "ghcr.io/acme/app:v1" ]
 }

@@ -191,7 +191,8 @@ qa_artifact_digests() {
 #   short all-digit tag on a single-label name (agent:42, agent-web:1234, but
 #   also host:port such as mini:22 or mac-mini:8080: a false block that names
 #   it beats letting a short image name go unchecked). Dropped: an ISO time
-#   such as 2026-10-13T14:05Z, an all-digit name (14:05), and dotted hostnames
+#   such as 2026-10-13T14:05Z, an all-digit name or time range (14:05,
+#   14:05/15:30), and dotted hostnames
 #   or localhost with a port-length tag (the 6+-digit rule above runs first,
 #   so registry.acme.io:20261013 is kept).
 qa_citable_refs() {
@@ -283,8 +284,10 @@ qa_ref_families() {
 #   if the message names a missing ref's distinctive family (6+ chars with '/'
 #   or '-', the base / proxy substitution): with another tag, path, digest or
 #   suffix (family: family/ family@ family-), or bare when the token is image-shaped (a '/'
-#   or a non-numeric tag). block-uncited otherwise, so a bare host named
-#   beside its uncited host:port reads as a missing citation.
+#   or a non-numeric tag), or when a short registry-stripped family appears in
+#   image shape behind another registry (mirror.io/myapp:v1, x/myapp@sha256).
+#   block-uncited otherwise, so a bare host named beside its uncited
+#   host:port reads as a missing citation.
 qa_awaiting_citation_verdict() {
   local msg="$1" field="$2" tok base missing fam_i
   missing=$(qa_awaiting_missing_refs "$msg" "$field")
@@ -341,9 +344,14 @@ qa_evidence_artifact_verdict() {
   # Backward compat: no Production artifacts field -> enforcement disabled.
   [ -n "$(printf '%s' "$field" | tr -d '[:space:]')" ] || { echo "n/a"; return 0; }
 
-  local refs digests tok
+  local refs digests tok pinned
   refs=$(qa_artifact_refs "$field")
   digests=$(qa_artifact_digests "$field")
+  # An image pinned by digest only (repo@sha256:...) has no name:tag token, so
+  # its repo goes into the family check as repo:@ (the tag is never read).
+  pinned=$(printf '%s\n' "$field" | sed -E 's#https?://[^[:space:]]*##g' \
+    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?@sha256:' \
+    | sed -E 's/@sha256:$/:@/' || true)
 
   # 1) Evidence names the exact production artifact (full ref or digest) -> ok.
   while IFS= read -r tok; do
@@ -376,6 +384,7 @@ $(qa_ref_families "$tok")
 FAM
   done <<EOF
 $refs
+$pinned
 EOF
 
   # 3) Evidence does not reference the family at all -> cannot decide -> fail open.

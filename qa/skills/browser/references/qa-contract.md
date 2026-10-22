@@ -51,7 +51,8 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 
 | Posture | Stop hook | CI qa-gate |
 |---|---|---|
-| `dev_verified` + `EVIDENCE` (alias: `verified`) | passes | passes |
+| `verified` + `EVIDENCE` | passes | passes |
+| `dev_verified` + `EVIDENCE` (same posture, longer spelling) | passes | **fails** (the matcher takes only the plain `verified` keyword, so the PR body needs `QA_STATUS: verified`) |
 | `deploy_branch_for_manual_qa` + `DRIVER` + `DEPLOYED` | passes (stated) | **fails** (not an accepted keyword) |
 | `prod_verified` + `EVIDENCE` | passes | n/a (post-deploy, not a pre-merge gate) |
 | `awaiting_human` + `DRIVER` + `CHECK` + `PHASE` | passes (stated) | **fails** for `PHASE: dev` (a pending human check never greens a merge); n/a for `PHASE: prod` (post-deploy) |
