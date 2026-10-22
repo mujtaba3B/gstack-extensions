@@ -181,7 +181,9 @@ for d in $(ls -d "$CACHE"/*/ 2>/dev/null | sort -rV); do
 done
 if [ -z "$real" ] || [ ! -x "$real" ]; then
   echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
-  exit 1
+  # 2, not 1: callers read `gated` exit 1 as "repo not governed", and a missing
+  # plugin must never be relabeled that way.
+  exit 2
 fi
 exec "$real" "$@"
 SHIM
@@ -194,7 +196,7 @@ echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
 #     The patcher is idempotent; the eng plugin also runs it on every
 #     /land-and-deploy invocation, so an upgrade between installs self-heals.
 #     Exit 3 = gstack not installed (nothing to patch); 2 = an anchor moved
-#     upstream, which must be fixed in the patcher, so say so loudly.
+#     upstream (fix the patcher); 4 = could not write. Both of those are loud.
 LDP="$REPO/eng/hooks/scripts/land-and-deploy-patch.sh"
 if [[ -x "$LDP" ]]; then
   ldp_rc=0
@@ -202,8 +204,11 @@ if [[ -x "$LDP" ]]; then
   case "$ldp_rc" in
     0) echo "land-and-deploy: merge-clearance hunks current" ;;
     3) echo "land-and-deploy: gstack skill not installed; nothing to patch" ;;
-    *) echo "WARNING: could not patch gstack /land-and-deploy (rc=$ldp_rc); update the anchors in $LDP" >&2 ;;
+    2) echo "WARNING: could not patch gstack /land-and-deploy: an anchor moved upstream; update $LDP" >&2 ;;
+    *) echo "WARNING: could not patch gstack /land-and-deploy (rc=$ldp_rc); see the message above" >&2 ;;
   esac
+else
+  echo "WARNING: $LDP missing or not executable; gstack /land-and-deploy is NOT wired into merge-clearance" >&2
 fi
 
 # 5. Deploy the QA posture contract doc to its fixed path. The qa-status-gate

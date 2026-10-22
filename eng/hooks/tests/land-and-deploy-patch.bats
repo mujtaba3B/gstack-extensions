@@ -39,7 +39,7 @@ count() { grep -c "$1" "$2" || true; }
   [ "$status" -eq 0 ]
 }
 
-@test "the .tmpl source and SKILL.md are never modified" {
+@test "the .tmpl is never modified, and files without an anchor are untouched" {
   cp "$D/sections/readiness-gate.md.tmpl" "$BATS_TEST_TMPDIR/tmpl.orig"
   cp "$D/SKILL.md" "$BATS_TEST_TMPDIR/skill.orig"
   "$P" apply "$D"
@@ -61,6 +61,13 @@ count() { grep -c "$1" "$2" || true; }
   run "$P" apply "$D"
   [ "$status" -eq 2 ]
   cmp "$D/sections/merge-and-deploy.md" "$BATS_TEST_TMPDIR/md.orig"
+}
+
+@test "apply keeps the patched file's mode, and leaves no temp files" {
+  chmod 640 "$D/sections/readiness-gate.md"   # not the umask default, so a lost mode shows
+  "$P" apply "$D"
+  [ -n "$(find "$D/sections/readiness-gate.md" -perm 640)" ]
+  [ -z "$(ls "$D/sections" | grep -E '\.md\.[A-Za-z0-9]{6}')" ]
 }
 
 @test "apply is idempotent: a second run changes nothing" {
@@ -152,7 +159,30 @@ count() { grep -c "$1" "$2" || true; }
   [ "$status" -eq 0 ]
   run bash -c "printf '%s' '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"land-and-deploy\"}}' | GSTACK_LAND_DEPLOY_DIR='$BATS_TEST_TMPDIR/nope' '$P' hook"
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  # a matched invocation with no skill dir is a contradiction the agent must hear
+  case "$output" in *"was not found"*) ;; *) echo "$output"; false ;; esac
+  case "$output" in *'"decision"'*) false ;; esac
+}
+
+@test "a missing hunk text refuses (4) instead of inserting an empty block" {
+  "$P" apply "$D"
+  cp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.good"
+  PD="$BATS_TEST_TMPDIR/plugin"; mkdir -p "$PD"
+  cp -R "$BATS_TEST_DIRNAME/../scripts" "$BATS_TEST_DIRNAME/../patches" "$PD/"
+  : > "$PD/patches/land-and-deploy/hunk1-readiness.md"
+  run "$PD/scripts/land-and-deploy-patch.sh" apply "$D"
+  [ "$status" -eq 4 ]
+  cmp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.good"
+}
+
+@test "refreshing a stale block repeatedly does not accumulate blank lines" {
+  "$P" apply "$D"
+  cp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.once"
+  for i in 1 2 3; do
+    sed -i.bak 's/merge-clearance:hunk1:begin [0-9]*/merge-clearance:hunk1:begin 1/' "$D/sections/readiness-gate.md"
+    "$P" apply "$D"
+  done
+  cmp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.once"
 }
 
 # ---- merge-clearance.sh gated: the predicate both hunks key on ----------------
@@ -189,6 +219,22 @@ gated_setup() {
   run bash -c "cd '$R' && PATH='$BATS_TEST_TMPDIR/bin':\"\$PATH\" '$MC' gated"
   rm -rf "$R"
   [ "$status" -eq 0 ]
+}
+
+@test "gated: a missing or unparseable policy is an error (2), never 'not gated'" {
+  gated_setup
+  mkdir -p "$HOME/dev"
+  R=$(mktemp -d "$HOME/dev/.ldptest.XXXXXX")
+  git -C "$R" init -q
+  rm -f "$GATE_POLICY_FILE"
+  run bash -c "cd '$R' && '$MC' gated"
+  missing=$status
+  printf '{not json' > "$GATE_POLICY_FILE"
+  run bash -c "cd '$R' && '$MC' gated"
+  bad=$status
+  rm -rf "$R"
+  [ "$missing" -eq 2 ]
+  [ "$bad" -eq 2 ]
 }
 
 @test "gated: exit 1 for a repo outside the policy root, and outside any repo" {

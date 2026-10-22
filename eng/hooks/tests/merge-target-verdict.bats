@@ -97,6 +97,8 @@ MERGE_ERROR=\$($M \"\$MERGE_FLAG\" --auto --delete-branch \"\$PR_NUMBER\" --repo
 @test "unverifiable: read / for rebinding the name" {
   run v "REPO=owner/name; read -r REPO < f; $M 5 --repo \"\$REPO\""
   [ "$output" = "unverifiable:\$REPO" ]
+  run v "REPO=owner/name; for REPO in other/x; do :; done; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
 }
 
 @test "unverifiable: inline command substitution as the target" {
@@ -145,6 +147,81 @@ $M 5 --repo \"\$REPO\""
   assert_prefix "$output" "unverifiable:"
   run v "$M 5 --repo \"\${REPO:-other/x}\""
   assert_prefix "$output" "unverifiable:"
+}
+
+@test "other: a non-github.com host never equals the github.com checkout (GHE)" {
+  run v "$M 5 --repo ghe.example.com/owner/name"
+  [ "$output" = "other:ghe.example.com/owner/name" ]
+  run v "$M 5 --repo https://ghe.corp/owner/name"
+  [ "$output" = "other:ghe.corp/owner/name" ]
+  run v "$M 5 -R git@ghe.corp:owner/name.git"
+  [ "$output" = "other:ghe.corp/owner/name" ]
+}
+
+@test "same: github.com host forms (bare host, URL with userinfo, scp) fold to owner/name" {
+  run v "$M 5 --repo github.com/owner/name"
+  [ "$output" = "same" ]
+  run v "$M 5 --repo https://user@github.com/owner/name"
+  [ "$output" = "same" ]
+  run v "$M 5 --repo git@github.com:owner/name.git"
+  [ "$output" = "same" ]
+}
+
+@test "unverifiable: gh repo view value when the shell's dir may differ from WORKDIR" {
+  # a cd on a later line moves WORKDIR (sg_workdir_from_cmd) but not $REPO
+  run v "REPO=$VIEW || exit 1
+cd /some/other/repo
+$M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "REPO=$VIEW; pushd /x; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  # a quoted or $-expanded leading cd is one sg_workdir_from_cmd cannot follow
+  run v "cd \"/some/repo\" && REPO=$VIEW && $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "cd \$HOME/dev/x && REPO=$VIEW && $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "cd ~bob/x && REPO=$VIEW && $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+}
+
+@test "same: a plain or ~/ leading cd is followed, so gh repo view stays trusted" {
+  run v "cd ~/dev/x && REPO=$VIEW && $M 5 --repo \"\$REPO\""
+  [ "$output" = "same" ]
+  # a LITERAL value does not depend on the dir, so a later cd is fine for it
+  run v "REPO=owner/name; cd /x; $M 5 --repo \"\$REPO\""
+  [ "$output" = "same" ]
+}
+
+@test "other: target parsing survives extra whitespace, tabs and combined short flags" {
+  run v "$M 5 --repo  other/x"
+  [ "$output" = "other:other/x" ]
+  run v "$M 5 --repo	other/x"
+  [ "$output" = "other:other/x" ]
+  run v "$M 5 -R  other/x"
+  [ "$output" = "other:other/x" ]
+  run v "$M 5 -dR other/x"
+  [ "$output" = "other:other/x" ]
+}
+
+@test "other: a merge inside \$( ) or backticks is still read" {
+  run v "OUT=\$($M 5 --repo other/x 2>&1)"
+  [ "$output" = "other:other/x" ]
+  run v "x=\`$M 5 --repo other/x\`"
+  [ "$output" = "other:other/x" ]
+}
+
+@test "none: -R of a non-gh command (cp -R) is not a merge target" {
+  run v "cp -R a b && $M 5"
+  [ "$output" = "none" ]
+}
+
+@test "unverifiable: quote- or backslash-split names still count as a rebinding" {
+  run v "REPO=owner/name
+{ export \"RE\"\"PO=other/x\"; }
+$M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "REPO=owner/name; printf -v RE\\PO other/x; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
 }
 
 @test "empty wdrepo never yields same" {

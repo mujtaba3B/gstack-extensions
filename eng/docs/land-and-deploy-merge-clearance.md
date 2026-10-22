@@ -15,9 +15,9 @@ marker-delimited blocks, and runs from two places:
 - `bin/install` (`apply`), on every install or upgrade of this repo;
 - an eng-plugin hook on every `/land-and-deploy` invocation (Skill PreToolUse and
   a prompt starting with `/land-and-deploy`), so a gstack upgrade between installs
-  heals itself before the skill's sections are read. It never blocks; if an anchor
-  moved upstream it tells the agent (additional context) to clear by hand for that
-  run and to fix the anchor here.
+  heals itself before the skill's sections are read. It never blocks; when it
+  cannot patch (anchor moved upstream, skill dir not found, write failed) it tells
+  the agent (additional context) to clear by hand for that run and why.
 
 The hunk TEXT lives in `eng/hooks/patches/land-and-deploy/` and is the source of
 truth; edit it there and the next run refreshes every installed copy (each block
@@ -31,8 +31,9 @@ carries a checksum of its text). Never edit the installed skill by hand.
 (`3.5d-bis` is upstream's own sub-step now, hence `3.5d-clearance`.)
 
 Both hunks key on `merge-clearance.sh gated`, which asks the gate policy the same
-question `pr-merge-gate.sh` asks (exit 0 governed, 1 not, anything else is an
-error and stops). The old `test -f .merge-clearance.json` guard is gone: per-repo
+question `pr-merge-gate.sh` asks (exit 0 governed, 1 not, 2 when it cannot decide:
+no `jq`, or a missing or unparseable `~/dev/gate-policy.json`; the hunks STOP on 2
+rather than skip, because the GitHub ruleset still demands the status). The old `test -f .merge-clearance.json` guard is gone: per-repo
 markers were dropped on 2026-09-02, so with it in place the calls never ran.
 
 Verify:
@@ -57,14 +58,20 @@ It now resolves the variable from the command itself
 Step 0's `$(gh repo view --json nameWithOwner -q .nameWithOwner)`, which by
 construction names the checkout's own repo. Anything else (unassigned, a temp-env
 prefix, a conditional or piped assignment, a reassignment, another command
-substitution) is **blocked as unverifiable**, never guessed. Hunk 2 tells the skill
-to start each merge block with that line.
+substitution, eval/source, a quoted or `$` leading `cd`, or any later
+`cd`/`pushd`/`popd` that would make `gh repo view` answer for a different dir) is
+**blocked as unverifiable**, never guessed. If the checkout's own identity cannot
+be established (gh fails and there is no origin remote), a merge naming an
+explicit repo is blocked too. Hunk 2 tells the skill to start each merge block
+with that line.
 
 Why resolve in the hook rather than only change the documented call shape: the
 call shape lives in upstream text that every upgrade rewrites, while the hook ships
 with this repo. Teaching the hook the one shape the skill already uses fixes it
 whatever the upstream wording, and the fail-safe default (block when unsure) keeps
-the cross-repo guard exactly as strict as before.
+the cross-repo guard at least as strict as before: it now checks EVERY
+`--repo`/`-R`/`GH_REPO` in the command, and keeps a non-github.com host
+(`ghe.example.com/owner/name`) distinct from the checkout's `owner/name`.
 
 ## The `/land-and-deploy` sentinel makes it the SINGLE merge path (no patch needed)
 
@@ -83,7 +90,7 @@ the gate policy (`~/dev/gate-policy.json`) governs.
 
 Crucially, the sentinel needs **no patch to the upstream skill**. It is minted by
 an eng-plugin hook wired in `hooks/hooks.json`, so a `/gstack-upgrade` that clobbers
-the two hunks below cannot remove it. The clobber's only effect stays the
+the two hunks above cannot remove it. The clobber's only effect stays the
 same as before: `/land-and-deploy` would stop writing the clearance stamp (Hunk 2),
 so the merge would block on the missing stamp until the hunks are re-applied. The
 gate still fails open on its own errors (missing `jq`/`git`/`gh`); the sentinel is

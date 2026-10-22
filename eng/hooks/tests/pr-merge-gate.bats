@@ -204,6 +204,26 @@ OUT=\$($MERGE --squash --delete-branch --repo \"\$REPO\" 2>&1)"
   assert_contains "$output" 'different repo (other/x)'
 }
 
+@test "block: explicit target, gh repo view fails and no origin -> cannot identify, block" {
+  opt_in; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  BIN="$BATS_TEST_TMPDIR/bin"; mkdir -p "$BIN"
+  printf '#!/bin/sh\nexit 1\n' > "$BIN/gh"; chmod +x "$BIN/gh"
+  export PATH="$BIN:$PATH"
+  run_gate "cd $REPO && $MERGE 5 --repo owner/name"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" 'could not be identified'
+}
+
+@test "block: gh repo view fails, origin remote identifies the checkout -> other repo blocked" {
+  opt_in; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  git -C "$REPO" remote add origin https://github.com/owner/name.git
+  BIN="$BATS_TEST_TMPDIR/bin"; mkdir -p "$BIN"
+  printf '#!/bin/sh\nexit 1\n' > "$BIN/gh"; chmod +x "$BIN/gh"
+  export PATH="$BIN:$PATH"
+  run_gate "cd $REPO && $MERGE 5 --repo other/x"
+  assert_contains "$output" 'different repo (other/x)'
+}
+
 assert_contains() {  # <haystack> <needle>
   case "$1" in *"$2"*) return 0 ;; esac
   echo "assert_contains failed: wanted '$2' in: $1" >&2; return 1

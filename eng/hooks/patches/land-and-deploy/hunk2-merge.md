@@ -4,7 +4,9 @@ When the ~/dev gate policy governs this repo, `merge-clearance clear` is the
 sanctioned act that authorizes the merge: it writes the local clearance stamp AND
 posts the required `local-review/merge-clearance` GitHub status. Run it as its OWN
 Bash call immediately before each merge block below (the START `--auto` attempt and
-the DIRECT fallback), once the readback has returned START or DIRECT. Never chain it
+the DIRECT fallback), once the readback has returned START or DIRECT, from the
+PR's own checkout (`cd` into it first if the session is elsewhere: `gated` and
+`clear` act on the current directory's repo and branch). Never chain it
 into the merge command: the merge gate evaluates the whole command before any of it
 runs, so a chained clear has not written its stamp yet and the merge is refused.
 Running it this late keeps the clearance-to-merge window small (CodeRabbit can

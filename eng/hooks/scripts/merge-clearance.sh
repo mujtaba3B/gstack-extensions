@@ -74,7 +74,8 @@ case "$VERB" in check|clear|status|enable|gated) ;; *)
 usage: merge-clearance <check|clear|status|enable|gated> [options]
 
   gated (no options): exit 0 if the merge-clearance gate governs the cwd's repo
-    per the gate policy, 1 if it does not, 2 on error. What /land-and-deploy keys
+    per the gate policy, 1 if it does not, 2 on error (no jq, policy missing or
+    unparseable: a probe that cannot decide is never reported as "not gated"). What /land-and-deploy keys
     its check/clear calls on, so the skill and pr-merge-gate.sh agree on scope.
 
   check / clear / status (PR-level):
@@ -123,10 +124,18 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- gated: does the gate policy govern this checkout? -----------------------
-# Same predicate pr-merge-gate.sh uses (gp_gate_config non-zero = out of scope),
+# The same gp_gate_config verdict pr-merge-gate.sh enforces on (non-zero = out of scope),
 # answered before the gh/jq requirements so it works without network.
 if [ "$VERB" = "gated" ]; then
   command -v gp_gate_config >/dev/null 2>&1 || die "gate-policy-lib.sh not found next to this script"
+  # gp_gate_config also returns non-zero when it CANNOT decide (no jq, policy
+  # missing or unparseable) and fails open. Those are errors here, not "not
+  # gated": a skill that read them as "skip" would never post the required
+  # GitHub status the branch ruleset still demands.
+  need jq
+  GP_FILE=$(gp_policy_file)
+  [ -f "$GP_FILE" ] || die "gate policy missing: $GP_FILE (cannot tell whether this repo is gated)"
+  jq -e 'type == "object"' "$GP_FILE" >/dev/null 2>&1 || die "gate policy unparseable: $GP_FILE"
   TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not gated (not a git checkout)"; exit 1; }
   if gp_gate_config "$TOP" merge-clearance >/dev/null 2>&1; then
     echo "gated"; exit 0

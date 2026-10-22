@@ -83,11 +83,28 @@ MARKER=$(gp_gate_config "$TOP" merge-clearance) || exit 0
 # A target written as a shell variable (`--repo "$REPO"`, the shape /land-and-deploy
 # itself emits) is resolved by sg_merge_target_verdict from the command text: it
 # passes only when the same command pins the variable to this repo, and is BLOCKED
-# as unverifiable otherwise. It used to be compared literally ("$REPO" != owner/name),
-# which refused the skill's own merge.
+# otherwise (as a different repo, or as unverifiable). It used to be compared
+# literally ("$REPO" != owner/name), which refused the skill's own merge.
+# First call: a cheap "any explicit target?" probe (an empty wdrepo can never
+# yield "same"), so the common bare merge never pays for `gh repo view`.
+#
+# This guard does NOT fail open: once a target is named, a checkout whose own
+# identity cannot be established (gh down or unauthenticated, AND no origin
+# remote) is blocked, because "cannot tell" here would mean judging a possibly
+# foreign merge by this checkout's stamp. gh's answer wins (it resolves the same
+# default repo `gh repo view` does inside the command); origin is the offline
+# fallback.
 TVERDICT=$(sg_merge_target_verdict "$CMD" "")
-if [ "$TVERDICT" != "none" ] && command -v gh >/dev/null 2>&1; then
-  WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+if [ "$TVERDICT" != "none" ]; then
+  WDREPO=""
+  command -v gh >/dev/null 2>&1 \
+    && WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+  [ -n "$WDREPO" ] || WDREPO=$(sg_norm_repo "$(git -C "$WORKDIR" remote get-url origin 2>/dev/null)")
+  if [ -z "$WDREPO" ]; then
+    REASON="Merge gate: this command names an explicit repo (--repo/-R/GH_REPO), but this checkout's own repo could not be identified (gh repo view failed and there is no origin remote), so the gate cannot tell whether the merge targets it. Fix gh auth (gh auth status) or merge without an explicit repo from inside the PR's checkout."
+    jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+    exit 0
+  fi
   if [ -n "$WDREPO" ]; then
     TVERDICT=$(sg_merge_target_verdict "$CMD" "$WDREPO")
     case "$TVERDICT" in
