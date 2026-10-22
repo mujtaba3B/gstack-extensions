@@ -106,7 +106,8 @@ finished: waiting on a named person for a named check.
   build of the same path does not count), a host:port on a single-label host
   (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
   run id (run:4567). Dropped, so never required: ISO times
-  (2026-10-13T14:05Z), all-digit names (14:05), and dotted hostnames
+  (2026-10-13T14:05Z), all-digit names and time ranges (14:05, 14:05/15:30),
+  and dotted hostnames
   (sms-hero.example.com:443) or localhost with a port-length tag (under 6
   digits); an all-digit tag of 6+ digits is kept on any name
   (registry.acme.io:20261013). A dotted image name with a short

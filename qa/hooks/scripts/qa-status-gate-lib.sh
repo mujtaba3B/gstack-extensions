@@ -200,7 +200,7 @@ qa_citable_refs() {
     [ -n "$tok" ] || continue
     base="${tok%:*}"; tag="${tok##*:}"
     case "$base" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) continue ;; esac
-    case "$base" in *[!0-9]*) ;; *) continue ;; esac
+    case "$base" in *[!0-9:/]*) ;; *) continue ;; esac
     case "$base" in */*) printf '%s\n' "$tok"; continue ;; esac
     case "$tag" in *[!0-9]*) printf '%s\n' "$tok"; continue ;; esac
     [ "${#tag}" -ge 6 ] && { printf '%s\n' "$tok"; continue; }
@@ -267,6 +267,9 @@ EOF
 #   localhost), the repo path without it. A same-path image from another
 #   registry or a local build (localhost:5000/team/agent) is then the same
 #   family as registry.acme.io:5000/team/agent, so it reads as a substitution.
+#   Callers match a distinctive family (6+ chars with '/' or '-') anywhere;
+#   a short stripped name (myapp) only in image shape behind another
+#   registry (mirror.io/myapp:v1, x/myapp@sha256), so prose cannot trip it.
 qa_ref_families() {
   local base="${1%:*}" rp
   printf '%s\n' "$base"
@@ -283,13 +286,18 @@ qa_ref_families() {
 #   or a non-numeric tag). block-uncited otherwise, so a bare host named
 #   beside its uncited host:port reads as a missing citation.
 qa_awaiting_citation_verdict() {
-  local msg="$1" field="$2" tok base missing
+  local msg="$1" field="$2" tok base missing fam_i
   missing=$(qa_awaiting_missing_refs "$msg" "$field")
   [ -n "$missing" ] || { echo allow; return 0; }
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     case "$tok" in sha256:*|SHA256:*) continue ;; esac
+    fam_i=0
     while IFS= read -r base; do
+      fam_i=$((fam_i + 1))
+      if [ "$fam_i" -gt 1 ]; then
+        case "$msg" in */"$base":*|*/"$base"@*) echo block; return 0 ;; esac
+      fi
       if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
         # Another tag, path, digest or suffixed name (family-base) of the family
         # is a substitution. A bare
@@ -313,8 +321,9 @@ EOF
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
 #   Echo one of:
 #     ok       -> evidence names the exact production artifact the plan named.
-#     mismatch -> evidence references that artifact's image FAMILY (qa_ref_families: the base
-#                 before the tag) but NOT the exact ref -> a base/proxy
+#     mismatch -> evidence references that artifact's image FAMILY (qa_ref_families:
+#                 the base before the tag, and the repo path without a
+#                 registry segment) but NOT the exact ref -> a base/proxy
 #                 substitution. THE ONLY BLOCKING VERDICT.
 #     n/a      -> enforcement does not apply / cannot be decided -> fail open:
 #                 no field, no machine-matchable token in the field, or the
@@ -345,16 +354,22 @@ $refs
 $digests
 EOF
 
-  # 2) Evidence references a ref's image FAMILY (base before the tag) but not the
-  #    exact ref -> base/proxy substitution -> mismatch. Only a DISTINCTIVE base
-  #    (length >= 6 AND containing '-' or '/') counts, so generic word:word prose
-  #    cannot trigger a block.
-  local base
+  # 2) Evidence references a ref's image FAMILY (qa_ref_families) but not the
+  #    exact ref -> base/proxy substitution -> mismatch. A DISTINCTIVE family
+  #    (length >= 6 AND containing '-' or '/') counts anywhere, so generic
+  #    word:word prose cannot trigger a block; a short registry-stripped name
+  #    counts only in image shape behind another registry.
+  local base fam_i
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
+    fam_i=0
     while IFS= read -r base; do
+      fam_i=$((fam_i + 1))
       if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
         case "$evidence" in *"$base"*) echo "mismatch"; return 0 ;; esac
+      fi
+      if [ "$fam_i" -gt 1 ]; then
+        case "$evidence" in */"$base":*|*/"$base"@*) echo "mismatch"; return 0 ;; esac
       fi
     done <<FAM
 $(qa_ref_families "$tok")

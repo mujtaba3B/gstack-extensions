@@ -910,6 +910,36 @@ setup() {
   [ "$output" = "block" ]
 }
 
+# Value: protects=registry detection in qa_ref_families (localhost with no port, a dotless registry:port, and
+#   a plain org segment that is NOT a registry), the short-name image-shape rule, the distinctive-length guard,
+#   and time ranges staying uncitable; fails_when=any branch of the registry predicate, the length guard or the
+#   image-shape rule drifts (each fails open or blocks unrelated prose); why_new=coverage + red team, run 18 pass 3; seam=none
+@test "artifact families: registry detection, short names in image shape, and prose that must not block" {
+  run qa_ref_families "acme/agent-web:v2"
+  [ "$output" = "acme/agent-web" ]
+  run qa_ref_families "localhost/team/agent:v1"
+  [ "$output" = "$(printf 'localhost/team/agent\nteam/agent')" ]
+  pv() { qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: %s' "$1")" "$2"; }
+  run pv "deployed team/agent:old" "- localhost/team/agent:v1"
+  [ "$output" = "block" ]
+  run pv "deployed localhost:5000/team/agent:old" "- registry:5000/team/agent:v1"
+  [ "$output" = "block" ]
+  run pv "pulled mirror.io/myapp:v1" "- ghcr.io/myapp:v1"
+  [ "$output" = "block" ]
+  run pv "deployed localhost:5000/agent:v0" "- registry.acme.io:5000/agent:v1"
+  [ "$output" = "block" ]
+  run pv "deployed agent-web-proxy:v9" "- acme/agent-web:v2"
+  [ "$output" = "allow" ]
+  run pv "built for linux/amd64 and ran it" "- registry:5000/x/a:v1"
+  [ "$output" = "allow" ]
+  run pv "restarted the app on the host" "- org.io/app:v2"
+  [ "$output" = "allow" ]
+  run qa_awaiting_citation_verdict "EVIDENCE: pulled mirror.io/myapp:v1" "- ghcr.io/myapp:v1"
+  [ "$output" = "block" ]
+  run qa_citable_refs "maintenance window 14:05/15:30 ghcr.io/acme/app:v1"
+  [ "$output" = "ghcr.io/acme/app:v1" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
