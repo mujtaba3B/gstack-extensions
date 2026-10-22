@@ -144,3 +144,70 @@ ld_sentinel() { printf '{"set_at_epoch":%s,"ttl_seconds":1800,"repo":"owner/name
   [ "$status" -eq 0 ]
   [[ "$output" == *'"decision":"block"'* ]]
 }
+
+# ---- --repo "$VAR" resolution (sg_merge_target_verdict) ----------------------
+# /land-and-deploy's own merge blocks pass `--repo "$REPO"`. The gate used to
+# compare that text literally and refuse it as "a different repo ($REPO)"
+# (landing mujtaba3B/claude-mods#1, 2026-10-22). gh is stubbed so the checkout
+# reports owner/name; the payload is built with jq because the commands carry
+# quotes. The merge verb is assembled from parts so this file's text never sits
+# at command position for the live gate.
+gh_stub() {
+  BIN="$BATS_TEST_TMPDIR/bin"; mkdir -p "$BIN"
+  cat > "$BIN/gh" <<'STUB'
+#!/bin/bash
+case "$1 $2" in
+  "repo view") echo "owner/name" ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$BIN/gh"
+  export PATH="$BIN:$PATH"
+}
+run_gate() { run bash -c "jq -nc --arg c \"\$1\" '{tool_name:\"Bash\",tool_input:{command:\$c}}' | bash '$GATE'" _ "$1"; }
+MERGE="gh pr ""merge"
+
+@test "allow: Step 4 shape (REPO from gh repo view, --repo \"\$REPO\") with stamp + sentinel" {
+  opt_in; gh_stub; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  run_gate "cd $REPO && REPO=\$(gh repo view --json nameWithOwner -q .nameWithOwner) || exit 1
+OUT=\$($MERGE --squash --delete-branch --repo \"\$REPO\" 2>&1)"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "block: Step 4 shape without stamp blocks on clearance, not on the repo" {
+  opt_in; gh_stub
+  run_gate "cd $REPO && REPO=\$(gh repo view --json nameWithOwner -q .nameWithOwner) && $MERGE --repo \"\$REPO\""
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" 'no valid merge-clearance'
+  assert_missing "$output" 'different repo'
+}
+
+@test "block: --repo \"\$REPO\" with no in-command assignment is unverifiable" {
+  opt_in; gh_stub; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  run_gate "cd $REPO && $MERGE --repo \"\$REPO\""
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" 'cannot verify'
+}
+
+@test "block: a literal other repo still blocks even with a valid local clearance" {
+  opt_in; gh_stub; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  run_gate "cd $REPO && $MERGE 5 --repo other/x"
+  assert_contains "$output" '"decision":"block"'
+  assert_contains "$output" 'different repo (other/x)'
+}
+
+@test "block: REPO assigned to another repo then --repo \"\$REPO\"" {
+  opt_in; gh_stub; stamp "$HEAD" "$NOW"; ld_sentinel "$HEAD" "$NOW"
+  run_gate "cd $REPO && REPO=other/x && $MERGE --repo \"\$REPO\""
+  assert_contains "$output" 'different repo (other/x)'
+}
+
+assert_contains() {  # <haystack> <needle>
+  case "$1" in *"$2"*) return 0 ;; esac
+  echo "assert_contains failed: wanted '$2' in: $1" >&2; return 1
+}
+assert_missing() {  # <haystack> <needle-that-must-not-appear>
+  case "$1" in *"$2"*) echo "assert_missing failed: unwanted '$2' in: $1" >&2; return 1 ;; esac
+  return 0
+}

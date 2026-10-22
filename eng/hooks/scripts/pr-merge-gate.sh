@@ -79,15 +79,29 @@ MARKER=$(gp_gate_config "$TOP" merge-clearance) || exit 0
 # clearance for a repo we do not have checked out, so block and point at the
 # sanctioned path. Only runs when such a flag is present, so the common case pays
 # no extra cost.
-TARGETREPO=$(printf '%s' "$CMD" | grep -oE '(--repo[ =]|[[:space:]]-R[ =])[^[:space:]]+' | head -1 | sed -E 's/.*[ =]//')
-[ -z "$TARGETREPO" ] && TARGETREPO=$(printf '%s' "$CMD" | grep -oE 'GH_REPO=[^[:space:]]+' | head -1 | sed 's/GH_REPO=//')
-if [ -n "$TARGETREPO" ] && command -v gh >/dev/null 2>&1; then
+#
+# A target written as a shell variable (`--repo "$REPO"`, the shape /land-and-deploy
+# itself emits) is resolved by sg_merge_target_verdict from the command text: it
+# passes only when the same command pins the variable to this repo, and is BLOCKED
+# as unverifiable otherwise. It used to be compared literally ("$REPO" != owner/name),
+# which refused the skill's own merge.
+TVERDICT=$(sg_merge_target_verdict "$CMD" "")
+if [ "$TVERDICT" != "none" ] && command -v gh >/dev/null 2>&1; then
   WDREPO=$(cd "$WORKDIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
-  TNORM=$(printf '%s' "$TARGETREPO" | sed -E 's#^https?://[^/]+/##; s#\.git$##')
-  if [ -n "$WDREPO" ] && [ "$TNORM" != "$WDREPO" ]; then
-    REASON="Merge gate: this command targets a different repo ($TNORM) via --repo/-R/GH_REPO from inside an opted-in checkout ($WDREPO). The local clearance gate can only validate a stamp for the repo you are in, so it refuses rather than mis-evaluate. Merge from a checkout of $TNORM (its clearance gets validated there), or run /land-and-deploy in that repo."
-    jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
-    exit 0
+  if [ -n "$WDREPO" ]; then
+    TVERDICT=$(sg_merge_target_verdict "$CMD" "$WDREPO")
+    case "$TVERDICT" in
+      other:*)
+        TNORM=${TVERDICT#other:}
+        REASON="Merge gate: this command targets a different repo ($TNORM) via --repo/-R/GH_REPO from inside an opted-in checkout ($WDREPO). The local clearance gate can only validate a stamp for the repo you are in, so it refuses rather than mis-evaluate. Merge from a checkout of $TNORM (its clearance gets validated there), or run /land-and-deploy in that repo."
+        jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+        exit 0 ;;
+      unverifiable:*)
+        REF=${TVERDICT#unverifiable:}
+        REASON="Merge gate: cannot verify which repo '$REF' names. The hook reads the command text and shell variables do not persist between Bash calls, so it only trusts a variable assigned in this SAME command as its first statement (after an optional leading cd ... &&): REPO=\$(gh repo view --json nameWithOwner -q .nameWithOwner) || exit 1, or REPO=owner/name. Start the merge command with that line, or write the literal --repo $WDREPO."
+        jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+        exit 0 ;;
+    esac
   fi
 fi
 
@@ -126,7 +140,7 @@ NOW=$(date +%s)
 STAMP=$(cat "$GITDIR/merge-clearance-head" 2>/dev/null || echo "")
 VERDICT=$(mc_stamp_valid "$STAMP" "$PRHEAD" "$NOW" 900)
 if [ "$VERDICT" != "valid" ]; then
-  REASON="Merge gate: no valid merge-clearance for this PR HEAD (${PRHEAD:-unknown}) [${VERDICT}]. This repo merges ONLY through /land-and-deploy: it runs the full pre-merge gauntlet (CodeRabbit resolved + CI green + local /review + QA), writes the clearance stamp, posts the required GitHub check, and then deploys. Run /land-and-deploy. A stale-head/expired verdict means the clearance no longer matches the current HEAD or its TTL lapsed; re-run /land-and-deploy on the current HEAD."
+  REASON="Merge gate: no valid merge-clearance for this PR HEAD (${PRHEAD:-unknown}) [${VERDICT}]. This repo merges ONLY through /land-and-deploy: it runs the full pre-merge gauntlet (CodeRabbit resolved + CI green + local /review + QA), writes the clearance stamp, posts the required GitHub check, and then deploys. Run /land-and-deploy. A stale-head/expired verdict means the clearance no longer matches the current HEAD or its TTL lapsed; re-run /land-and-deploy on the current HEAD. If /land-and-deploy ran but never called merge-clearance, a gstack upgrade dropped its patch: run the eng plugin's land-and-deploy-patch.sh apply (bin/install does it too)."
   jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
   exit 0
 fi

@@ -1,22 +1,70 @@
 # gstack patch: wire `/land-and-deploy` into the merge-clearance gate
 
 `land-and-deploy` lives in the upstream `garrytan/gstack` clone at
-`~/.claude/skills/gstack/land-and-deploy/SKILL.md`, so `/gstack-upgrade` (or any
-`git pull` there) can clobber the two small insertions below. This file is the
-re-appliable record. After an upgrade, if `merge-clearance` calls are gone from
-that SKILL.md, re-apply both hunks.
+`~/.claude/skills/gstack/land-and-deploy/` (since mid-2026 a `SKILL.md` skeleton
+plus generated `sections/*.md`), so `/gstack-upgrade` rewrites it and drops the two
+small insertions that make it call merge-clearance. That has happened at least
+twice; the last time (found 2026-10-22 landing mujtaba3B/claude-mods#1) the
+required `local-review/merge-clearance` status was never posted and the merge had
+to be cleared by hand.
 
-The heavy logic lives in the eng plugin (`eng/hooks/scripts/merge-clearance.sh`,
-`eng/hooks/scripts/merge-clearance-lib.sh`, `eng/hooks/scripts/pr-merge-gate.sh`),
-reached through the stable shim `~/.claude/scripts/merge-clearance.sh` that
-`bin/install` writes, so these SKILL.md edits are intentionally tiny - only the
-two call sites change.
+**The patch is now applied by code, not by hand.**
+`eng/hooks/scripts/land-and-deploy-patch.sh` inserts the two hunks as
+marker-delimited blocks, and runs from two places:
 
-Verify whether the patch is present:
+- `bin/install` (`apply`), on every install or upgrade of this repo;
+- an eng-plugin hook on every `/land-and-deploy` invocation (Skill PreToolUse and
+  a prompt starting with `/land-and-deploy`), so a gstack upgrade between installs
+  heals itself before the skill's sections are read. It never blocks; if an anchor
+  moved upstream it tells the agent (additional context) to clear by hand for that
+  run and to fix the anchor here.
+
+The hunk TEXT lives in `eng/hooks/patches/land-and-deploy/` and is the source of
+truth; edit it there and the next run refreshes every installed copy (each block
+carries a checksum of its text). Never edit the installed skill by hand.
+
+| Hunk | Text | Inserted before |
+|------|------|-----------------|
+| 1, `### 3.5d-clearance` (read-only `merge-clearance check`) | `hunk1-readiness.md` | the line `### 3.5e...` (readiness report), wherever it lives |
+| 2, `### 4-pre` (`merge-clearance clear` before each merge block) | `hunk2-merge.md` | the first `### ` heading after `## Step 4...` |
+
+(`3.5d-bis` is upstream's own sub-step now, hence `3.5d-clearance`.)
+
+Both hunks key on `merge-clearance.sh gated`, which asks the gate policy the same
+question `pr-merge-gate.sh` asks (exit 0 governed, 1 not, anything else is an
+error and stops). The old `test -f .merge-clearance.json` guard is gone: per-repo
+markers were dropped on 2026-09-02, so with it in place the calls never ran.
+
+Verify:
 
 ```bash
-grep -c 'merge-clearance.sh' ~/.claude/skills/gstack/land-and-deploy/SKILL.md   # expect 6
+~/dev/tooling/gstack-extensions/eng/hooks/scripts/land-and-deploy-patch.sh check
+# hunk1: current (...readiness-gate.md)
+# hunk2: current (...merge-and-deploy.md)     exit 0; 1 = missing/stale, 2 = anchor moved
 ```
+
+## `--repo "$REPO"` and the merge gate
+
+The skill's merge blocks pass `--repo "$REPO"`. `pr-merge-gate.sh` reads the
+command TEXT, and shell variables do not persist between Bash calls, so it cannot
+know what `$REPO` will expand to. It used to compare the literal text and refuse
+the skill's own merge as "a different repo ($REPO)".
+
+It now resolves the variable from the command itself
+(`sg_merge_target_verdict` / `sg_resolve_repo_ref` in `ship-gate-repo-lib.sh`):
+`$REPO` is trusted only when the same command assigns it as its FIRST statement
+(after an optional leading `cd <dir> &&`), either to a literal `owner/name` or to
+Step 0's `$(gh repo view --json nameWithOwner -q .nameWithOwner)`, which by
+construction names the checkout's own repo. Anything else (unassigned, a temp-env
+prefix, a conditional or piped assignment, a reassignment, another command
+substitution) is **blocked as unverifiable**, never guessed. Hunk 2 tells the skill
+to start each merge block with that line.
+
+Why resolve in the hook rather than only change the documented call shape: the
+call shape lives in upstream text that every upgrade rewrites, while the hook ships
+with this repo. Teaching the hook the one shape the skill already uses fixes it
+whatever the upstream wording, and the fail-safe default (block when unsure) keeps
+the cross-repo guard exactly as strict as before.
 
 ## The `/land-and-deploy` sentinel makes it the SINGLE merge path (no patch needed)
 
@@ -31,17 +79,17 @@ starting with `/land-and-deploy`), and `pr-merge-gate.sh` now blocks a bare
 `gh pr merge` unless that sentinel is present, fresh, and bound to this PR's HEAD.
 A manual `merge-clearance clear` followed by `gh pr merge` no longer merges: it has
 the stamp but not the sentinel. This is **default-on fleet-wide** in every repo
-carrying a `.merge-clearance.json` marker.
+the gate policy (`~/dev/gate-policy.json`) governs.
 
 Crucially, the sentinel needs **no patch to the upstream skill**. It is minted by
 an eng-plugin hook wired in `hooks/hooks.json`, so a `/gstack-upgrade` that clobbers
-the two SKILL.md hunks above cannot remove it. The clobber's only effect stays the
+the two hunks below cannot remove it. The clobber's only effect stays the
 same as before: `/land-and-deploy` would stop writing the clearance stamp (Hunk 2),
 so the merge would block on the missing stamp until the hunks are re-applied. The
 gate still fails open on its own errors (missing `jq`/`git`/`gh`); the sentinel is
 target-bound (repo + HEAD sha + PR number when resolvable) and lives per-worktree
 in `<gitdir>/land-deploy-clearance`. A generous default TTL (1800s, override via
-`ld_sentinel_ttl_seconds` in the marker) covers long CI / merge-queue waits, which
+`ld_sentinel_ttl_seconds` in the gate policy) covers long CI / merge-queue waits, which
 is safe because the binding is to a specific commit, not just freshness.
 
 ### Threat model and limitations (read before trusting it)
@@ -87,69 +135,3 @@ jq -r '.hooks.PreToolUse[].hooks[].command' \
   ~/.claude/plugins/cache/gstack-extensions/eng/*/hooks/hooks.json | grep -c land-deploy-sentinel
 # expect >= 1
 ```
-
-## Hunk 1 - read-only check inside the readiness gate (Step 3.5)
-
-Anchor: the line `### 3.5e: Readiness report and confirmation`, preceded by
-`If only docs changed (no code): skip this check.`. Insert a new sub-step
-`### 3.5d-bis` immediately before `### 3.5e`:
-
-````markdown
-### 3.5d-bis: Merge-clearance machine check (CodeRabbit + CI + review + QA)
-
-If `~/.claude/scripts/merge-clearance.sh` exists AND this repo carries a
-`.merge-clearance.json` marker at its root, run the clearance checker. It is the
-same objective gauntlet the local merge gate and the GitHub `local-review/merge-clearance`
-required check enforce. This call is READ-ONLY - it does not write the stamp yet.
-
-```bash
-if test -f ~/.claude/scripts/merge-clearance.sh && test -f "$(git rev-parse --show-toplevel)/.merge-clearance.json"; then
-  ~/.claude/scripts/merge-clearance.sh check 2>&1
-else
-  echo "merge-clearance gate not active for this repo (skipping)"
-fi
-```
-
-(The `if` form matters: only the two `test -f` probes may downgrade to
-"not active". A failing `check` run, including a shim that cannot resolve an
-installed eng plugin copy, must surface as a failure, never be relabeled
-"not active".)
-
-Include its rendered checklist verbatim in the readiness report below. A **NOT
-CLEAR** verdict for CodeRabbit (unresolved threads / changes requested / still
-reviewing) or CI (not green) is a HARD BLOCKER: do not merge until it clears,
-regardless of the user's confidence. (If the gate is not active for this repo,
-skip this and rely on the existing readiness checks.)
-````
-
-## Hunk 2 - write the clearance immediately before the merge (Step 4)
-
-Anchor: in `## Step 4: Merge the PR`, between the paragraph
-`Record the start timestamp ... for the deploy report.` and
-`Try auto-merge first (respects repo merge settings and merge queues):`. Insert a
-new sub-step `### 4-pre` there:
-
-````markdown
-### 4-pre: Write the merge clearance (stamp + required GitHub check)
-
-If the merge-clearance gate is active for this repo (the `.merge-clearance.json`
-marker exists and `~/.claude/scripts/merge-clearance.sh` is present), this is the
-sanctioned act that authorizes the merge. It writes the local clearance stamp AND
-posts the required `local-review/merge-clearance` GitHub status. Run it as LATE as
-possible (right here, immediately before merging) so the clearance-to-merge
-window stays small (CodeRabbit can post a new comment after we clear without HEAD
-changing).
-
-```bash
-if test -f ~/.claude/scripts/merge-clearance.sh && test -f "$(git rev-parse --show-toplevel)/.merge-clearance.json"; then
-  ~/.claude/scripts/merge-clearance.sh clear 2>&1
-fi
-```
-
-If it exits non-zero, it is REFUSING to clear (CodeRabbit unresolved, CI not
-green, /review stale, or QA boxes unchecked). **STOP.** Show the checklist, fix
-the blocker, and re-run /land-and-deploy. Do NOT attempt `gh pr merge` - the local
-gate and the GitHub required check will both reject it anyway. Only when
-`merge-clearance clear` succeeds (or the gate is not active for this repo) continue
-to the merge below.
-````

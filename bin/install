@@ -188,6 +188,24 @@ SHIM
 chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
 echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
 
+# 4b. Re-wire the gstack /land-and-deploy skill into the merge-clearance gate.
+#     /gstack-upgrade rewrites that skill and has twice dropped its two
+#     merge-clearance call sites (eng/docs/land-and-deploy-merge-clearance.md).
+#     The patcher is idempotent; the eng plugin also runs it on every
+#     /land-and-deploy invocation, so an upgrade between installs self-heals.
+#     Exit 3 = gstack not installed (nothing to patch); 2 = an anchor moved
+#     upstream, which must be fixed in the patcher, so say so loudly.
+LDP="$REPO/eng/hooks/scripts/land-and-deploy-patch.sh"
+if [[ -x "$LDP" ]]; then
+  ldp_rc=0
+  "$LDP" apply || ldp_rc=$?
+  case "$ldp_rc" in
+    0) echo "land-and-deploy: merge-clearance hunks current" ;;
+    3) echo "land-and-deploy: gstack skill not installed; nothing to patch" ;;
+    *) echo "WARNING: could not patch gstack /land-and-deploy (rc=$ldp_rc); update the anchors in $LDP" >&2 ;;
+  esac
+fi
+
 # 5. Deploy the QA posture contract doc to its fixed path. The qa-status-gate
 #    Stop hook's block message points agents at ~/.claude/docs/qa-status-postures.md
 #    (a path baked into the ported script), so keep that path valid from this
