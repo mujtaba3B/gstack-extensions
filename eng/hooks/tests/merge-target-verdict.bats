@@ -152,10 +152,10 @@ $M 5 --repo \"\$REPO\""
 @test "other: a non-github.com host never equals the github.com checkout (GHE)" {
   run v "$M 5 --repo ghe.example.com/owner/name"
   [ "$output" = "other:ghe.example.com/owner/name" ]
-  run v "$M 5 --repo https://ghe.corp/owner/name"
-  [ "$output" = "other:ghe.corp/owner/name" ]
-  run v "$M 5 -R git@ghe.corp:owner/name.git"
-  [ "$output" = "other:ghe.corp/owner/name" ]
+  run v "$M 5 --repo https://ghe.example.org/owner/name"
+  [ "$output" = "other:ghe.example.org/owner/name" ]
+  run v "$M 5 -R git@ghe.example.org:owner/name.git"
+  [ "$output" = "other:ghe.example.org/owner/name" ]
 }
 
 @test "same: github.com host forms (bare host, URL with userinfo, scp) fold to owner/name" {
@@ -208,6 +208,15 @@ $M 5 --repo \"\$REPO\""
   [ "$output" = "other:other/x" ]
   run v "x=\`$M 5 --repo other/x\`"
   [ "$output" = "other:other/x" ]
+}
+
+@test "other: a --repo on a backslash-continued line still belongs to the merge" {
+  run v "$M 5 \\
+  --repo other/x --squash"
+  [ "$output" = "other:other/x" ]
+  run v "REPO=owner/name; $M 5 \\
+  -R \"\$REPO\""
+  [ "$output" = "same" ]
 }
 
 @test "none: -R of a non-gh command (cp -R) is not a merge target" {

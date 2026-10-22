@@ -237,6 +237,9 @@ sg_qualified_repo() {
 #   An empty <wdrepo> never yields "same".
 sg_merge_target_verdict() {
   local cmd="$1" wd targets envt t res
+  # Join backslash-newline continuations first, as the shell does, so a flag on a
+  # continued line still belongs to its gh invocation.
+  cmd=${cmd//$'\\\n'/ }
   wd=$(sg_norm_repo "$2")
   targets=$(printf '%s\n' "$cmd" \
     | tr ';&|()' '\n\n\n\n\n' \
