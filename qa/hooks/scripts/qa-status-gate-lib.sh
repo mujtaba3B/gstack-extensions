@@ -276,6 +276,9 @@ qa_ref_families() {
   printf '%s\n' "$base"
   rp=$(printf '%s' "$base" | sed -E 's#^([^/]*[.:][^/]*|localhost)/##')
   [ "$rp" = "$base" ] || printf '%s\n' "$rp"
+  # Docker Hub's implicit library/ prefix: docker.io/library/nginx-agent (or
+  # library/nginx-agent) is also run as plain nginx-agent.
+  case "$rp" in library/?*) printf '%s\n' "${rp#library/}" ;; esac
 }
 
 # qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>

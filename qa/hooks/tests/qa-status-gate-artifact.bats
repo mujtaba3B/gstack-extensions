@@ -957,6 +957,23 @@ setup() {
   [ "$output" = "block" ]
   run pv "ran registry.acme.io:5000/team/agent@sha256:$d" "- registry.acme.io:5000/team/agent@sha256:$d"
   [ "$output" = "allow" ]
+  # A pin at the very start of a field line, and one inside backticks with no
+  # registry segment, still add the repo as a family.
+  run pv "ran ghcr.io/acme/agent-runner:latest" "ghcr.io/acme/agent-runner@sha256:$d"
+  [ "$output" = "block" ]
+  run pv "ran acme/agent-runner:v0" "- \`acme/agent-runner@sha256:$d\` on the mini"
+  [ "$output" = "block" ]
+  # Docker Hub's implicit library/ prefix: the short name is the same family.
+  run qa_ref_families "docker.io/library/nginx-agent:1.3"
+  [ "$output" = "$(printf 'docker.io/library/nginx-agent\nlibrary/nginx-agent\nnginx-agent')" ]
+  run pv "ran nginx-agent:1.2" "- docker.io/library/nginx-agent:1.3"
+  [ "$output" = "block" ]
+  run pv "ran nginx-agent:1.2" "- docker.io/library/nginx-agent@sha256:$d"
+  [ "$output" = "block" ]
+  run qa_ref_families "acme/library/tool:v1"
+  [ "$output" = "acme/library/tool" ]
+  run qa_ref_families "library/nginx-agent:1.3"
+  [ "$output" = "$(printf 'library/nginx-agent\nnginx-agent')" ]
   # A tag-plus-digest ref adds no family from its tag.
   run pv "restarted pod ag-1-main-7f on the mini" "- ghcr.io/acme/app:ag-1-main@sha256:$d"
   [ "$output" = "allow" ]
