@@ -47,6 +47,22 @@ count() { grep -c "$1" "$2" || true; }
   cmp "$D/SKILL.md" "$BATS_TEST_TMPDIR/skill.orig"
 }
 
+@test "a .tmpl holding the ONLY anchor is never patched: anchor miss instead" {
+  sed -i.bak 's/### 3.5e:/### 3.6: Renamed/' "$D/sections/readiness-gate.md"; rm -f "$D/sections/"*.bak
+  cp "$D/sections/readiness-gate.md.tmpl" "$BATS_TEST_TMPDIR/tmpl.orig"
+  run "$P" apply "$D"
+  [ "$status" -eq 2 ]
+  cmp "$D/sections/readiness-gate.md.tmpl" "$BATS_TEST_TMPDIR/tmpl.orig"
+}
+
+@test "hunk2 never lands outside Step 4 (Step 4 with no ### sub-step is an anchor miss)" {
+  printf '## Step 4: Merge the PR\n\nintro only\n\n## Step 5: Deploy\n\n### 5a: x\n' > "$D/sections/merge-and-deploy.md"
+  cp "$D/sections/merge-and-deploy.md" "$BATS_TEST_TMPDIR/md.orig"
+  run "$P" apply "$D"
+  [ "$status" -eq 2 ]
+  cmp "$D/sections/merge-and-deploy.md" "$BATS_TEST_TMPDIR/md.orig"
+}
+
 @test "apply is idempotent: a second run changes nothing" {
   "$P" apply "$D"
   cp -R "$D" "$BATS_TEST_TMPDIR/once"
@@ -123,9 +139,20 @@ count() { grep -c "$1" "$2" || true; }
   sed -i.bak 's/### 3.5e:/### 3.6: Renamed/' "$D/sections/readiness-gate.md"
   run bash -c "printf '%s' '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"gstack:land-and-deploy\"}}' | '$P' hook"
   [ "$status" -eq 0 ]
-  run jq -r '.hookSpecificOutput.additionalContext' <<< "$output"
+  hookout="$output"
+  case "$hookout" in *'"decision"'*) echo "hook emitted a decision: $hookout"; false ;; esac
+  run jq -r '.hookSpecificOutput.additionalContext' <<< "$hookout"
   case "$output" in *"merge-clearance.sh clear"*) ;; *) echo "$output"; false ;; esac
-  case "$output" in *decision*) false ;; esac
+}
+
+@test "hook: matcher tolerates the path form, .tool_input.name and case; no skill -> silent" {
+  run bash -c "printf '%s' '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Skill\",\"tool_input\":{\"name\":\"Skills/Land-And-Deploy\"}}' | '$P' hook"
+  [ "$status" -eq 0 ]
+  run "$P" check "$D"
+  [ "$status" -eq 0 ]
+  run bash -c "printf '%s' '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"land-and-deploy\"}}' | GSTACK_LAND_DEPLOY_DIR='$BATS_TEST_TMPDIR/nope' '$P' hook"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 # ---- merge-clearance.sh gated: the predicate both hunks key on ----------------
@@ -151,6 +178,17 @@ gated_setup() {
   rm -rf "$R"
   [ "$status" -eq 0 ]
   [ "$output" = "gated" ]
+}
+
+@test "gated: answers without gh (a failing gh on PATH does not matter)" {
+  gated_setup
+  mkdir -p "$HOME/dev" "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho "gh must not be called" >&2; exit 99\n' > "$BATS_TEST_TMPDIR/bin/gh"; chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  R=$(mktemp -d "$HOME/dev/.ldptest.XXXXXX")
+  git -C "$R" init -q
+  run bash -c "cd '$R' && PATH='$BATS_TEST_TMPDIR/bin':\"\$PATH\" '$MC' gated"
+  rm -rf "$R"
+  [ "$status" -eq 0 ]
 }
 
 @test "gated: exit 1 for a repo outside the policy root, and outside any repo" {

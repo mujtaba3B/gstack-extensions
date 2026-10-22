@@ -114,6 +114,39 @@ MERGE_ERROR=\$($M \"\$MERGE_FLAG\" --auto --delete-branch \"\$PR_NUMBER\" --repo
   [ "$output" = "other:other/x" ]
 }
 
+@test "other: a bad target AFTER a good one is still caught (not first-only)" {
+  run v "$M 5 --repo owner/name --repo other/x"
+  [ "$output" = "other:other/x" ]
+  run v "GH_REPO=other/x $M 5 --repo owner/name"
+  [ "$output" = "other:other/x" ]
+}
+
+@test "same: export assignment, and an assignment ended by a newline" {
+  run v "export REPO=owner/name; $M 5 --repo \"\$REPO\""
+  [ "$output" = "same" ]
+  run v "REPO=owner/name
+$M 5 --repo \"\$REPO\""
+  [ "$output" = "same" ]
+}
+
+@test "unverifiable: eval / source / . can rebind the name without spelling it" {
+  run v "REPO=owner/name; eval 'RE''PO=other/x'; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "REPO=owner/name; . ./f.sh; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "REPO=owner/name && source f.sh && $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+}
+
+@test "unverifiable: || true leaves an empty REPO; backticks and defaults are not pinned" {
+  run v "REPO=\$(gh repo view --json nameWithOwner -q .nameWithOwner) || true; $M 5 --repo \"\$REPO\""
+  [ "$output" = "unverifiable:\$REPO" ]
+  run v "$M 5 --repo \`echo other/x\`"
+  assert_prefix "$output" "unverifiable:"
+  run v "$M 5 --repo \"\${REPO:-other/x}\""
+  assert_prefix "$output" "unverifiable:"
+}
+
 @test "empty wdrepo never yields same" {
   run sg_merge_target_verdict "$M 5 --repo owner/name" ""
   [ "$output" = "other:owner/name" ]

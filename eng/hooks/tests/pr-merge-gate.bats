@@ -180,6 +180,7 @@ OUT=\$($MERGE --squash --delete-branch --repo \"\$REPO\" 2>&1)"
   run_gate "cd $REPO && REPO=\$(gh repo view --json nameWithOwner -q .nameWithOwner) && $MERGE --repo \"\$REPO\""
   assert_contains "$output" '"decision":"block"'
   assert_contains "$output" 'no valid merge-clearance'
+  assert_contains "$output" 'land-and-deploy-patch.sh apply'
   assert_missing "$output" 'different repo'
 }
 

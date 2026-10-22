@@ -12,7 +12,7 @@
 # This script IS the re-application. The hunk texts live next to it
 # (../patches/land-and-deploy/*.md) and are inserted as marker-delimited blocks:
 #   hunk1-readiness.md  before the line `### 3.5e...` (the readiness report)
-#   hunk2-merge.md      before the first `### ` heading after `## Step 4...`
+#   hunk2-merge.md      before the first `### ` heading inside `## Step 4...`
 # Anchors are searched across SKILL.md and sections/*.md (generated files only,
 # never *.tmpl), so a move between files does not break it. Each block carries a
 # checksum of its hunk text, so editing a hunk here re-applies it everywhere.
@@ -60,7 +60,9 @@ skill_files() {
 anchor_line() {
   case "$1" in
     hunk1) awk '/^### 3\.5e[: ]/ { print NR; exit }' "$2" ;;
-    hunk2) awk 'in4 && /^### / { print NR; exit } /^## Step 4[: ]/ { in4=1 }' "$2" ;;
+    # Bounded to Step 4: a Step 4 with no ### sub-step is an anchor miss (exit 2),
+    # never an insertion into the next ## section.
+    hunk2) awk 'in4 && /^## / { exit } in4 && /^### / { print NR; exit } /^## Step 4[: ]/ { in4=1 }' "$2" ;;
   esac
 }
 

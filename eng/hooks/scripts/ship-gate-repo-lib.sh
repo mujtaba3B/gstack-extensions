@@ -132,7 +132,10 @@ sg_repo_from_flags() {
 #       <wdrepo> the gate computed, since sg_workdir_from_cmd honors the same
 #       leading cd. This is the exact line /land-and-deploy Step 0 uses.
 #   Everything else (a conditional or subshell assignment, any other command
-#   substitution, a nested expansion) is unverifiable. The caller must BLOCK on
+#   substitution, a nested expansion, any eval / source / `.` in the command) is
+#   unverifiable. Known residual: a shell FUNCTION defined outside this command
+#   (a login profile) that assigns the name when called. Same accident-guard
+#   posture as the rest of this gate; the GitHub required check is the backstop. The caller must BLOCK on
 #   that: guessing would let a merge of another repo be judged by this
 #   checkout's clearance.
 sg_resolve_repo_ref() {
@@ -151,6 +154,10 @@ sg_resolve_repo_ref() {
   # Exactly one bare (not $-prefixed) mention of the name: the assignment itself.
   bare=$(printf '%s\n' "$cmd" | grep -oE "(^|[^A-Za-z0-9_\${])${name}([^A-Za-z0-9_]|\$)" | wc -l | tr -d ' ')
   [ "$bare" = "1" ] || { printf 'unverifiable:%s' "$t"; return 0; }
+
+  # eval / source / `.` can rebind the name without spelling it out (eval 'RE''PO=x').
+  local dyn_re='(^|[;&|(]|'$'\n'')[[:space:]]*(eval|source|\.)[[:space:]]'
+  [[ "$cmd" =~ $dyn_re ]] && { printf 'unverifiable:%s' "$t"; return 0; }
 
   # The assignment must be the first statement, after one optional `cd <dir> &&`.
   body=$(printf '%s' "$cmd" | sed -E '1s/^[[:space:]]+//')
