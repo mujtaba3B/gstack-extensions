@@ -553,8 +553,8 @@ setup() {
 }
 
 @test "citable refs truth table: image refs and image-or-host tokens in, times and plain hosts out" {
-  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause agent:42 mini:22'
-  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause\nagent:42\nmini:22')" ]
+  run qa_citable_refs 'emily-agent:v2 ghcr.io/org/app:v1 api:4718203 ghcr.io/acme/x:1234 mutwo:2026.10.13 agent-web:1234 mac-mini:8080 app:latest mu:pause agent:42 mini:22 registry.acme.io:20261013 localhost:20261013'
+  [ "$output" = "$(printf 'emily-agent:v2\nghcr.io/org/app:v1\napi:4718203\nghcr.io/acme/x:1234\nmutwo:2026.10.13\nagent-web:1234\nmac-mini:8080\napp:latest\nmu:pause\nagent:42\nmini:22\nregistry.acme.io:20261013\nlocalhost:20261013')" ]
   run qa_citable_refs 'sms-hero.example.com:443 localhost:8080 14:05 2026-10-13T14:05Z 14:05pm'
   [ -z "$output" ]
 }
@@ -856,10 +856,16 @@ setup() {
 #   bite on Linux CI; seam=none; no_claim=whole comment lines are ignored; a <( or >( anywhere else (a string,
 #   a trailing comment) is a false red, which is the safe direction
 @test "gate scripts: no process substitution outside comments (POSIX-mode bash 3.2 fails it open)" {
-  for f in "$BATS_TEST_DIRNAME/../scripts/qa-status-gate-lib.sh" "$BATS_TEST_DIRNAME/../scripts/qa-status-gate.sh"; do
-    run sh -c 'grep -vE "^[[:space:]]*#" "$1" | grep -nE "[<>]\("' _ "$f"
+  n=0
+  for f in "$BATS_TEST_DIRNAME"/../scripts/qa-status-gate*.sh; do
+    [ -r "$f" ]
+    n=$((n + 1))
+    # Number the file's own lines first, then drop whole comment lines, so a
+    # hit names the real line; status 1 means no <( or >( outside a comment.
+    run sh -c 'grep -nE "[<>]\(" "$1" | grep -vE "^[0-9]+:[[:space:]]*#"' _ "$f"
     [ "$status" -eq 1 ]
   done
+  [ "$n" -ge 2 ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {

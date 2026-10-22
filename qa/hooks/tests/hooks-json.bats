@@ -42,6 +42,12 @@ tuples() {
   [ "$status" -eq 0 ]
 }
 
+@test "the Stop QA-status gate declares a timeout (it can call gh)" {
+  run jq -e '.hooks.Stop | map(.hooks[] | select(.command | endswith("qa-status-gate.sh")))
+             | length > 0 and all(.timeout != null)' "$HOOKS_JSON"
+  [ "$status" -eq 0 ]
+}
+
 @test "hooks.json is valid JSON with a top-level hooks object" {
   run jq -e '.hooks | type == "object"' "$HOOKS_JSON"
   [ "$status" -eq 0 ]
