@@ -868,6 +868,24 @@ setup() {
   [ "$n" -ge 2 ]
 }
 
+# Value: protects=an image ref whose registry has a port is one token, so another registry serving the same
+#   path does not cite it, and a 12-hex digest (the documented floor) is matched;
+#   fails_when=the ref scan splits at ':<port>/' (a localhost:5000 build then passes) or the digest floor rises;
+#   why_new=red team + testing, run 18; seam=none
+@test "awaiting gate: a registry with a port is part of the ref, and a 12-hex digest is matched" {
+  f='- registry.acme.io:5000/team/agent:ag-1-main on the mini'
+  run qa_citable_refs "$f"
+  [ "$output" = "registry.acme.io:5000/team/agent:ag-1-main" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: smoke ran in localhost:5000/team/agent:ag-1-main')" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran registry.acme.io:5000/team/agent:ag-1-main')" "$f"
+  [ "$output" = "allow" ]
+  run qa_artifact_refs "health at mac-mini:8080/healthz"
+  [ "$output" = "mac-mini:8080" ]
+  run qa_artifact_digests 'sha256:0123456789ab sha256:0123456789a'
+  [ "$output" = "sha256:0123456789ab" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]

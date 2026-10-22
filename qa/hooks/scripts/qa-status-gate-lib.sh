@@ -169,10 +169,13 @@ LABELS
 #   every colon-joined name:tag token (image refs, host:port, skills, run ids;
 #   not sha256:...) and sha256 digests. URLs are stripped first
 #   so a "how it is exercised" URL like https://host:443/path is not read as an
-#   image:tag ref. Shared by the verdict and the awaiting_human citation rule.
+#   image:tag ref. A registry with a port stays one token
+#   (registry.acme.io:5000/team/agent:v1): split at ':5000/', the plan's
+#   registry dropped out and a localhost:5000/... build cited the same path.
+#   Shared by the verdict and the awaiting_human citation rule.
 qa_artifact_refs() {
   printf '%s\n' "$1" | sed -E 's#https?://[^[:space:]]*##g' \
-    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*' | grep -viE '^sha256:' \
+    | grep -oE '[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?:[A-Za-z0-9][A-Za-z0-9._-]*' | grep -viE '^sha256:' \
     | sed -E 's/[._-]+$//' || true
 }
 qa_artifact_digests() {
