@@ -735,8 +735,6 @@ setup() {
   [ "$output" = "allow" ]
 }
 
-# The loose numbered row is the one that needs the numbered-item rule: a first
-# item after a gap is read as the first paragraph anyway, a later one is not.
 # Value: protects=an indented continuation or `  **Image:**` sub-label after a blank line stays in the field;
 #   fails_when=the indented-line rule is dropped (the line then ends the field and an uncited handoff is allowed);
 #   why_new=testing, run 20; seam=none
@@ -749,6 +747,8 @@ setup() {
   [ "$output" = "block-uncited" ]
 }
 
+# The loose numbered row is the one that needs the numbered-item rule: a first
+# item after a gap is read as the first paragraph anyway, a later one is not.
 @test "extract prod artifact: a numbered list or a first paragraph after a blank line stays in the field" {
   for fmt in '**Production artifacts:**\n\n1. `%s` on mac-mini\n2. exercised by a live run' '**Production artifacts:**\n\nThe per-agent image `%s` on mac-mini.' '**Production artifacts:**\n1. host is the mini\n\n2. `%s` (loose numbered list)'; do
     body=$(printf "$fmt" "$PERAGENT")
