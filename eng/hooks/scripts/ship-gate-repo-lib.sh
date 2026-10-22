@@ -113,6 +113,157 @@ sg_repo_from_flags() {
   sg_norm_repo "$t"
 }
 
+# sg_repo_ref_host <ref>
+#   The explicit host a repo reference names, lowercased, or nothing for a bare
+#   owner/name. `HOST/OWNER/REPO` (gh's own form), a URL, and an scp remote all
+#   carry one. github.com is reported like any other host; callers decide.
+sg_repo_ref_host() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -nE '
+    s#^git@([^:/]+):.*#\1#p; t
+    s#^[a-z][a-z0-9+.-]*://([^@/]*@)?([^/:]+).*#\2#p; t
+    s#^([^/]+)/[^/]+/[^/]+/*$#\1#p'
+}
+
+# sg_resolve_repo_ref <token> <cmd> <wdrepo>
+#   Resolve ONE explicit repo argument (the text after --repo / -R / GH_REPO=) to a
+#   lowercase owner/name, or echo "unverifiable:<token>". Pure: no git, no gh.
+#
+#   A literal resolves to itself. A shell variable (`$REPO`, `${REPO}`, quoted or
+#   not) resolves ONLY when the command itself pins it down, because a hook reads
+#   the command text, not the shell it will run in: variables do not persist
+#   between Bash calls, so anything not assigned here comes from an environment we
+#   cannot see. The one accepted shape is the variable's assignment as the FIRST
+#   statement (after an optional leading `cd <dir> &&`), ended by `;`, `&&`,
+#   `|| exit`, a newline or end of input (that terminator rule rejects a temp-env
+#   prefix `REPO=x gh ...`, which expands the OLD value), with no other bare
+#   mention of the name anywhere, counted with quotes and backslashes removed so
+#   `export "RE""PO=x"` still counts (that rules out a later reassignment, `read`,
+#   `for`, `unset`, `export`, `printf -v`). Its value must be
+#     - a literal owner/name, or
+#     - $(gh repo view --json nameWithOwner -q .nameWithOwner), which names the
+#       repo of the dir the shell is in at that moment. It is trusted only when
+#       that dir is provably the gate's WORKDIR: the leading cd (if any) is a
+#       plain path sg_workdir_from_cmd parses the same way (no quotes, `$`,
+#       backticks or `~user`), and no other cd / pushd / popd appears anywhere.
+#       This is the exact line /land-and-deploy Step 0 uses.
+#   Everything else (a conditional or subshell assignment, any other command
+#   substitution, a nested expansion, any eval / source / `.` in the command) is
+#   unverifiable. The caller must BLOCK on that: guessing would let a merge of
+#   another repo be judged by this checkout's clearance.
+#
+#   Known residual: a shell FUNCTION defined outside this command (a login
+#   profile) that assigns the name when called. Same accident-guard posture as
+#   the rest of this gate; the GitHub required check is the backstop.
+#   A host other than github.com stays in the result (host/owner/name), so a
+#   GitHub Enterprise target never equals a github.com checkout; a GHE checkout
+#   naming its own host explicitly is therefore refused too (safe direction).
+sg_resolve_repo_ref() {
+  local t="$1" cmd="$2" wd="$3" name flat body bare val plain_cd=1
+  t=$(printf '%s' "$t" | sed -E 's/[;&|)`]+$//')
+  t=${t#[\"\']}; t=${t%[\"\']}
+  case "$t" in
+    *'$'*|*'`'*) ;;
+    *) sg_qualified_repo "$t"; return 0 ;;
+  esac
+  # Single quotes are deliberate: the sed program matches a literal `$`.
+  # shellcheck disable=SC2016
+  name=$(printf '%s' "$t" | sed -nE 's/^\$([A-Za-z_][A-Za-z0-9_]*)$/\1/p; s/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/\1/p')
+  [ -n "$name" ] || { printf 'unverifiable:%s' "$t"; return 0; }
+
+  # Exactly one bare (not $-prefixed) mention of the name: the assignment itself.
+  # Quotes and backslashes are dropped first: `"RE""PO"` and `RE\PO` are REPO.
+  flat=$(printf '%s' "$cmd" | tr -d "\"'\\\\")
+  bare=$(printf '%s\n' "$flat" | grep -oE "(^|[^A-Za-z0-9_\${])${name}([^A-Za-z0-9_]|\$)" | wc -l | tr -d ' ')
+  [ "$bare" = "1" ] || { printf 'unverifiable:%s' "$t"; return 0; }
+
+  # eval / source / `.` can rebind the name without spelling it out (eval 'RE''PO=x').
+  local dyn_re='(^|[;&|(]|'$'\n'')[[:space:]]*(eval|source|\.)[[:space:]]'
+  [[ "$flat" =~ $dyn_re ]] && { printf 'unverifiable:%s' "$t"; return 0; }
+
+  # The assignment must be the first statement, after one optional `cd <dir> &&`.
+  body=$(printf '%s' "$cmd" | sed -E '1s/^[[:space:]]+//')
+  local cd_any='^cd[[:space:]]+[^;&|[:space:]]+[[:space:]]*&&[[:space:]]*'
+  local cd_plain='^cd[[:space:]]+(~|~/[^;&|[:space:]"'"'"'$`]*|[^~;&|[:space:]"'"'"'$`][^;&|[:space:]"'"'"'$`]*)[[:space:]]*&&[[:space:]]*'
+  if [[ "$body" =~ $cd_any ]]; then
+    [[ "$body" =~ $cd_plain ]] || plain_cd=0
+    [[ "$body" =~ $cd_any ]] && body=${body:${#BASH_REMATCH[0]}}
+  fi
+  local asg_re="^(export[[:space:]]+)?${name}="
+  [[ "$body" =~ $asg_re ]] || { printf 'unverifiable:%s' "$t"; return 0; }
+  body=${body:${#BASH_REMATCH[0]}}
+
+  local end='[[:space:]]*($|;|&&|\|\|[[:space:]]*exit([^A-Za-z0-9_]|$)|'$'\n'')'
+  local view_re='^"?\$\(gh[[:space:]]+repo[[:space:]]+view[[:space:]]+--json[[:space:]]+nameWithOwner[[:space:]]+(-q|--jq)[[:space:]]+'"[\"']?"'\.nameWithOwner'"[\"']?"'\)"?'"$end"
+  local lit_re="^[\"']?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)[\"']?$end"
+  local cd_later='(^|[;&|(]|'$'\n'')[[:space:]]*(cd|pushd|popd)([[:space:]]|$)'
+  if [[ "$body" =~ $view_re ]]; then
+    # gh repo view answers for the dir the shell is in NOW; trust it only when
+    # that is provably the dir the gate resolved WDREPO from.
+    [ "$plain_cd" = 1 ] || { printf 'unverifiable:%s' "$t"; return 0; }
+    [[ "$body" =~ $cd_later ]] && { printf 'unverifiable:%s' "$t"; return 0; }
+    val="$wd"
+  elif [[ "$body" =~ $lit_re ]]; then
+    val="${BASH_REMATCH[1]}"
+  else
+    printf 'unverifiable:%s' "$t"; return 0
+  fi
+  [ -n "$val" ] || { printf 'unverifiable:%s' "$t"; return 0; }
+  sg_qualified_repo "$val"
+}
+
+# sg_qualified_repo <ref>
+#   owner/name for github.com (or no host), host/owner/name for any other host,
+#   so a GitHub Enterprise target never compares equal to a github.com checkout.
+sg_qualified_repo() {
+  local h
+  h=$(sg_repo_ref_host "$1")
+  case "$h" in
+    ""|github.com|www.github.com) sg_norm_repo "$1" ;;
+    *) printf '%s/%s' "$h" "$(sg_norm_repo "$1")" ;;
+  esac
+}
+
+# sg_merge_target_verdict <cmd> <wdrepo>
+#   Decide whether a `gh pr merge` command's explicit repo targets name the
+#   checkout's own repo. Targets are EVERY --repo / -R (any whitespace after the
+#   flag, `=`, compact `-RX`, and combined short flags like `-dR X`) in every gh
+#   invocation in the command, plus every GH_REPO= anywhere. -R is read only
+#   inside gh invocations, so `cp -R a b` earlier in the command is not a target.
+#   Pure; one token out:
+#     none                no explicit target
+#     same                every target resolves to <wdrepo>
+#     other:<owner/name>  a target resolves to a different repo
+#     unverifiable:<ref>  a target is an expansion sg_resolve_repo_ref cannot pin
+#   An empty <wdrepo> never yields "same".
+sg_merge_target_verdict() {
+  local cmd="$1" wd targets envt t res
+  # Join backslash-newline continuations first, as the shell does, so a flag on a
+  # continued line still belongs to its gh invocation.
+  cmd=${cmd//$'\\\n'/ }
+  wd=$(sg_norm_repo "$2")
+  targets=$(printf '%s\n' "$cmd" \
+    | tr ';&|()' '\n\n\n\n\n' \
+    | grep -E '^[[:space:]]*([^[:space:]]*`)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]]*/)?gh[[:space:]]' \
+    | grep -oE '(--repo(=|[[:space:]]+)|(^|[[:space:]])-[A-QS-Za-z]*R(=|[[:space:]]*))[^[:space:]]+' \
+    | sed -E 's#^[[:space:]]*(--repo(=|[[:space:]]+)|-[A-QS-Za-z]*R(=|[[:space:]]*))##')
+  envt=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:]])GH_REPO=[^[:space:]]+' | sed -E 's#.*GH_REPO=##')
+  if [ -n "$targets" ] && [ -n "$envt" ]; then
+    targets="$targets"$'\n'"$envt"
+  else
+    targets="$targets$envt"
+  fi
+  [ -n "$targets" ] || { printf 'none'; return 0; }
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    res=$(sg_resolve_repo_ref "$t" "$cmd" "$wd")
+    case "$res" in unverifiable:*) printf '%s' "$res"; return 0 ;; esac
+    if [ -z "$wd" ] || [ "$res" != "$wd" ]; then
+      printf 'other:%s' "$res"; return 0
+    fi
+  done <<< "$targets"
+  printf 'same'
+}
+
 # sg_dev_checkout_for_repo <owner/name>
 #   Find a governed ~/dev checkout whose origin remote is <owner/name> and echo
 #   "<toplevel><TAB><absolute-git-dir>" (return 0), else return 1. This binds an
