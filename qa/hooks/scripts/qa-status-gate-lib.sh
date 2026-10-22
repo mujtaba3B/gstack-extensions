@@ -188,8 +188,9 @@ qa_artifact_digests() {
 #   short all-digit tag on a single-label name (agent:42, agent-web:1234, but
 #   also host:port such as mini:22 or mac-mini:8080: a false block that names
 #   it beats letting a short image name go unchecked). Dropped: an ISO time
-#   such as 2026-10-13T14:05Z, an all-digit name (14:05), dotted hostnames and
-#   localhost.
+#   such as 2026-10-13T14:05Z, an all-digit name (14:05), and dotted hostnames
+#   or localhost with a port-length tag (the 6+-digit rule above runs first,
+#   so registry.acme.io:20261013 is kept).
 qa_citable_refs() {
   local tok base tag
   while IFS= read -r tok; do

@@ -103,8 +103,10 @@ finished: waiting on a named person for a named check.
   (ghcr.io/acme/app:v1, agent:42), a host:port on a single-label host
   (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
   run id (run:4567). Dropped, so never required: ISO times
-  (2026-10-13T14:05Z), all-digit names (14:05), dotted hostnames
-  (sms-hero.example.com:443) and localhost. A dotted image name with a short
+  (2026-10-13T14:05Z), all-digit names (14:05), and dotted hostnames
+  (sms-hero.example.com:443) or localhost with a port-length tag (under 6
+  digits); an all-digit tag of 6+ digits is kept on any name
+  (registry.acme.io:20261013). A dotted image name with a short
   all-digit tag (acme.agent:42) reads as a dotted host:port and is not
   checked; give such an image a registry path or a non-numeric tag. A field
   naming no citable ref or digest (only a bundle id, a deploy id written
