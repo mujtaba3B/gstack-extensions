@@ -261,6 +261,19 @@ EOF
   return 0
 }
 
+# qa_ref_families <ref>  (PURE)
+#   The family names a ref belongs to, one per line: the base before the tag,
+#   and, when its first path segment is a registry (has a '.' or ':', or is
+#   localhost), the repo path without it. A same-path image from another
+#   registry or a local build (localhost:5000/team/agent) is then the same
+#   family as registry.acme.io:5000/team/agent, so it reads as a substitution.
+qa_ref_families() {
+  local base="${1%:*}" rp
+  printf '%s\n' "$base"
+  rp=$(printf '%s' "$base" | sed -E 's#^([^/]*[.:][^/]*|localhost)/##')
+  [ "$rp" = "$base" ] || printf '%s\n' "$rp"
+}
+
 # qa_awaiting_citation_verdict <fence_stripped_message> <prod_artifact_field>
 #   -> allow|block|block-uncited  (PURE)
 #   allow when nothing is missing (qa_awaiting_missing_refs). Otherwise block
@@ -276,18 +289,21 @@ qa_awaiting_citation_verdict() {
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     case "$tok" in sha256:*|SHA256:*) continue ;; esac
-    base="${tok%:*}"
-    if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
-      # Another tag, path, digest or suffixed name (family-base) of the family
-      # is a substitution. A bare
-      # mention counts only for an image-shaped token (a '/' or a non-numeric
-      # tag): a bare host such as mac-mini beside an uncited mac-mini:8080 is
-      # a missing citation, not a stale image.
-      case "$msg" in *"$base:"*|*"$base/"*|*"$base@"*|*"$base-"*) echo block; return 0 ;; esac
-      case "$base:${tok##*:}" in */*:*|*:*[!0-9]*)
-        case "$msg" in *"$base"*) echo block; return 0 ;; esac ;;
-      esac
-    fi
+    while IFS= read -r base; do
+      if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
+        # Another tag, path, digest or suffixed name (family-base) of the family
+        # is a substitution. A bare
+        # mention counts only for an image-shaped token (a '/' or a non-numeric
+        # tag): a bare host such as mac-mini beside an uncited mac-mini:8080 is
+        # a missing citation, not a stale image.
+        case "$msg" in *"$base:"*|*"$base/"*|*"$base@"*|*"$base-"*) echo block; return 0 ;; esac
+        case "$base:${tok##*:}" in */*:*|*:*[!0-9]*)
+          case "$msg" in *"$base"*) echo block; return 0 ;; esac ;;
+        esac
+      fi
+    done <<FAM
+$(qa_ref_families "$tok")
+FAM
   done <<EOF
 $missing
 EOF
@@ -297,7 +313,7 @@ EOF
 # qa_evidence_artifact_verdict <evidence_text> <prod_artifact_field>
 #   Echo one of:
 #     ok       -> evidence names the exact production artifact the plan named.
-#     mismatch -> evidence references that artifact's image FAMILY (the base
+#     mismatch -> evidence references that artifact's image FAMILY (qa_ref_families: the base
 #                 before the tag) but NOT the exact ref -> a base/proxy
 #                 substitution. THE ONLY BLOCKING VERDICT.
 #     n/a      -> enforcement does not apply / cannot be decided -> fail open:
@@ -336,10 +352,13 @@ EOF
   local base
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
-    base="${tok%:*}"
-    if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
-      case "$evidence" in *"$base"*) echo "mismatch"; return 0 ;; esac
-    fi
+    while IFS= read -r base; do
+      if [ "${#base}" -ge 6 ] && printf '%s' "$base" | grep -qE '[/-]'; then
+        case "$evidence" in *"$base"*) echo "mismatch"; return 0 ;; esac
+      fi
+    done <<FAM
+$(qa_ref_families "$tok")
+FAM
   done <<EOF
 $refs
 EOF

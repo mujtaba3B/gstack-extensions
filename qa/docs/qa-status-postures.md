@@ -101,7 +101,9 @@ finished: waiting on a named person for a named check.
   line is satisfied by its digest; a base's digest listed
   beside the image's cannot stand in for it). The block names the missing
   refs. A citable ref is any colon-joined `name:tag` token: image refs
-  (ghcr.io/acme/app:v1, agent:42), a host:port on a single-label host
+  (ghcr.io/acme/app:v1, agent:42; a registry with a port is part of the
+  ref, so cite registry.acme.io:5000/team/agent:v1 whole: a localhost:5000
+  build of the same path does not count), a host:port on a single-label host
   (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
   run id (run:4567). Dropped, so never required: ISO times
   (2026-10-13T14:05Z), all-digit names (14:05), and dotted hostnames

@@ -876,14 +876,38 @@ setup() {
   f='- registry.acme.io:5000/team/agent:ag-1-main on the mini'
   run qa_citable_refs "$f"
   [ "$output" = "registry.acme.io:5000/team/agent:ag-1-main" ]
+  # A local build of the same path is a substitution (qa_ref_families), so it
+  # gets the stale-image block, not merely the missing-citation one.
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: smoke ran in localhost:5000/team/agent:ag-1-main')" "$f"
-  [ "$output" = "block-uncited" ]
+  [ "$output" = "block" ]
   run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran registry.acme.io:5000/team/agent:ag-1-main')" "$f"
   [ "$output" = "allow" ]
   run qa_artifact_refs "health at mac-mini:8080/healthz"
   [ "$output" = "mac-mini:8080" ]
   run qa_artifact_digests 'sha256:0123456789ab sha256:0123456789a'
   [ "$output" = "sha256:0123456789ab" ]
+}
+
+# Value: protects=a same-path image from another registry or a local build is the plan image's family on both
+#   postures, so prod_verified blocks it as a substitution; fails_when=the family keeps the registry (or
+#   registry:port) so a localhost or mirror build of the same path reads as unrelated and fails open;
+#   why_new=testing + red team, run 18 pass 2; seam=none
+@test "artifact families: another registry or a local build of the same path is a substitution" {
+  run qa_ref_families "registry.acme.io:5000/team/agent:ag-1-main"
+  [ "$output" = "$(printf 'registry.acme.io:5000/team/agent\nteam/agent')" ]
+  run qa_ref_families "nanoclaw-agent-v2-83c915c8:ag-1-main"
+  [ "$output" = "nanoclaw-agent-v2-83c915c8" ]
+  f='- registry.acme.io:5000/team/agent:ag-1-main on the mini'
+  for e in 'deployed localhost:5000/team/agent:ag-0-old' 'deployed team/agent:ag-0-old' 'deployed registry.acme.io:5000/team/agent:ag-0-old'; do
+    run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: %s' "$e")" "$f"
+    [ "$output" = "block" ]
+  done
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: deployed registry.acme.io:5000/team/agent:ag-1-main')" "$f"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: pulled mirror.io/acme/agent:v1')" "- ghcr.io/acme/agent:v2 on the mini"
+  [ "$output" = "block" ]
+  run qa_awaiting_citation_verdict "EVIDENCE: ran registry:5000/x/a:v2" "- registry:5000/x/a:v1"
+  [ "$output" = "block" ]
 }
 
 @test "awaiting missing refs: lists exactly the uncited required refs" {
