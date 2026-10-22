@@ -265,7 +265,8 @@ EOF
 # qa_ref_families <ref>  (PURE)
 #   The family names a ref belongs to, one per line: the base before the tag,
 #   and, when its first path segment is a registry (has a '.' or ':', or is
-#   localhost), the repo path without it. A same-path image from another
+#   localhost), the repo path without it, and for Docker Hub the name
+#   without its implicit library/ prefix. A same-path image from another
 #   registry or a local build (localhost:5000/team/agent) is then the same
 #   family as registry.acme.io:5000/team/agent, so it reads as a substitution.
 #   Callers match a distinctive family (6+ chars with '/' or '-') anywhere;
@@ -328,8 +329,9 @@ EOF
 #   Echo one of:
 #     ok       -> evidence names the exact production artifact the plan named.
 #     mismatch -> evidence references that artifact's image FAMILY (qa_ref_families:
-#                 the base before the tag, and the repo path without a
-#                 registry segment) but NOT the exact ref -> a base/proxy
+#                 the base before the tag, the repo path without a
+#                 registry segment, and a Docker Hub name without library/)
+#                 but NOT the exact ref -> a base/proxy
 #                 substitution. THE ONLY BLOCKING VERDICT.
 #     n/a      -> enforcement does not apply / cannot be decided -> fail open:
 #                 no field, no machine-matchable token in the field, or the

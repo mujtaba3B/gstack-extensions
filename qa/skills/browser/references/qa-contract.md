@@ -2,14 +2,14 @@
 
 QA is a first-class, recorded decision, not something review has to catch. A `qa:browser` run ends by STATING its posture in a fixed format. That one posture feeds two enforcement points with DIFFERENT match rules. Satisfy both.
 
-The postures are **two-phase**: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
+The postures are **two-phase**: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`; in the PR body, write the plain `QA_STATUS: verified` spelling, which is the only one the CI qa-gate accepts. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
 
 ## The postures
 
 ```
 QA_STATUS: dev_verified
 EVIDENCE: <command run / URL hit / screenshot path / test name proving you exercised the Development QA Plan live in dev / preview>
-# `verified` is accepted as an alias for dev_verified.
+# `verified` is the same posture; use that plain spelling in the PR body (CI rejects dev_verified).
 
 QA_STATUS: prod_verified
 EVIDENCE: <live check proving the Production QA Plan passed after deploy (build-procedure step 11)>
