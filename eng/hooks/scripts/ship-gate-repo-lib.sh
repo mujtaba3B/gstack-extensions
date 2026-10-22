@@ -244,8 +244,8 @@ sg_merge_target_verdict() {
   targets=$(printf '%s\n' "$cmd" \
     | tr ';&|()' '\n\n\n\n\n' \
     | grep -E '^[[:space:]]*([^[:space:]]*`)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]]*/)?gh[[:space:]]' \
-    | grep -oE '(--repo(=|[[:space:]]+)|(^|[[:space:]])-[A-Za-z]*R(=|[[:space:]]*))[^[:space:]]+' \
-    | sed -E 's#^[[:space:]]*(--repo(=|[[:space:]]+)|-[A-Za-z]*R(=|[[:space:]]*))##')
+    | grep -oE '(--repo(=|[[:space:]]+)|(^|[[:space:]])-[A-QS-Za-z]*R(=|[[:space:]]*))[^[:space:]]+' \
+    | sed -E 's#^[[:space:]]*(--repo(=|[[:space:]]+)|-[A-QS-Za-z]*R(=|[[:space:]]*))##')
   envt=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:]])GH_REPO=[^[:space:]]+' | sed -E 's#.*GH_REPO=##')
   if [ -n "$targets" ] && [ -n "$envt" ]; then
     targets="$targets"$'\n'"$envt"

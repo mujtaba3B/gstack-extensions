@@ -219,6 +219,14 @@ $M 5 --repo \"\$REPO\""
   [ "$output" = "same" ]
 }
 
+@test "compact -R stops at the FIRST R: an R inside the repo name is kept" {
+  WD="MyRepo/name"
+  run v "$M 5 -RMyRepo/name"
+  [ "$output" = "same" ]
+  run v "$M 5 -dRMyRepo/name"
+  [ "$output" = "same" ]
+}
+
 @test "none: -R of a non-gh command (cp -R) is not a merge target" {
   run v "cp -R a b && $M 5"
   [ "$output" = "none" ]
