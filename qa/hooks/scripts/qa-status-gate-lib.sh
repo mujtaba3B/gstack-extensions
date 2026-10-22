@@ -234,6 +234,12 @@ qa_awaiting_missing_refs() {
     ldigs=$(qa_artifact_digests "$line")
     lrefs=$(qa_citable_refs "$line")
     [ -n "$lrefs$ldigs" ] || continue
+    # The handoff pins a planned ref to another digest: the line's digests
+    # are what it failed to cite, whatever else it names.
+    if [ -n "$ldigs" ] && [ -n "$(qa_digest_conflict "$msg" "$line")" ]; then
+      printf '%s\n' "$ldigs"
+      continue
+    fi
     rmiss=""; dmiss=""
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
@@ -258,6 +264,36 @@ EOF
     printf '%s%s' "$rmiss" "$dmiss"
   done <<EOF
 $field
+EOF
+  return 0
+}
+
+# qa_digest_conflict <message> <field>  (PURE)
+#   The planned refs the message pins to a digest the field does not name, one
+#   per line. A plan that pins team/agent:v1@sha256:A is not satisfied by a
+#   handoff citing team/agent:v1@sha256:B: the tag is mutable, the digest is
+#   the point. Nothing is printed when the field pins no digest.
+qa_digest_conflict() {
+  local msg="$1" field="$2" pin ref dig fdigs frefs d hit
+  fdigs=$(qa_artifact_digests "$field" | tr '[:upper:]' '[:lower:]')
+  [ -n "$fdigs" ] || return 0
+  frefs=$(qa_artifact_refs "$field")
+  while IFS= read -r pin; do
+    [ -n "$pin" ] || continue
+    ref="${pin%@*}"; dig=$(printf '%s' "${pin##*@}" | tr '[:upper:]' '[:lower:]')
+    printf '%s\n' "$frefs" | grep -qxF -- "$ref" || continue
+    hit=0
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      case "$dig" in "$d"*) hit=1 ;; esac
+      case "$d" in "$dig"*) hit=1 ;; esac
+    done <<DIG
+$fdigs
+DIG
+    [ "$hit" = 1 ] || printf '%s\n' "$ref"
+  done <<EOF
+$(printf '%s\n' "$msg" | sed -E 's#https?://[^[:space:]]*##g' \
+    | grep -oiE '[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{12,}' || true)
 EOF
   return 0
 }
@@ -364,9 +400,17 @@ qa_evidence_artifact_verdict() {
     | grep -oE '(^|[^:A-Za-z0-9._/-])[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?@sha256:' \
     | sed -E 's/^[^A-Za-z0-9]//; s/@sha256:$/:@/' || true)
 
+  # 0) Evidence pins a planned ref to a digest the plan does not name -> a
+  #    stale image under the right name -> mismatch.
+  [ -z "$(qa_digest_conflict "$evidence" "$field")" ] || { echo "mismatch"; return 0; }
+
   # 1) Evidence names the exact production artifact (full ref or digest) -> ok.
+  #    A time or time range (14:05, 2026-10-13T14:05Z) is never the artifact,
+  #    so naming one cannot satisfy the plan.
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
+    case "${tok%:*}" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) continue ;; esac
+    case "${tok%:*}" in *[!0-9:/]*) ;; *) continue ;; esac
     case "$evidence" in *"$tok"*) echo "ok"; return 0 ;; esac
   done <<EOF
 $refs

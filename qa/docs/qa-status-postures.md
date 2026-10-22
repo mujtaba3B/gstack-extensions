@@ -99,7 +99,9 @@ finished: waiting on a named person for a named check.
   written beside them (mac-mini:8080, /mu:pause); citing its digests counts
   instead only when that line names at most one citable ref (a digest-only
   line is satisfied by its digest; a base's digest listed
-  beside the image's cannot stand in for it). The block names the missing
+  beside the image's cannot stand in for it). When a line pins a ref to a
+  digest (team/agent:v1@sha256:...), citing that ref at another digest is a
+  stale image, not a citation, on either posture. The block names the missing
   refs. A citable ref is any colon-joined `name:tag` token: image refs
   (ghcr.io/acme/app:v1, agent:42; a registry with a port is part of the
   ref, so cite registry.acme.io:5000/team/agent:v1 whole: a localhost:5000

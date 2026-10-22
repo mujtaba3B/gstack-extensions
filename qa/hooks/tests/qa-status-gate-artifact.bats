@@ -993,6 +993,35 @@ setup() {
   [ "$output" = "ghcr.io/acme/app:v1" ]
 }
 
+# Value: protects=a tag-plus-digest plan is not satisfied by the same tag at another digest (a stale image under the
+#   right name) on either posture, and a time named in the plan is never the artifact on prod_verified;
+#   fails_when=the digest conflict check is dropped, or step 1's ok list keeps time tokens; why_new=adversarial,
+#   run 20; seam=none
+@test "artifact gate: same tag at another digest is stale, and a time in the plan is not the artifact" {
+  a=$(printf 'a%.0s' $(seq 64)); b=$(printf 'b%.0s' $(seq 64))
+  f="- team/agent:v1@sha256:$a on the mini"
+  # The planned digest is what the handoff failed to cite.
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran team/agent:v1@sha256:%s' "$b")" "$f"
+  [ "$output" = "block-uncited" ]
+  run qa_awaiting_missing_refs "EVIDENCE: ran team/agent:v1@sha256:$b" "$f"
+  [ "$output" = "sha256:$a" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent:v1@sha256:%s' "$b")" "$f"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: awaiting_human\nCHECK: x\nPHASE: prod\nEVIDENCE: ran team/agent:v1@sha256:%s' "$a")" "$f"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent:v1@sha256:%s' "$a")" "$f"
+  [ "$output" = "allow" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent:v1, health green')" "$f"
+  [ "$output" = "allow" ]
+  run qa_digest_conflict "ran other/tool:v1@sha256:$b" "$f"
+  [ -z "$output" ]
+  t='- team/agent:v1 on mac mini, rebuilt at 14:05 UTC'
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent-base:v0 at 14:05')" "$t"
+  [ "$output" = "block" ]
+  run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent:v1 at 14:05')" "$t"
+  [ "$output" = "allow" ]
+}
+
 @test "awaiting missing refs: lists exactly the uncited required refs" {
   run qa_awaiting_missing_refs "EVIDENCE: ran nanoclaw-agent-v2-83c915c8:ag-1-main" "nanoclaw-agent-v2-83c915c8:ag-1-main (FROM nanoclaw-base:2026.10.13)"
   [ "$output" = "nanoclaw-base:2026.10.13" ]
