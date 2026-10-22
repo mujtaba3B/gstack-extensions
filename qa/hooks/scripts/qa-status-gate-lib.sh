@@ -94,8 +94,10 @@ qa_gate_decision() {
 # Conservative by construction (this gate fails OPEN and has fleet-wide blast
 # radius). For prod_verified the only blocking verdict is `mismatch`, returned
 # ONLY when the EVIDENCE references the SAME image family as a named plan
-# artifact but NOT the exact production ref: the precise shape of a base/proxy
-# substitution; evidence that does not reference the family at all passes. An
+# artifact but NOT the exact production ref (the precise shape of a base/proxy
+# substitution), or pins the exact ref to a digest the plan does not give it
+# (qa_digest_conflict); evidence that does not reference the family at all
+# passes. An
 # engaged awaiting_human handoff is stricter: it must cite every required ref
 # or digest of each artifact line (qa_awaiting_missing_refs), or it gets
 # `block-uncited`. The awaiting_human path fails open when the field is absent
@@ -224,8 +226,9 @@ EOF
 #   lower the bar for its neighbours masked second images on the same line
 #   every way it was tried. A host or skill token beside an image (such as
 #   mac-mini:8080 or /mu:pause) must be cited too; the block names it. A line's
-#   digests count only when it names at most one required ref. Lines naming
-#   nothing citable are skipped.
+#   digests count only when it names at most one required ref. A line whose
+#   ref the handoff pins to another digest (qa_digest_conflict) reports its
+#   digests missing. Lines naming nothing citable are skipped.
 qa_awaiting_missing_refs() {
   local msg="$1" field="$2" tok line lrefs ldigs mrefs mdigs rmiss dmiss
   mrefs=$(qa_artifact_refs "$msg")
@@ -269,31 +272,46 @@ EOF
 }
 
 # qa_digest_conflict <message> <field>  (PURE)
-#   The planned refs the message pins to a digest the field does not name, one
-#   per line. A plan that pins team/agent:v1@sha256:A is not satisfied by a
-#   handoff citing team/agent:v1@sha256:B: the tag is mutable, the digest is
-#   the point. Nothing is printed when the field pins no digest.
+#   The planned refs the message pins to a digest the plan does not give that
+#   ref, one per line. A plan that pins team/agent:v1@sha256:A is not
+#   satisfied by a handoff citing team/agent:v1@sha256:B (or a registry-
+#   prefixed docker.io/team/agent:v1@sha256:B): the tag is mutable, the digest
+#   is the point. Each planned ref is held to its OWN pinned digests, so
+#   another image's (or a base's) digest cannot stand in for it; a planned ref
+#   with no pin of its own falls back to every digest in the field. Digests
+#   compare case-insensitively and as prefixes either way (a short digest
+#   cites a full one). Nothing is printed when the field pins no digest.
 qa_digest_conflict() {
-  local msg="$1" field="$2" pin ref dig fdigs frefs d hit
+  local msg="$1" field="$2" pinre fdigs fpins frefs pin ref dig fref own d hit
+  pinre='[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{12,}'
   fdigs=$(qa_artifact_digests "$field" | tr '[:upper:]' '[:lower:]')
   [ -n "$fdigs" ] || return 0
+  fpins=$(printf '%s\n' "$field" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE "$pinre" || true)
   frefs=$(qa_artifact_refs "$field")
   while IFS= read -r pin; do
     [ -n "$pin" ] || continue
     ref="${pin%@*}"; dig=$(printf '%s' "${pin##*@}" | tr '[:upper:]' '[:lower:]')
-    printf '%s\n' "$frefs" | grep -qxF -- "$ref" || continue
-    hit=0
-    while IFS= read -r d; do
-      [ -n "$d" ] || continue
-      case "$dig" in "$d"*) hit=1 ;; esac
-      case "$d" in "$dig"*) hit=1 ;; esac
-    done <<DIG
-$fdigs
+    while IFS= read -r fref; do
+      [ -n "$fref" ] || continue
+      case "$ref" in "$fref"|*/"$fref") ;; *) continue ;; esac
+      own=$(printf '%s\n' "$fpins" | while IFS= read -r p; do
+        [ "${p%@*}" = "$fref" ] && printf '%s\n' "${p##*@}"
+      done | tr '[:upper:]' '[:lower:]')
+      [ -n "$own" ] || own="$fdigs"
+      hit=0
+      while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        case "$dig" in "$d"*) hit=1 ;; esac
+        case "$d" in "$dig"*) hit=1 ;; esac
+      done <<DIG
+$own
 DIG
-    [ "$hit" = 1 ] || printf '%s\n' "$ref"
+      [ "$hit" = 1 ] || printf '%s\n' "$fref"
+    done <<FREF
+$frefs
+FREF
   done <<EOF
-$(printf '%s\n' "$msg" | sed -E 's#https?://[^[:space:]]*##g' \
-    | grep -oiE '[A-Za-z0-9][A-Za-z0-9._/-]*(:[0-9]+/[A-Za-z0-9._/-]*)?:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{12,}' || true)
+$(printf '%s\n' "$msg" | sed -E 's#https?://[^[:space:]]*##g' | grep -oiE "$pinre" || true)
 EOF
   return 0
 }
@@ -369,7 +387,8 @@ EOF
 #                 the base before the tag, the repo path without a
 #                 registry segment, and a name without a leading library/)
 #                 but NOT the exact ref -> a base/proxy
-#                 substitution. THE ONLY BLOCKING VERDICT.
+#                 substitution; or the exact ref pinned to a digest the plan
+#                 does not give it. THE ONLY BLOCKING VERDICT.
 #     n/a      -> enforcement does not apply / cannot be decided -> fail open:
 #                 no field, no machine-matchable token in the field, or the
 #                 evidence does not reference the family at all.

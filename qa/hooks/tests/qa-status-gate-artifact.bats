@@ -1015,6 +1015,32 @@ setup() {
   [ "$output" = "allow" ]
   run qa_digest_conflict "ran other/tool:v1@sha256:$b" "$f"
   [ -z "$output" ]
+  # Each planned ref is held to its own digest; another image's or a base's
+  # digest cannot stand in, and a registry prefix does not dodge the check.
+  pv2() { qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: %s' "$1")" "$2"; }
+  two=$(printf -- '- team/agent-a:v1@sha256:%s\n- team/agent-b:v1@sha256:%s' "$a" "$b")
+  run pv2 "ran team/agent-a:v1@sha256:$b" "$two"
+  [ "$output" = "block" ]
+  run pv2 "ran team/agent-a:v1@sha256:$a" "$two"
+  [ "$output" = "allow" ]
+  c=$(printf 'c%.0s' $(seq 64))
+  run qa_digest_conflict "ran team/agent:v1@sha256:$c" "- team/agent:v1@sha256:$a (FROM team/base:v0@sha256:$c)"
+  [ "$output" = "team/agent:v1" ]
+  run pv2 "ran docker.io/team/agent:v1@sha256:$b" "$f"
+  [ "$output" = "block" ]
+  # Short, full and uppercase forms of the planned digest are the same digest.
+  up=$(printf '%s' "$a" | tr 'a-f' 'A-F')
+  for e in "ran team/agent:v1@sha256:${a:0:12}" "ran team/agent:v1@sha256:$up"; do
+    run pv2 "$e" "$f"
+    [ "$output" = "allow" ]
+    run qa_digest_conflict "$e" "$f"
+    [ -z "$output" ]
+  done
+  run qa_digest_conflict "ran team/agent:v1@sha256:$a" "- team/agent:v1@sha256:${a:0:12}"
+  [ -z "$output" ]
+  # An ISO deploy time in the plan is never the artifact either.
+  run pv2 "ran team/agent-base:v0 deployed 2026-10-13T14:05Z" "- team/agent:v1 deployed 2026-10-13T14:05Z"
+  [ "$output" = "block" ]
   t='- team/agent:v1 on mac mini, rebuilt at 14:05 UTC'
   run qa_artifact_gate "$(printf 'QA_STATUS: prod_verified\nEVIDENCE: ran team/agent-base:v0 at 14:05')" "$t"
   [ "$output" = "block" ]
