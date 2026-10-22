@@ -41,7 +41,7 @@ Verify:
 ```bash
 ~/dev/tooling/gstack-extensions/eng/hooks/scripts/land-and-deploy-patch.sh check
 # hunk1: current (...readiness-gate.md)
-# hunk2: current (...merge-and-deploy.md)     exit 0; 1 = missing/stale, 2 = anchor moved
+# hunk2: current (...merge-and-deploy.md)     exit 0; 1 = missing/stale, 2 = anchor moved, 3 = skill not installed
 ```
 
 ## `--repo "$REPO"` and the merge gate
