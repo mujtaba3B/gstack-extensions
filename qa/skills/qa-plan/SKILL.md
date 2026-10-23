@@ -70,7 +70,7 @@ Column discipline (this is what keeps it readable): `Check` and `Expect` are **o
 
 The routine automated checks (unit tests, lint/types, CI, `/eng:cr`) are NOT rows: they collapse into the one-line **`Standard (all green)`** header above the tables. Dev QA rows are only the manual / bespoke flows that standard automation does not already cover.
 
-**Name the production artifact (required for every PROD row).** In the `**Production artifacts:**` block below the table, name for each PROD row the EXACT thing production runs (an image digest/tag, a bundle id, a deploy/run id) plus the host and how it is exercised. The QA-status gate reads this: when you later state `QA_STATUS: prod_verified`, it rejects EVIDENCE that names only an upstream / base / proxy artifact instead of this one. Write it so a machine can match it (a literal image:tag or `sha256:` digest), not a vague description.
+**Name the production artifact (required for every PROD row).** In the `**Production artifacts:**` block below the table, name for each PROD row the EXACT thing production runs (an image digest/tag, a bundle id, a deploy/run id) plus the host and how it is exercised. The QA-status gate reads this: when you later state `QA_STATUS: prod_verified`, it rejects EVIDENCE that names only an upstream / base / proxy artifact instead of this one. Write it so a machine can match it (a literal image:tag or a `sha256:` digest of at least 12 hex characters), not a vague description. Name ONLY what production runs: never list the base or upstream image it was built from in this field (describe the build chain in the companion artifact instead), because every image ref here is one the gate expects the handoff to cite. The same goes for any other colon-joined token on an artifact line (a host:port such as `mac-mini:8080`, a skill such as `/mu:pause`): the handoff must cite it too, so write the host as a dotted hostname or in plain words, and say how it is exercised in prose without colon-joined tokens.
 
 **Layer-walk (only when the diff touches a build / derivation / deploy layer:** a container image, bundled binary, lambda layer, CDN asset, vendored copy, or multi-stage build. Skip it otherwise.) Ask: between the code I changed and what the user/agent actually runs, what layers exist, which one does production execute, does my QA hit THAT one, and is the derived artifact rebuilt automatically when my change lands or does it go stale until a separate trigger? Make the answer the production artifact and write the PROD row to verify through it. This exists because a shared base image was once "verified" by testing the base directly while the per-agent images derived from it silently went stale.
 
@@ -109,7 +109,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 |---|---|---|---|
 | <tester> | <one line: live check after deploy> | <one line: result> | <extra detail, or blank> |
 
-**Production artifacts:** for each Prod QA row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host + how it is exercised.
+**Production artifacts:** for each Prod QA row, name the exact thing production runs (image digest/tag, bundle id, deploy/run id) + host (a dotted hostname or plain words) + how it is exercised (prose, with no colon-joined host-and-port pair or skill name); name only what production runs, never the base image.
 
 **Definition of Done:**
 - [ ] Tests written and green
@@ -117,7 +117,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 - [ ] Docs updated where user-facing
 - [ ] `where-things-run.json` bumped if the deploy changed hosts
 
-**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live.
+**QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` (in the PR body write the plain `QA_STATUS: verified`, the only spelling the CI qa-gate accepts) once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live, or, once every agent-runnable Prod QA row is closed with evidence, `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` (only what no agent can do) + `PHASE: prod` + `EVIDENCE:` (citing the Production artifact) while a human-tester row is still open (write "I'll mark it verified once you confirm", not the literal prod_verified posture line).
 ```
 
 Format rules the gates depend on:

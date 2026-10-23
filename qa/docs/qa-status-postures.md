@@ -57,11 +57,101 @@ and passed.
 - Requires `EVIDENCE:` of the live check.
 - Artifact-evidence rule: if the approved QA plan in the PR body named a
   `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
-  or deploy id), the EVIDENCE must cite THAT artifact. The gate rejects evidence
-  that names only a base / upstream / proxy artifact from the same image
-  family. This is incident hardening: a shared base image was once "verified"
+  or deploy id), the EVIDENCE must cite THAT artifact (this also applies to an
+  `awaiting_human` handoff unless it is plainly `PHASE: dev`). The gate rejects evidence
+  that names only a base / upstream / proxy artifact from the same family
+  (an image, or any colon-joined name the field gives, such as a host:port). This is incident hardening: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
   went silently stale.
+
+### `QA_STATUS: awaiting_human`
+
+Every check an agent can run is done; the one item left needs a human's hands
+(a desktop-app click, a real login, a device in the room). Not broken, not
+finished: waiting on a named person for a named check.
+
+- Requires `DRIVER: <roster id>` (usually `mujtaba`), `CHECK: <the exact thing
+  the human must do and what they should see>`, and `PHASE: dev` or
+  `PHASE: prod`.
+- Run every check an agent CAN run first. Each agent-runnable row must be
+  closed with evidence that meets that phase's bar before you hand off (for
+  Production rows, the `prod_verified` bar, including the artifact-evidence
+  rule above). `CHECK:` names only what no agent can do; never move a
+  runnable check into it.
+- `PHASE: prod` is the common case: the change is merged and deployed, and the
+  only open Production QA row is a live check no agent can perform (e.g. run
+  `/mu:pause` from the desktop app after a restart). Record `prod_verified`
+  after the human reports back. Also record the open check where it outlives
+  this chat: a comment on the merged PR naming the open Production QA row and
+  the CHECK, or a TODO. Once you are back on main nothing re-prompts for
+  the open check, so a chat line alone is easy to lose.
+- `awaiting_human` claims nothing about the pending check. Its `EVIDENCE:`
+  line cites the rows the agent did run, not the human's check. A `PHASE: dev`
+  handoff may omit it. A production handoff (anything not plainly
+  `PHASE: dev`) must cite the exact artifact the plan's `Production
+  artifacts:` names, outside any code fence, even when the human's check is
+  the only row left (name the deployed artifact). When that field names a
+  citable ref or a sha256 digest (12+ hex characters; a shorter digest is
+  not matched), the gate blocks a handoff that does not cite
+  it as a whole token (every citable ref, when it names several), whatever its
+  EVIDENCE line says. Each artifact line of the field is checked on its own:
+  cite every citable ref on it, the image refs and any host or skill token
+  written beside them (mac-mini:8080, /mu:pause); citing its digests counts
+  instead only when that line names at most one citable ref (a digest-only
+  line is satisfied by its digest; a base's digest listed
+  beside the image's cannot stand in for it). When a line pins a ref to a
+  digest (team/agent:v1@sha256:...), citing that ref at another digest is a
+  stale image, not a citation, on either posture. The block names the missing
+  refs. A citable ref is any colon-joined `name:tag` token: image refs
+  (ghcr.io/acme/app:v1, agent:42; a registry with a port is part of the
+  ref, so cite registry.acme.io:5000/team/agent:v1 whole: a localhost:5000
+  build of the same path does not count), a host:port on a single-label host
+  (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
+  run id (run:4567). Dropped, so never required: ISO times
+  (2026-10-13T14:05Z), all-digit names and time ranges (14:05, 14:05/15:30),
+  and dotted hostnames
+  (sms-hero.example.com:443) or localhost with a port-length tag (under 6
+  digits); an all-digit tag of 6+ digits is kept on any name
+  (registry.acme.io:20261013). A dotted image name with a short
+  all-digit tag (acme.agent:42) reads as a dotted host:port and is not
+  checked; give such an image a registry path or a non-numeric tag. A field
+  naming no citable ref or digest (only a bundle id, a deploy id written
+  without a colon, a dotted hostname or localhost) is not checked: there is
+  nothing the gate can match. The field is prose, so picking its image out is a heuristic; a
+  dedicated machine-readable line is a planned follow-up.
+- The gate enforces the Production bar: unless the message is plainly
+  `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
+  anywhere in it, every such token `dev` or `development`, and nothing
+  pairing PHASE with
+  prod), the handoff is checked against the plan's `Production artifacts:`.
+  Unlike `prod_verified`, which is judged on its `EVIDENCE:` line, the whole
+  message outside code fences is matched (when the field names a citable ref
+  or digest, see above): it must name the exact artifact, and a handoff naming only a
+  base / proxy artifact is blocked. A missing or oddly formatted
+  `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
+  with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
+  preview artifact. The check reads `Production artifacts:` from the PR of
+  the current branch, so a handoff written from `main` (no PR) is not
+  checked; close those rows against the named artifact yourself. A block
+  names the text that engaged the check (a "Phase" table header, a
+  "PHASE: prod" remark). The fix is to re-verify through the production
+  artifact; restating as `PHASE: dev` is right only for a genuinely
+  pre-merge handoff, never for one whose change is merged or deployed.
+- While awaiting, say "I'll mark it verified once you confirm" rather than
+  writing the literal `QA_STATUS: prod_verified` token: any unfenced
+  `QA_STATUS: prod_verified` also engages the artifact check, by design (a
+  rule that tried to tell a promise from a claim was beaten by markdown and
+  HTML shapes and reverted).
+- `PHASE: dev` is a pre-merge check only the human can do that involves no
+  branch deploy (e.g. a local install exercised in his own app). If you
+  deployed the feature branch to a host for him, use
+  `deploy_branch_for_manual_qa` with `DRIVER: mujtaba` instead: its
+  `DEPLOYED:` line is the record of that deploy. Either way, leave the Dev QA
+  box for the human's check unchecked until they report back: that box is
+  what keeps the merge blocked, and `verified` is recorded only after it.
+- Use this, not `blocked`, when nothing is wrong and the only gap is a human
+  check; use it, not `dev_verified` / `prod_verified`, so the open item stays
+  visible.
 
 ### `QA_STATUS: blocked`
 
@@ -96,8 +186,8 @@ docs-only commits.
 
 ## Intermediate vs terminal postures (CI asymmetry)
 
-`deploy_branch_for_manual_qa` and `skip_requested` end the working turn at the
-Stop hook but are NOT accepted by the strict per-repo CI qa-gate
+`deploy_branch_for_manual_qa`, `skip_requested`, and `awaiting_human` end the
+working turn at the Stop hook but are NOT accepted by the strict per-repo CI qa-gate
 (`.github/workflows/qa-gate.yml`), which greens only on `verified` / `blocked`
 / `skip_approved` (verified against the deployed workflow's matcher; note it
 does NOT match the longer `dev_verified` spelling, so the PR body must carry a
@@ -105,4 +195,11 @@ plain `QA_STATUS: verified` line for CI even when the turn-level posture was
 stated as `dev_verified`). That is intentional: the merge stays blocked on
 real verification, and the PR goes green when the verified posture is
 recorded after the human's thumbs-up. (`prod_verified` is post-deploy, not a
-pre-merge condition.)
+pre-merge condition; so is `awaiting_human PHASE: prod`, which CI never sees.
+`awaiting_human PHASE: dev` is deliberately left out of the CI matcher, so
+the posture itself never greens a merge; the matcher is anchored to the
+keyword right after `QA_STATUS:`, so a `CHECK:` line that mentions "verified"
+does not count. That is not a hard guarantee: the matcher also accepts
+`blocked`, and the Dev QA boxes merge-clearance reads can be ticked by anyone
+who edits the PR body. What actually keeps a pending human check from merging
+is the driver leaving its Dev QA box unchecked until the human reports back.)

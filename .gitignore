@@ -46,3 +46,6 @@ __pycache__/
 !.gstack/qa-quincey/
 .gstack/qa-quincey/*
 !.gstack/qa-quincey/recipe.yml
+
+# claude plugin eval run output (reports, aggregate JSON)
+*/evals/results/
