@@ -34,9 +34,11 @@ tuples() {
     'PreToolUse|Bash|ship-gate-sentinel.sh' \
     'PreToolUse|Bash|ship-pr-gate.sh' \
     'PreToolUse|Skill|deploy-gate.sh' \
+    'PreToolUse|Skill|land-and-deploy-patch.sh' \
     'PreToolUse|Skill|land-deploy-sentinel.sh' \
     'PreToolUse|Skill|ship-gate-sentinel.sh' \
     'UserPromptSubmit||deploy-gate.sh' \
+    'UserPromptSubmit||land-and-deploy-patch.sh' \
     'UserPromptSubmit||land-deploy-sentinel.sh' \
     'UserPromptSubmit||ship-gate-sentinel.sh' \
     | sort)
