@@ -215,12 +215,15 @@ The verdict is what Deployer Danny reads when deciding whether to ship.
 
 Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. The postures are two-phase (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
 
-- PASS in dev / preview (pre-merge) → `QA_STATUS: dev_verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it). `verified` is accepted as an alias.
+- PASS in dev / preview (pre-merge) → `QA_STATUS: dev_verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it). `verified` is accepted as an alias, and is the spelling the PR body needs (the CI qa-gate rejects `dev_verified`).
 - PASS live in production (post-deploy) → `QA_STATUS: prod_verified` + `EVIDENCE:`.
+- Only a human can do the last check (nothing failed) → `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` + `PHASE: dev|prod` (+ `EVIDENCE:` citing the production artifact unless the handoff is plainly `PHASE: dev`). Run every check you can first; `CHECK:` names only what no agent can do, and while waiting say "I'll mark it verified once you confirm" rather than writing the literal `QA_STATUS: prod_verified`. Not `blocked`, which reads as broken. A repo's CI qa-gate, where one exists, does not accept it; what keeps a `PHASE: dev` merge blocked is that check's Dev QA box, so leave it unchecked until the human reports back and `verified` is recorded.
 - FAIL → `QA_STATUS: blocked` + `REASON:` (and, for browser, a filed `/pm:bug`).
 - QA not feasible → `QA_STATUS: skip_requested` + `REASON:`, escalated to `skip_approved` + `QA_SKIP_APPROVED_BY:` after a human OK (CI rejects a bare `skip_requested`).
 
-End the final message with the posture line. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The full two-gate format, the strict CI rules, and the skip escalation live in `qa:browser`'s `references/qa-contract.md`.
+Two more postures exist outside a qa:* run's verdict: `deploy_branch_for_manual_qa` (the feature branch deployed to its real host for QA) and `no_tracked_change` (nothing version-controlled changed). The full list, with every posture's required lines, is `docs/qa-status-postures.md` at the plugin root.
+
+End the final message with the posture line. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The canonical contract is `docs/qa-status-postures.md`; `qa:browser`'s `references/qa-contract.md` summarizes the two-gate format, the strict CI rules, and the skip escalation.
 
 ---
 
