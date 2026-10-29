@@ -113,6 +113,20 @@ count() { grep -c "$1" "$2" || true; }
   [ "$status" -eq 2 ]
 }
 
+@test "a stale block whose anchor was renamed upstream: exit 2, file untouched, no temp files" {
+  # locate() finds the file by our marker, so apply gets as far as the temp
+  # copies before discovering the anchor is gone. CodeRabbit #96: $tmp.new leaked.
+  "$P" apply "$D"
+  sed -i.bak -e 's/merge-clearance:hunk1:begin [0-9]*/merge-clearance:hunk1:begin 1/' \
+    -e 's/^### 3.5e:/### 3.6: Renamed/' "$D/sections/readiness-gate.md"
+  rm -f "$D/sections/"*.bak
+  cp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.orig"
+  run "$P" apply "$D"
+  [ "$status" -eq 2 ]
+  cmp "$D/sections/readiness-gate.md" "$BATS_TEST_TMPDIR/rg.orig"
+  [ -z "$(ls -a "$D/sections" | grep -E '\.md\.[A-Za-z0-9]{6}')" ]
+}
+
 @test "skill not installed: exit 3" {
   run "$P" apply "$BATS_TEST_TMPDIR/nope"
   [ "$status" -eq 3 ]

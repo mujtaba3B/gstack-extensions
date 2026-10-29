@@ -123,7 +123,7 @@ apply_one() {
   fi
   line=$(anchor_line "$id" "$tmp")
   if [ -z "$line" ]; then
-    rm -f "$tmp"
+    rm -f "$tmp" "$tmp.new"
     echo "land-and-deploy-patch: $id anchor not found in $file" >&2
     return 2
   fi
