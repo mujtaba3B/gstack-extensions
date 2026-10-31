@@ -103,43 +103,34 @@ setup() {
 }
 
 # qa_shippable_verdict truth table: only positive evidence that the branch's
-# files already match the base disarms; an unknown read keeps the gate armed.
+# files already match the base disarms; an unknown or garbled answer keeps the
+# gate armed.
 @test "shippable verdict: not ahead -> 0" {
-  run qa_shippable_verdict 0 "a.txt" ""
+  run qa_shippable_verdict 0 ""
   [ "$output" = "0" ]
 }
 
 @test "shippable verdict: ahead, branch files differ from base -> 1" {
-  run qa_shippable_verdict 2 "a.txt" 0
+  run qa_shippable_verdict 2 0
   [ "$output" = "1" ]
 }
 
 @test "shippable verdict: ahead, branch files match base (squash-merged) -> 0" {
-  run qa_shippable_verdict 2 "$(printf 'a.txt\nb.txt')" 1
+  run qa_shippable_verdict 2 1
   [ "$output" = "0" ]
 }
 
 @test "shippable verdict: ahead, check could not run -> 1 (never disarm on doubt)" {
-  run qa_shippable_verdict 2 "" ""
+  run qa_shippable_verdict 2 ""
   [ "$output" = "1" ]
 }
 
-@test "shippable verdict: ahead, commits net to no file change -> 0" {
-  run qa_shippable_verdict 1 "" 1
-  [ "$output" = "0" ]
+@test "shippable verdict: ahead, garbled match answer -> 1" {
+  run qa_shippable_verdict 2 "yes"
+  [ "$output" = "1" ]
 }
 
 @test "shippable verdict: non-numeric ahead -> 0" {
-  run qa_shippable_verdict "garbage" "a.txt" 0
+  run qa_shippable_verdict "garbage" 0
   [ "$output" = "0" ]
-}
-
-@test "shippable verdict: a differing file arms even with an empty list -> 1" {
-  run qa_shippable_verdict 2 "" 0
-  [ "$output" = "1" ]
-}
-
-@test "shippable verdict: a path made only of spaces is still a path -> 1" {
-  run qa_shippable_verdict 1 "   " 0
-  [ "$output" = "1" ]
 }

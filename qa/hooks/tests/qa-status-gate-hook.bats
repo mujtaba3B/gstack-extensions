@@ -199,8 +199,12 @@ squash_onto_main() {
 # Every way the content check can fail must keep the gate ARMED: only positive
 # evidence that the branch's files match the base may disarm it.
 @test "hook blocks: the comparison awk fails, gate stays armed" {
+  # A squash-merged fixture, so a WORKING comparison would disarm (the
+  # "squash-merged branch" test above is that control); only the failure can
+  # re-arm it.
   add_origin main set-head
-  commit_ahead
+  two_commits_ahead
+  squash_onto_main all
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   REAL_AWK=$(command -v awk)
   printf '#!/bin/sh\ncase "$1" in *qa-shipped-compare*) exit 2 ;; esac\nexec %s "$@"\n' "$REAL_AWK" > "$BATS_TEST_TMPDIR/bin/awk"

@@ -116,7 +116,7 @@ if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
       END { exit hit ? 0 : 1 }'
     case $? in 0) MATCH=0 ;; 1) MATCH=1 ;; esac
   fi
-  SHIPPABLE=$(qa_shippable_verdict "${AHEAD:-0}" "$CHANGED" "$MATCH")
+  SHIPPABLE=$(qa_shippable_verdict "${AHEAD:-0}" "$MATCH")
 fi
 
 DECISION=$(qa_gate_decision "$LAST" "$SHIPPABLE")
