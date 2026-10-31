@@ -88,18 +88,20 @@ qa_gate_decision() {
 #   files_match_base  1 = those paths are identical on base and HEAD,
 #                     0 = at least one differs, "" = the check could not run
 # Only POSITIVE evidence disarms: a check that could not run keeps the old
-# commits-ahead verdict, so a shallow clone or a missing merge-base never
-# silently turns the gate off. No changed files at all (ahead, but the commits
-# net to nothing) has nothing to QA, so it disarms too.
+# commits-ahead verdict, so a shallow clone, a missing merge-base or a failed
+# comparison never silently turns the gate off. No changed files at all
+# (ahead, but the commits net to nothing) has nothing to QA, so it disarms too.
 qa_shippable_verdict() {
   local ahead="$1" files="$2" match="$3"
   [ "${ahead:-0}" -gt 0 ] 2>/dev/null || { echo 0; return 0; }
   # Unknown comes first: a failed read also leaves the file list empty, and
   # that must not read as "nets to nothing".
   [ "$match" = "0" ] || [ "$match" = "1" ] || { echo 1; return 0; }
-  [ -n "$(printf '%s' "$files" | tr -d '[:space:]')" ] || { echo 0; return 0; }
-  [ "$match" = "1" ] && { echo 0; return 0; }
-  echo 1
+  # A differing file always arms, whatever the list looks like.
+  [ "$match" = "0" ] && { echo 1; return 0; }
+  # Literal emptiness: a path made only of spaces is still a path.
+  [ -n "$files" ] || { echo 0; return 0; }
+  echo 0
 }
 
 # ---------------------------------------------------------------------------

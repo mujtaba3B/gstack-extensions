@@ -2,7 +2,8 @@
 # End-to-end tests for the qa-status-gate.sh Stop hook itself (not the pure
 # lib): pipe a real Stop payload at a fixture repo and assert on stdout.
 # Locks in the 2026-06-10 noise-control behavior: a dirty tree alone does not
-# arm the gate, only commits ahead of the base branch do, and the block reason
+# arm the gate, only commits ahead of the base branch (and not already
+# squash-merged) do, and the block reason
 # is the short pointer form (not the old 2,500-char posture menu).
 
 setup() {
@@ -193,6 +194,104 @@ squash_onto_main() {
   run run_gate 'All done, ready to merge.'
   [ "$status" -eq 0 ]
   assert_short_block
+}
+
+# Every way the content check can fail must keep the gate ARMED: only positive
+# evidence that the branch's files match the base may disarm it.
+@test "hook blocks: the comparison awk fails, gate stays armed" {
+  add_origin main set-head
+  commit_ahead
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  REAL_AWK=$(command -v awk)
+  printf '#!/bin/sh\ncase "$1" in *qa-shipped-compare*) exit 2 ;; esac\nexec %s "$@"\n' "$REAL_AWK" > "$BATS_TEST_TMPDIR/bin/awk"
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
+  run bash -c 'payload_json=$1; printf "%s" "$payload_json" | PATH="$2:$PATH" bash "$3"' _ "$(payload 'All done, ready to merge.')" "$BATS_TEST_TMPDIR/bin" "$GATE"
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook blocks: a base-side list past the env size limits" {
+  # Linux rejects one environment string over 128 KiB and macOS caps argv plus
+  # environment near 1 MiB, so a list carried in the environment made awk fail
+  # to start (read as "matches base"). The pipe has no such limit. Sized past
+  # 1 MiB so the regression shows on both.
+  add_origin main set-head
+  commit_ahead
+  git -C "$FIX" checkout -q main
+  mkdir -p "$FIX/many"
+  i=0; while [ "$i" -lt 20000 ]; do : > "$FIX/many/a-fairly-long-generated-file-name-to-fill-the-list-$i.txt"; i=$((i + 1)); done
+  git -C "$FIX" add many; git -C "$FIX" commit -q -m many
+  [ "$(git -C "$FIX" diff --name-only feat/x main | wc -c)" -gt 1100000 ]
+  git -C "$FIX" push -q origin main
+  git -C "$FIX" checkout -q feat/x
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook blocks: no merge-base (unrelated histories), commits-ahead verdict kept" {
+  add_origin main set-head
+  git -C "$FIX" checkout -q --orphan feat/orphan
+  git -C "$FIX" rm -rqf .
+  echo w > "$FIX/w.txt"; git -C "$FIX" add w.txt; git -C "$FIX" commit -q -m orphan
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook blocks: diff.relative=true and a subdirectory session cwd" {
+  add_origin main set-head
+  mkdir -p "$FIX/sub"; echo s > "$FIX/sub/s.txt"
+  git -C "$FIX" add sub; git -C "$FIX" commit -q -m sub
+  git -C "$FIX" push -q origin feat/x:main
+  commit_ahead                            # the unshipped change is OUTSIDE sub/
+  git -C "$FIX" config diff.relative true
+  run bash -c 'jq -nc --arg m "$1" --arg c "$2" "{last_assistant_message:\$m, cwd:\$c}" | bash "$3"' _ 'All done, ready to merge.' "$FIX/sub" "$GATE"
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook allows: squash-merged branch in a repo with no origin (local base)" {
+  two_commits_ahead
+  git -C "$FIX" checkout -q main
+  git -C "$FIX" checkout -q feat/x -- file.txt other.txt
+  git -C "$FIX" commit -q -m "squash of feat/x"
+  git -C "$FIX" checkout -q feat/x
+  [ "$(git -C "$FIX" rev-list --count main..HEAD)" -eq 2 ]
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# A rename on the branch: --no-renames lists BOTH paths, so landing only the new
+# name still leaves the old one differing.
+rename_on_branch() {
+  add_origin main set-head
+  git -C "$FIX" mv seed.txt renamed.txt
+  git -C "$FIX" commit -q -m rename
+}
+
+@test "hook blocks: a rename only half landed on the base" {
+  rename_on_branch
+  git -C "$FIX" checkout -q main
+  git -C "$FIX" checkout -q feat/x -- renamed.txt     # seed.txt still on main
+  git -C "$FIX" commit -q -m "half rename"; git -C "$FIX" push -q origin main
+  git -C "$FIX" checkout -q feat/x
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook allows: a rename fully landed on the base (squash)" {
+  rename_on_branch
+  git -C "$FIX" checkout -q main
+  git -C "$FIX" checkout -q feat/x -- renamed.txt
+  git -C "$FIX" rm -q seed.txt
+  git -C "$FIX" commit -q -m "squash rename"; git -C "$FIX" push -q origin main
+  git -C "$FIX" checkout -q feat/x
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 # A gh stub on PATH serves the PR body, so the hook's artifact path runs end to

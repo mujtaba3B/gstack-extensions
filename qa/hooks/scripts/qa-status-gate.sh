@@ -1,8 +1,10 @@
 #!/bin/bash
 # Stop hook: make QA a first-class, STATED posture whenever the agent declares
 # coding work done. If the final assistant message claims completion on a branch
-# with commits ahead of the base branch, and it carries no QA_STATUS line, block
-# the stop and tell the agent to state its QA posture before ending.
+# with commits ahead of the base branch whose changed files do not already read
+# the same on the base (so a squash-merged branch does not arm it), and it
+# carries no QA_STATUS line, block the stop and tell the agent to state its QA
+# posture before ending.
 #
 # Output protocol (Claude Code Stop hook):
 #   exit 0 + empty stdout                              -> allow stop
@@ -10,7 +12,9 @@
 #
 # Fail-open everywhere: any missing dependency, unreadable transcript, or git
 # uncertainty exits 0 (allow). The PR CI backstop catches what this misses; a
-# gate that nags on doubt trains the human to disable it.
+# gate that nags on doubt trains the human to disable it. One carve-out: the
+# squash-merge content check below only ever DISARMS on positive evidence, so
+# when it cannot run it keeps the commits-ahead verdict instead of allowing.
 #
 # The block reason is deliberately SHORT (the human sees it verbatim at the end
 # of every blocked turn; a 2,500-char menu buried the actual response). It names
@@ -55,11 +59,13 @@ LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-status-gate-lib.sh"
 . "$LIB"
 
 # Shippable work in the SESSION cwd (from the payload, not the hook process cwd)?
-# Commits ahead of the base branch ONLY. A dirty tree deliberately does NOT
-# count: long-lived local edits (a modified LOG.md, a sibling pane's
-# work) armed the gate on every chatty turn, and the noise outweighed the
-# catch. Uncommitted work gets caught at commit/ship time, when the commits
-# exist. All best-effort; any failure leaves shippable=0 (allow).
+# Commits ahead of the base branch, minus a branch whose changes are already on
+# the base (see below). A dirty tree deliberately does NOT count: long-lived
+# local edits (a modified LOG.md, a sibling pane's work) armed the gate on every
+# chatty turn, and the noise outweighed the catch. Uncommitted work gets caught
+# at commit/ship time, when the commits exist. All best-effort: a failure before
+# the ahead count leaves shippable=0 (allow); a failure in the content check
+# keeps the commits-ahead verdict.
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$(pwd)"
 SHIPPABLE=0
@@ -67,7 +73,7 @@ if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
   BASE=$(git -C "$CWD" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@refs/remotes/origin/@@')
   # origin/HEAD is often unset (plain `git remote add` never sets it). Probe the
   # usual base names so a master-default repo without origin/HEAD still arms the
-  # gate; with rev-list now the SOLE arming signal, defaulting blindly to main
+  # gate; with rev-list the primary arming signal, defaulting blindly to main
   # would silently disarm it there.
   if [ -z "$BASE" ]; then
     for B in main master; do
@@ -84,24 +90,31 @@ if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
   # Ahead is not the same as unshipped: a squash- or rebase-merged branch stays
   # ahead forever. Ask whether the files this branch changed since its
   # merge-base already read the same on the base (qa_shippable_verdict). Local
-  # git only, no network. MATCH stays empty when a read fails, which keeps the
-  # commits-ahead verdict rather than disarming on doubt. Comparing two
-  # name-only lists (instead of passing the files as a pathspec) has no
-  # argument-length limit and no pathspec-magic surprises. The base-side list
-  # reaches awk through ENVIRON, not -v (which would unescape git's quoted
-  # paths) and not a process substitution (POSIX-mode bash 3.2 fails it open).
+  # git only, no network. MATCH stays empty when any read or the comparison
+  # fails, which keeps the commits-ahead verdict rather than disarming on doubt.
+  # Both name-only lists reach awk on ONE stdin stream, base side first, split
+  # by a blank line (git never prints an empty path): a pipe has no size limit,
+  # unlike argv or the environment (128 KiB per string on Linux, which a busy
+  # base exceeds), keeps git's quoting identical on both sides (awk -v would
+  # unescape it), and needs no process substitution (POSIX-mode bash 3.2 fails
+  # it open). awk exits 0 on a shared path, 1 on none; any other status (a
+  # missing or failing awk) is unknown. The diff flags pin user config that would
+  # empty a list: --no-relative (diff.relative hides changes outside a
+  # subdirectory session cwd), --ignore-submodules=none (diff.ignoreSubmodules
+  # hides a submodule bump); --no-renames lists both sides of a rename. A git too
+  # old for a flag fails the read, which keeps the gate armed.
   CHANGED="" MATCH=""
   if [ "${AHEAD:-0}" -gt 0 ] 2>/dev/null \
      && MB=$(git -C "$CWD" merge-base "$BASEREF" HEAD 2>/dev/null) \
-     && CHANGED=$(git -C "$CWD" diff --name-only --no-renames "$MB" HEAD 2>/dev/null) \
-     && VSBASE=$(git -C "$CWD" diff --name-only --no-renames "$BASEREF" HEAD 2>/dev/null); then
-    if printf '%s\n' "$CHANGED" | VSBASE="$VSBASE" awk '
-         BEGIN { n = split(ENVIRON["VSBASE"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") d[a[i]] = 1 }
-         ($0 in d) { hit = 1 } END { exit !hit }'; then
-      MATCH=0
-    else
-      MATCH=1
-    fi
+     && CHANGED=$(git -C "$CWD" diff --name-only --no-renames --no-relative --ignore-submodules=none "$MB" HEAD 2>/dev/null) \
+     && VSBASE=$(git -C "$CWD" diff --name-only --no-renames --no-relative --ignore-submodules=none "$BASEREF" HEAD 2>/dev/null); then
+    { [ -n "$VSBASE" ] && printf '%s\n' "$VSBASE"; printf '\n%s\n' "$CHANGED"; } | awk '
+      # qa-shipped-compare (tests key an awk stub on this marker)
+      !side && $0 == "" { side = 1; next }
+      !side { base[$0] = 1; next }
+      $0 != "" && ($0 in base) { hit = 1 }
+      END { exit hit ? 0 : 1 }'
+    case $? in 0) MATCH=0 ;; 1) MATCH=1 ;; esac
   fi
   SHIPPABLE=$(qa_shippable_verdict "${AHEAD:-0}" "$CHANGED" "$MATCH")
 fi

@@ -133,3 +133,13 @@ setup() {
   run qa_shippable_verdict "garbage" "a.txt" 0
   [ "$output" = "0" ]
 }
+
+@test "shippable verdict: a differing file arms even with an empty list -> 1" {
+  run qa_shippable_verdict 2 "" 0
+  [ "$output" = "1" ]
+}
+
+@test "shippable verdict: a path made only of spaces is still a path -> 1" {
+  run qa_shippable_verdict 1 "   " 0
+  [ "$output" = "1" ]
+}
