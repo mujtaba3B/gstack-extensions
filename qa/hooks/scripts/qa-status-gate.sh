@@ -49,6 +49,11 @@ if [ -z "$LAST" ]; then
 fi
 [ -z "$LAST" ] && exit 0
 
+LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-status-gate-lib.sh"
+[ -f "$LIB" ] || exit 0
+# shellcheck source=/dev/null
+. "$LIB"
+
 # Shippable work in the SESSION cwd (from the payload, not the hook process cwd)?
 # Commits ahead of the base branch ONLY. A dirty tree deliberately does NOT
 # count: long-lived local edits (a modified LOG.md, a sibling pane's
@@ -73,15 +78,33 @@ if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
     done
   fi
   BASE=${BASE:-main}
-  AHEAD=$(git -C "$CWD" rev-list --count "origin/${BASE}..HEAD" 2>/dev/null \
-          || git -C "$CWD" rev-list --count "${BASE}..HEAD" 2>/dev/null || echo 0)
-  if [ "${AHEAD:-0}" -gt 0 ] 2>/dev/null; then SHIPPABLE=1; fi
+  BASEREF="origin/${BASE}"
+  git -C "$CWD" rev-parse -q --verify "${BASEREF}^{commit}" >/dev/null 2>&1 || BASEREF="$BASE"
+  AHEAD=$(git -C "$CWD" rev-list --count "${BASEREF}..HEAD" 2>/dev/null || echo 0)
+  # Ahead is not the same as unshipped: a squash- or rebase-merged branch stays
+  # ahead forever. Ask whether the files this branch changed since its
+  # merge-base already read the same on the base (qa_shippable_verdict). Local
+  # git only, no network. MATCH stays empty when a read fails, which keeps the
+  # commits-ahead verdict rather than disarming on doubt. Comparing two
+  # name-only lists (instead of passing the files as a pathspec) has no
+  # argument-length limit and no pathspec-magic surprises. The base-side list
+  # reaches awk through ENVIRON, not -v (which would unescape git's quoted
+  # paths) and not a process substitution (POSIX-mode bash 3.2 fails it open).
+  CHANGED="" MATCH=""
+  if [ "${AHEAD:-0}" -gt 0 ] 2>/dev/null \
+     && MB=$(git -C "$CWD" merge-base "$BASEREF" HEAD 2>/dev/null) \
+     && CHANGED=$(git -C "$CWD" diff --name-only --no-renames "$MB" HEAD 2>/dev/null) \
+     && VSBASE=$(git -C "$CWD" diff --name-only --no-renames "$BASEREF" HEAD 2>/dev/null); then
+    if printf '%s\n' "$CHANGED" | VSBASE="$VSBASE" awk '
+         BEGIN { n = split(ENVIRON["VSBASE"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") d[a[i]] = 1 }
+         ($0 in d) { hit = 1 } END { exit !hit }'; then
+      MATCH=0
+    else
+      MATCH=1
+    fi
+  fi
+  SHIPPABLE=$(qa_shippable_verdict "${AHEAD:-0}" "$CHANGED" "$MATCH")
 fi
-
-LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-status-gate-lib.sh"
-[ -f "$LIB" ] || exit 0
-# shellcheck source=/dev/null
-. "$LIB"
 
 DECISION=$(qa_gate_decision "$LAST" "$SHIPPABLE")
 if [ "$DECISION" = "block" ]; then

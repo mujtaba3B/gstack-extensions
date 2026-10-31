@@ -101,3 +101,35 @@ setup() {
   run qa_gate_decision "$(printf 'Work is done.\nQA_STATUS: dev_verified\nEVIDENCE: ran the flow.')" 1
   [ "$output" = "allow" ]
 }
+
+# qa_shippable_verdict truth table: only positive evidence that the branch's
+# files already match the base disarms; an unknown read keeps the gate armed.
+@test "shippable verdict: not ahead -> 0" {
+  run qa_shippable_verdict 0 "a.txt" ""
+  [ "$output" = "0" ]
+}
+
+@test "shippable verdict: ahead, branch files differ from base -> 1" {
+  run qa_shippable_verdict 2 "a.txt" 0
+  [ "$output" = "1" ]
+}
+
+@test "shippable verdict: ahead, branch files match base (squash-merged) -> 0" {
+  run qa_shippable_verdict 2 "$(printf 'a.txt\nb.txt')" 1
+  [ "$output" = "0" ]
+}
+
+@test "shippable verdict: ahead, check could not run -> 1 (never disarm on doubt)" {
+  run qa_shippable_verdict 2 "" ""
+  [ "$output" = "1" ]
+}
+
+@test "shippable verdict: ahead, commits net to no file change -> 0" {
+  run qa_shippable_verdict 1 "" 1
+  [ "$output" = "0" ]
+}
+
+@test "shippable verdict: non-numeric ahead -> 0" {
+  run qa_shippable_verdict "garbage" "a.txt" 0
+  [ "$output" = "0" ]
+}

@@ -145,6 +145,56 @@ assert_short_block() { # validates $output as the short-pointer block form
   [ -z "$output" ]
 }
 
+# Squash-merge fixtures: feat/x carries two commits over two files, and main
+# lands their content as ONE new commit, so feat/x's commits are never
+# ancestors of origin/main and rev-list still counts them ahead (the
+# mujtaba3B/dev PR #106 false positive).
+two_commits_ahead() {
+  echo one > "$FIX/file.txt"; git -C "$FIX" add file.txt; git -C "$FIX" commit -q -m one
+  echo two > "$FIX/other.txt"; git -C "$FIX" add other.txt; git -C "$FIX" commit -q -m two
+}
+
+# $1 = "all" lands both files on main, "partial" lands only file.txt.
+squash_onto_main() {
+  git -C "$FIX" checkout -q main
+  git -C "$FIX" checkout -q feat/x -- file.txt
+  [ "$1" = "all" ] && git -C "$FIX" checkout -q feat/x -- other.txt
+  git -C "$FIX" commit -q -m "squash of feat/x"
+  # main moves on with an unrelated file, as it does in a busy repo.
+  echo later > "$FIX/unrelated.txt"; git -C "$FIX" add unrelated.txt; git -C "$FIX" commit -q -m later
+  git -C "$FIX" push -q origin main
+  git -C "$FIX" checkout -q feat/x
+}
+
+@test "hook allows: squash-merged branch, still commits ahead of origin base" {
+  add_origin main set-head
+  two_commits_ahead
+  squash_onto_main all
+  [ "$(git -C "$FIX" rev-list --count origin/main..HEAD)" -eq 2 ]   # the old arming signal fires
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "hook blocks: partially merged branch (one changed file differs from base)" {
+  add_origin main set-head
+  two_commits_ahead
+  squash_onto_main partial
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
+@test "hook blocks: new commit on a branch after its squash merge" {
+  add_origin main set-head
+  two_commits_ahead
+  squash_onto_main all
+  echo three > "$FIX/file.txt"; git -C "$FIX" commit -q -am three
+  run run_gate 'All done, ready to merge.'
+  [ "$status" -eq 0 ]
+  assert_short_block
+}
+
 # A gh stub on PATH serves the PR body, so the hook's artifact path runs end to
 # end (its PR-body fetch is gated on qa_artifact_engages).
 stub_pr_body() { # $1 = Production artifacts value

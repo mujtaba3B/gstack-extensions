@@ -11,7 +11,9 @@ which phase you have verified.
 The gate is a "did you decide?" gate, not a linter: any `QA_STATUS:` line
 allows the stop. It arms only when the branch has commits ahead of the base
 branch AND the final message makes a non-negated completion claim. A dirty
-working tree alone does not arm it.
+working tree alone does not arm it, and neither does a branch whose changed
+files already read the same on the base (a squash- or rebase-merged branch
+stays "ahead" in commit terms forever, but has nothing left to ship).
 
 ## The postures
 
