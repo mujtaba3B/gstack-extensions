@@ -1,5 +1,5 @@
 {
-  "_comment": "QA driver roster: who can be recommended to run QA for a change. /qa:plan and qa-status-gate.sh recommend a driver (default = the entry whose `default` is true); the agent takes a best guess, the human approves or refines, and the chosen driver is named IN THE PR BODY with their `handle`. Handles verified 2026-06-07 against GitHub: the Mu fleet accounts carry the -ai suffix (the bare mutwo/muthree/mufour logins are unrelated). Keep this list current as the fleet changes.",
+  "_comment": "QA driver roster: who can be recommended to run QA for a change. /qa:plan recommends a driver (default = the entry whose `default` is true); the agent takes a best guess, the human approves or refines, and the chosen driver is named IN THE PR BODY with their `handle`. Handles verified 2026-06-07 against GitHub: the Mu fleet accounts carry the -ai suffix (the bare mutwo/muthree/mufour logins are unrelated). Keep this list current as the fleet changes.",
   "default": "mutwo",
   "drivers": [
     {

@@ -70,7 +70,13 @@ Column discipline (this is what keeps it readable): `Check` and `Expect` are **o
 
 The routine automated checks (unit tests, lint/types, CI, `/eng:cr`) are NOT rows: they collapse into the one-line **`Standard (all green)`** header above the tables. Dev QA rows are only the manual / bespoke flows that standard automation does not already cover.
 
-**Name the production artifact (required for every PROD row).** In the `**Production artifacts:**` block below the table, name for each PROD row the EXACT thing production runs (an image digest/tag, a bundle id, a deploy/run id) plus the host and how it is exercised. The QA-status gate reads this: when you later state `QA_STATUS: prod_verified`, it rejects EVIDENCE that names only an upstream / base / proxy artifact instead of this one. Write it so a machine can match it (a literal image:tag or a `sha256:` digest of at least 12 hex characters), not a vague description. Name ONLY what production runs: never list the base or upstream image it was built from in this field (describe the build chain in the companion artifact instead), because every image ref here is one the gate expects the handoff to cite. The same goes for any other colon-joined token on an artifact line (a host:port such as `mac-mini:8080`, a skill such as `/mu:pause`): the handoff must cite it too, so write the host as a dotted hostname or in plain words, and say how it is exercised in prose without colon-joined tokens.
+**Name the production artifact (required for every PROD row).** In the `**Production artifacts:**` block below the table, for each PROD row:
+
+- Name the EXACT thing production runs: an image digest/tag, a bundle id, or a deploy/run id.
+- Name its host and how it is exercised.
+- Write it precisely (a literal image:tag, a `sha256:` digest, or an exact bundle id or deploy/run id), not a vague description.
+- Name ONLY what production runs: never list the base or upstream image it was built from here (describe the build chain in the companion artifact instead).
+- When you later state `QA_STATUS: prod_verified`, your EVIDENCE must cite this exact artifact, not an upstream / base / proxy one. Nothing checks that for you: it is the verifier's job.
 
 **Layer-walk (only when the diff touches a build / derivation / deploy layer:** a container image, bundled binary, lambda layer, CDN asset, vendored copy, or multi-stage build. Skip it otherwise.) Ask: between the code I changed and what the user/agent actually runs, what layers exist, which one does production execute, does my QA hit THAT one, and is the derived artifact rebuilt automatically when my change lands or does it go stale until a separate trigger? Make the answer the production artifact and write the PROD row to verify through it. This exists because a shared base image was once "verified" by testing the base directly while the per-agent images derived from it silently went stale.
 
@@ -181,7 +187,7 @@ Tell the user, in one tight readout:
 - The **Dev QA `✓` checkboxes** gate the merge: while any is unchecked, the merge-clearance QA dimension blocks (it reads both the Dev QA table checkboxes and the Definition-of-Done bullets). Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
 - The **Prod QA rows** are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
 - The **`📄 Plan view:` link** is the companion artifact (Step 4b), published on every run; point them at it. It is also the link carried in the approval modal, so it is the copy of the plan the human is guaranteed to be able to open.
-- Point at the aligned QA-status gate (the qa plugin's `hooks/scripts/qa-status-gate.sh`) for the posture contract.
+- Point at the posture contract (`docs/qa-status-postures.md` at the qa plugin's root).
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 

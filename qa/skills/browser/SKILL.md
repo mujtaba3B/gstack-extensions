@@ -3,7 +3,7 @@ name: browser
 preamble-tier: 4
 version: 2.0.0
 description: >-
-  QA Quincey's flagship skill: defined-flow LIVE-browser QA that drives the real running app through the user's persistent agent-browser session (abrowser, headed) at click/pixel level, not just endpoint calls. Pulls the happy path from a GitHub issue, spec, or Pencil mockup; walks the spec and reports per-assertion compliance (matches/drifts/missing); boots the app and seeds TAGGED test data via the repo's own recipe, then tears it down exactly; observes at the real surface (URL/redirect, rendered DOM, screenshots) with at least one adversarial off-happy-path probe; and ends by stating the QA posture contract (QA_STATUS: verified + EVIDENCE) that the build-time Stop hook and PR qa-gate CI read. Use for "qa quincey", "live qa", "qa this flow", "test the happy path on the real browser", "verify the deploy on X", "verify the happy path", "walk the spec". Use rather than /qa when verifying one flow against an explicit acceptance bar. (gstack-extensions)
+  QA Quincey's flagship skill: defined-flow LIVE-browser QA that drives the real running app through the user's persistent agent-browser session (abrowser, headed) at click/pixel level, not just endpoint calls. Pulls the happy path from a GitHub issue, spec, or Pencil mockup; walks the spec and reports per-assertion compliance (matches/drifts/missing); boots the app and seeds TAGGED test data via the repo's own recipe, then tears it down exactly; observes at the real surface (URL/redirect, rendered DOM, screenshots) with at least one adversarial off-happy-path probe; and ends by stating the QA posture contract (QA_STATUS: verified + EVIDENCE) that the PR qa-gate CI reads. Use for "qa quincey", "live qa", "qa this flow", "test the happy path on the real browser", "verify the deploy on X", "verify the happy path", "walk the spec". Use rather than /qa when verifying one flow against an explicit acceptance bar. (gstack-extensions)
 allowed-tools:
   - Bash
   - Read
@@ -845,9 +845,7 @@ Undo every mutation you made; keep the evidence.
 
 ## Step 11: Emit the QA posture contract
 
-QA is a first-class, recorded decision. The same run feeds two gates with different match rules (see `references/qa-contract.md`):
-- the build-time **Stop hook** (lenient: any `QA_STATUS:` line in your final message satisfies it), and
-- the PR **qa-gate CI** (strict: a single-keyword `QA_STATUS:` line in the PR body, no `<` or `|`, not the template menu).
+QA is a first-class, recorded decision. The run's posture goes in your final message, and the PR **qa-gate CI** reads it from the PR body with a strict match (a single-keyword `QA_STATUS:` line, no `<` or `|`, not the template menu; see `references/qa-contract.md`).
 
 Decide the posture from the verdict:
 - all scenarios PASS (deviations accepted/ignored) → `QA_STATUS: verified` + `EVIDENCE:` citing the real-surface observations, screenshot paths, the probe, and any test names. NEVER emit `verified` unless you actually drove the UI and observed the outcome.
@@ -855,7 +853,7 @@ Decide the posture from the verdict:
 - a FAIL, or QA could not complete → `QA_STATUS: blocked` + `REASON:`.
 - QA genuinely not feasible → `QA_STATUS: skip_requested` + `REASON:`, then ask the human "ok to skip QA for <reason>"; on approval record `QA_STATUS: skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>`. CI rejects `skip_requested`, so it must reach `skip_approved` before the PR can go green.
 
-End your final message with the posture line so the Stop hook sees it, and hand the user a CI-clean QA block to paste into the PR `## QA` section.
+End your final message with the posture line, and hand the user a CI-clean QA block to paste into the PR `## QA` section.
 
 ### Optional: reconcile deviations
 If deviations were found and the user wants them filed, walk them one at a time and offer `/pm:bug --fast` with a pre-filled body. This is optional now; the primary output is the stated QA posture, not the bug handoff.
