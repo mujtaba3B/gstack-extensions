@@ -8,7 +8,7 @@ This directory is a Claude Code plugin named `qa` (installed from this repo's lo
 
 | Invocation | What it does |
 |---|---|
-| `/qa:browser` | Defined-flow LIVE-browser QA. Drives the real running app through the user's persistent agent-browser session (`abrowser`, headed) at click/pixel level, walks the spec (spec/eng docs + Pencil frames) and reports per-assertion Spec compliance, seeds and tears down TAGGED data via the repo's `.gstack/qa-quincey/recipe.yml`, observes at the real surface with an adversarial probe, and ends by stating the `QA_STATUS` posture that feeds the build-time Stop hook and the PR qa-gate CI. |
+| `/qa:browser` | Defined-flow LIVE-browser QA. Drives the real running app through the user's persistent agent-browser session (`abrowser`, headed) at click/pixel level, walks the spec (spec/eng docs + Pencil frames) and reports per-assertion Spec compliance, seeds and tears down TAGGED data via the repo's `.gstack/qa-quincey/recipe.yml`, observes at the real surface with an adversarial probe, and ends by stating the `QA_STATUS` posture that feeds the PR qa-gate CI. |
 | `/qa:headless` | Defined-flow QA for backend features with no UI: cron jobs, queue workers, webhook handlers, notifiers, CLIs, ETL/data pipelines. Captures side effects (Slack messages, emails, DB writes, log lines), renders them readably, compares to expected output. |
 | `/qa:qa-plan` | Authors the two-phase QA plan (Development + Production) into the PR body before review, recommends a QA driver from `qa-roster.json`, presents the plan for human approval, and writes the approval stamp the QA-plan gates read. Authored before the PR is reviewed. |
 

@@ -189,9 +189,9 @@ chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
 echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
 
 # 5. Deploy the QA posture contract doc to its fixed path. Agents reach
-#    ~/.claude/docs/qa-status-postures.md from outside the plugin's own tree
-#    (a path baked into the ported script), so keep that path valid from this
-#    repo now that claude-hooks no longer owns the doc.
+#    ~/.claude/docs/qa-status-postures.md from outside the plugin's own tree,
+#    so keep that path valid from this repo now that claude-hooks no longer
+#    owns the doc.
 mkdir -p "$HOME/.claude/docs"
 cp "$REPO/qa/docs/qa-status-postures.md" "$HOME/.claude/docs/qa-status-postures.md"
 echo "deployed: ~/.claude/docs/qa-status-postures.md (QA posture contract)"
