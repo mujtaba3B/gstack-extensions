@@ -42,10 +42,14 @@ tuples() {
   [ "$status" -eq 0 ]
 }
 
-@test "the Stop QA-status gate declares a timeout (it can call gh)" {
-  run jq -e '.hooks.Stop | map(.hooks[] | select(.command | endswith("qa-status-gate.sh")))
-             | length > 0 and all(.timeout != null)' "$HOOKS_JSON"
+@test "the qa plugin registers no Stop hook" {
+  # The always-on QA_STATUS Stop gate had no per-repo switch and interrupted
+  # sessions with no code changes, so it was removed on purpose. A Stop hook
+  # here runs at the end of every turn in every repo: adding one back is a
+  # decision for the gate policy, not a wiring detail.
+  run jq -e '.hooks | has("Stop") | not' "$HOOKS_JSON"
   [ "$status" -eq 0 ]
+  [ ! -e "$HOOKS_DIR/scripts/qa-status-gate.sh" ]
 }
 
 @test "hooks.json is valid JSON with a top-level hooks object" {
@@ -61,7 +65,6 @@ tuples() {
     'PreToolUse|AskUserQuestion|qa-plan-present-gate.sh' \
     'PreToolUse|Bash|qa-plan-pr-gate.sh' \
     'PreToolUse|Edit|MultiEdit|Write|qa-plan-build-gate.sh' \
-    'Stop||qa-status-gate.sh' \
     'UserPromptSubmit||qa-plan-prompt-override.sh' \
     | sort)
   run tuples
