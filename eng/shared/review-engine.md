@@ -125,6 +125,20 @@ The six toolkit lenses (filenames under the `agents/` dir from Step A):
 | `comment-analyzer.md` | Comment rot / doc accuracy |
 | `code-simplifier.md` | Clarity / simplification (lowest priority) |
 
+**Mutation check, required whenever the diff adds or changes tests.** A green run
+proves only that the tests agree with the current code; it cannot tell a real
+assertion from a decorative one. For each new or changed assertion, name the one
+mutation of the code under test that should make it fail (drop the fallback,
+unquote the argument, flip the exit code), apply it, run the single relevant
+test file, confirm the test goes red, and restore. An assertion that stays green
+under its own mutation is a finding (Important), not coverage. Two shapes to
+look for first: stubs that flatten structure before asserting (`"$*"` joins argv
+with spaces, so lost quoting prints the same line as correct quoting), and
+runner quirks that mask a non-final assertion (bats under macOS bash 3.2 ignores
+a failing `[[ ]]` that is not a test's last command). Origin: mutwo PR #9, where
+the suite stayed green with the whole feature deleted, and PR #12, where two
+new tests and a stub were vacuous until mutated.
+
 Skip any lens with no surface on this diff (e.g. type-design or tests on a
 docs-only change); say which you skipped. On the degraded inline path, or for any
 lens whose file is missing, review the diff yourself against that lens in one pass.
