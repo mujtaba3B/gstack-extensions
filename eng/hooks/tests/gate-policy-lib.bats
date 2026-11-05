@@ -19,12 +19,12 @@ setup() {
   },
   "defaults": {
     "ship": { "base_branches": ["main"], "ttl_seconds": 1200 },
-    "merge-clearance": { "base_branches": ["main"], "required_checks": [] },
+    "deploy": { "base_branches": ["main"], "required_checks": [] },
     "qa-plan": { "gates": ["build","pr","deploy"] },
     "deploy": { "hosts": [] }
   },
   "overrides": {
-    "mujtaba3b/tuned": { "merge-clearance": { "required_checks": ["tests"] } }
+    "mujtaba3b/tuned": { "deploy": { "required_checks": ["tests"] } }
   }
 }
 JSON
@@ -63,7 +63,7 @@ mkrepo() {
 
 @test "an override is matched case-insensitively and beats the default" {
   d=$(mkrepo tuned https://github.com/mujtaba3B/tuned.git)
-  run gp_gate_config "$d" merge-clearance
+  run gp_gate_config "$d" deploy
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"required_checks":\["tests"\]'
 }
@@ -72,8 +72,8 @@ mkrepo() {
   # Markers were dropped entirely on 2026-09-02. A leftover one from before the
   # migration must not quietly re-acquire authority over the tracked policy.
   d=$(mkrepo tuned https://github.com/mujtaba3B/tuned.git)
-  echo '{"required_checks":["from-marker"]}' > "$d/.merge-clearance.json"
-  run gp_gate_config "$d" merge-clearance
+  echo '{"required_checks":["from-marker"]}' > "$d/.deploy-gate.json"
+  run gp_gate_config "$d" deploy
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"required_checks":\["tests"\]'   # the override, not the file
   ! echo "$output" | grep -q 'from-marker'
@@ -158,8 +158,8 @@ mkrepo() {
   git -C "$d" worktree add -q -b probe "$wt" 2>/dev/null
   run gp_main_worktree "$wt"
   [ "$output" = "$(cd -P "$d" && pwd)" ]   # physical form on both sides
-  main_cfg=$(gp_gate_config "$d" merge-clearance)
-  run gp_gate_config "$wt" merge-clearance
+  main_cfg=$(gp_gate_config "$d" deploy)
+  run gp_gate_config "$wt" deploy
   [ "$status" -eq 0 ]
   [ "$output" = "$main_cfg" ]
   echo "$output" | grep -q '"required_checks":\["tests"\]'
@@ -209,7 +209,7 @@ JSON
   d=$(mkrepo offrepo https://github.com/mujtaba3B/offrepo.git)
   run gp_gate_config "$d" ship
   [ "$status" -ne 0 ]
-  run gp_gate_config "$d" merge-clearance   # only the named gate is off
+  run gp_gate_config "$d" deploy   # only the named gate is off
   [ "$status" -eq 0 ]
   grep -q "LOCAL-OFF gate=ship" "$GATE_POLICY_LOG"
 }
@@ -222,7 +222,7 @@ JSON
   d=$(mkrepo offpolicy https://github.com/mujtaba3B/offpolicy.git)
   run gp_gate_config "$d" ship
   [ "$status" -ne 0 ]
-  run gp_gate_config "$d" merge-clearance
+  run gp_gate_config "$d" deploy
   [ "$status" -eq 0 ]
 }
 

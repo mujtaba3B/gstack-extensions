@@ -37,8 +37,8 @@
 #      binds to the specific plan text that was on screen, so a click cannot be
 #      recycled onto different content.
 #   2. The token is a FILE. An agent with shell access can hand-write it, just as
-#      it could forge ship-pr-clearance or land-deploy-clearance. This is the
-#      same posture those sentinels document: an accident-guard, not a
+#      it could forge ship-pr-clearance. This is the
+#      same posture that sentinel documents: an accident-guard, not a
 #      tamper-proof sandbox. What changed is the cost. Forging went from running
 #      the sanctioned tool at an unsanctioned moment (invisible, and exactly what
 #      happened on 2026-09-02) to hand-writing JSON into the git dir, which is a

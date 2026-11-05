@@ -29,15 +29,11 @@ tuples() {
     'PostToolUse|Bash|review-skill-stamp.sh' \
     'PostToolUse|Bash|ship-watch-nudge.sh' \
     'PreToolUse|Bash|deploy-gate.sh' \
-    'PreToolUse|Bash|land-deploy-sentinel.sh' \
-    'PreToolUse|Bash|pr-merge-gate.sh' \
     'PreToolUse|Bash|ship-gate-sentinel.sh' \
     'PreToolUse|Bash|ship-pr-gate.sh' \
     'PreToolUse|Skill|deploy-gate.sh' \
-    'PreToolUse|Skill|land-deploy-sentinel.sh' \
     'PreToolUse|Skill|ship-gate-sentinel.sh' \
     'UserPromptSubmit||deploy-gate.sh' \
-    'UserPromptSubmit||land-deploy-sentinel.sh' \
     'UserPromptSubmit||ship-gate-sentinel.sh' \
     | sort)
   run tuples
@@ -71,8 +67,8 @@ tuples() {
   # Utilities and sourced libs are exempt: they are not event hooks. Libs are
   # matched by the *-lib.sh SUFFIX rather than listed by name, so adding one
   # does not require editing this test (gate-policy-lib.sh broke it that way).
-  # Only non-lib utilities still need naming.
-  exempt="merge-clearance.sh apply-merge-clearance-protection.sh"
+  # A non-lib utility would need naming in exempt.
+  exempt=""
   wired=$(jq -r '.hooks[][].hooks[].command | split("/") | last' "$HOOKS_JSON")
   for f in "$HOOKS_DIR"/scripts/*.sh; do
     base=$(basename "$f")

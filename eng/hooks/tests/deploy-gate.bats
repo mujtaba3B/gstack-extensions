@@ -26,13 +26,12 @@ setup() {
   git -C "$REPO" commit -q --allow-empty -m init
   SESSION="dgtest-$$-${BATS_TEST_NUMBER:-0}"
   ARMFILE="${TMPDIR:-/tmp}/gstack-deploy-armed-${SESSION}"
-  LANDARM="${TMPDIR:-/tmp}/gstack-land-armed-${SESSION}"
   PFILE="$REPO/.payload.json"
 }
 
 teardown() {
   rm -rf "$REPO"
-  rm -f "$ARMFILE" "$LANDARM" 2>/dev/null || true
+  rm -f "$ARMFILE" 2>/dev/null || true
 }
 
 # --- payload builders -------------------------------------------------------
@@ -412,37 +411,9 @@ assert_block() { [ "$status" -eq 0 ]; echo "$output" | grep -q '"decision":"bloc
   assert_block
 }
 
-# =========================== no merge-authority leak =========================
-
-@test "the deploy arm mints no merge clearance (no authority leak)" {
-  # The whole reason deploy-gate arms its OWN kind: a deploy-only ceremony must
-  # never be able to authorize `gh pr merge`. The merge gate keys on the
-  # land-deploy-clearance sentinel, which land-deploy-sentinel.sh mints on a Bash
-  # `gh pr merge` ONLY while a "land" arm is fresh. So the precise assertion is:
-  # after /eng:deploy, the deploy arm exists, the land arm does not, and driving
-  # the real sentinel with a merge command mints nothing.
-  #
-  # Asserting on the sentinel rather than on pr-merge-gate's verdict is
-  # deliberate: that gate fails OPEN when it cannot resolve a PR, so against a
-  # fixture repo with no remote it would return "allow" for reasons unrelated to
-  # arming, and the test would prove nothing.
-  SENTINEL_WRITER="$BATS_TEST_DIRNAME/../scripts/land-deploy-sentinel.sh"
-  GITDIR=$(git -C "$REPO" rev-parse --absolute-git-dir)
-
-  printf '%s' "$(skill_payload "eng:deploy")" | bash "$GATE"
-  [ -f "$ARMFILE" ]
-  [ ! -f "$LANDARM" ]
-
-  feed "$(bash_payload "cd $REPO && gh pr merge")" "$SENTINEL_WRITER"
-  [ "$status" -eq 0 ]
-  [ ! -f "$GITDIR/land-deploy-clearance" ]
-}
-
-@test "a land-and-deploy skill arms BOTH kinds (it does deploy)" {
-  # The converse: /land-and-deploy legitimately deploys, so it must arm the
-  # deploy kind too, or the gate would block the ceremony's own deploy step.
+@test "a land-and-deploy skill arms the deploy kind (it does deploy)" {
+  # /land-and-deploy legitimately deploys, so it must arm the deploy kind, or the
+  # gate would block the ceremony's own deploy step.
   printf '%s' "$(skill_payload "land-and-deploy")" | bash "$GATE"
-  printf '%s' "$(skill_payload "land-and-deploy")" | bash "$BATS_TEST_DIRNAME/../scripts/land-deploy-sentinel.sh"
   [ -f "$ARMFILE" ]
-  [ -f "$LANDARM" ]
 }

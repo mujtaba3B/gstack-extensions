@@ -1,7 +1,7 @@
 ---
 name: cr
 description: >-
-  Engineer Ernie's master code-review skill and the single local review path for ~/dev work. Reviews ANY code before merge: your own uncommitted diff, your own PR, or someone else's. Scopes the diff, picks depth by risk (trivial -> light; routine -> one adversarial pass; major/risky like auth, money, migrations, concurrency, cross-host, or large refactors -> full pr-review-toolkit lens set plus a cross-model pass), verifies findings against the real repo, surfaces a bucketed verdict, and mints the merge-clearance gate stamp on the reviewed HEAD. Routes rather than duplicates: someone else's PR -> eng:cr-teammate; existing review comments -> eng:address-pr-feedback or eng:pr-watcher. Trigger on "cr", "cr this", "code review", "review this", "review my diff", "review my PR", "review before merge", "is this ready to merge", "/eng:cr". Prefer it over gstack /review for any ~/dev PR, because it is what mints the gate stamp.
+  Engineer Ernie's master code-review skill and the single local review path for ~/dev work. Reviews ANY code before merge: your own uncommitted diff, your own PR, or someone else's. Scopes the diff, picks depth by risk (trivial -> light; routine -> one adversarial pass; major/risky like auth, money, migrations, concurrency, cross-host, or large refactors -> full pr-review-toolkit lens set plus a cross-model pass), verifies findings against the real repo, surfaces a bucketed verdict, and records a review stamp on the reviewed HEAD. Routes rather than duplicates: someone else's PR -> eng:cr-teammate; existing review comments -> eng:address-pr-feedback or eng:pr-watcher. Trigger on "cr", "cr this", "code review", "review this", "review my diff", "review my PR", "review before merge", "is this ready to merge", "/eng:cr". Prefer it over gstack /review for any ~/dev PR, because it is what records the review stamp.
 ---
 
 ## Update check (run first)
@@ -25,7 +25,7 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 You are running `/eng:cr`, the **single master code-review path**. The point of this skill is control: there is one place every review goes through, so depth, verification, and the merge-gate stamp are decided in one consistent way instead of scattered across half a dozen look-alike tools. Anything that needs a real local review on `~/dev` runs through here.
 
-**Why this skill mints the gate stamp.** The `~/dev` merge-clearance gate has a "local review recorded" dimension that reads a stamp file `<git-dir>/review-skill-head` and is satisfied when that SHA equals the PR HEAD. `eng:cr` writes that stamp at the end of a genuine review (Step 4). That is what makes `eng:cr` the reviewer the gate keys on. Running a bare reviewer that does not write the stamp is exactly the mismatch this skill exists to prevent: do the review here.
+**Why this skill writes a review stamp.** `eng:cr` writes `<git-dir>/review-skill-head` at the end of a genuine review (Step 4). `eng:pr-watcher` reads it to decide whether a current review stands in for a rate-limited CodeRabbit.
 
 ---
 
@@ -88,27 +88,27 @@ If there are Blockers, the code is not ready: the user fixes them (or you do, if
 
 ---
 
-## Step 4: Mint the merge-clearance stamp
+## Step 4: Write the review stamp
 
-Mint the stamp **only when the review of the current local HEAD is genuinely complete** (case 1 from Step 0). "Complete" means the lenses ran (or the change was judged trivial) and you have surfaced the verdict. The stamp records *that a real review happened on this HEAD*, not that the code is flawless; the human is trusted to fix any Blockers before merging, and fixing them moves HEAD and re-arms the gate.
+Write the stamp **only when the review of the current local HEAD is genuinely complete** (case 1 from Step 0). "Complete" means the lenses ran (or the change was judged trivial) and you have surfaced the verdict. The stamp records *that a real review happened on this HEAD*, not that the code is flawless; the human is trusted to fix any Blockers before merging, and fixing them moves HEAD, so the stamp no longer matches.
 
 ```bash
 GITDIR=$(git rev-parse --absolute-git-dir 2>/dev/null) || { echo "not in a git checkout; no stamp written"; exit 0; }
 HEAD=$(git rev-parse HEAD 2>/dev/null) || { echo "eng:cr: could not resolve HEAD; no stamp written"; exit 0; }
 if printf '%s\n' "$HEAD" > "$GITDIR/review-skill-head"; then
-  echo "eng:cr: stamped review-skill-head=$HEAD (merge-clearance 'local review' dimension satisfied for this HEAD)"
+  echo "eng:cr: stamped review-skill-head=$HEAD"
 else
-  echo "eng:cr: WARNING failed to write $GITDIR/review-skill-head; the gate will report the review as missing"
+  echo "eng:cr: WARNING failed to write $GITDIR/review-skill-head"
 fi
 ```
 
-Then tell the user the stamp is written and, if they are ready, the sanctioned merge path is `/land-and-deploy` (which re-checks CI + CodeRabbit + this stamp + QA and posts the required GitHub status).
+Then tell the user the stamp is written and, if they are ready, the path to main is `/land-and-deploy`.
 
 Do NOT write the stamp when:
 - The target was someone else's PR you are only commenting on (Step 0 case 2) -> the terminal act there is `cr-teammate`'s comment.
 - You did not actually run a review (the user bailed, the engine could not run and they declined the degraded path).
 
-If a real review happened through some other tool and you are only here to record it, writing the stamp above is the honest "a review did happen" action. The honest "no review happened, override anyway" action is `merge-clearance clear --skip-review`, which is a different thing; do not use the stamp to fake a review that did not occur.
+If a real review happened through some other tool and you are only here to record it, writing the stamp above is the honest "a review did happen" action. Do not use the stamp to fake a review that did not occur.
 
 ---
 

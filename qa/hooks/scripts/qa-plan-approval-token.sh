@@ -13,9 +13,8 @@
 #
 # Contrast with the sibling gates, which is the design this follows:
 #   ship-gate-sentinel.sh   mints on the agent INVOKING /ship.
-#   land-deploy-sentinel.sh mints on the agent INVOKING /land-and-deploy.
 #   this script             mints on the HUMAN ANSWERING a question.
-# The last is strictly stronger than the other two, because invoking a skill is
+# The last is strictly stronger than the other, because invoking a skill is
 # something the agent decides and answering a modal is not.
 #
 # What it writes: <gitdir>/qa-plan-approval-token, a small JSON blob bound to the

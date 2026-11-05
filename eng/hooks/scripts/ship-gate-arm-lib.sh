@@ -1,12 +1,11 @@
 #!/bin/bash
-# Shared session-arming helpers for the ship-gate and merge-gate sentinels.
+# Shared session-arming helpers for the gate sentinels.
 #
-# WHY this exists: both sentinels (ship-gate-sentinel.sh, land-deploy-sentinel.sh)
-# need the same trick to fix the cwd-vs-target bug. The Skill/prompt hook events
-# only ever see the SESSION cwd, but the repo a `gh pr create` / `gh pr merge`
+# WHY this exists: ship-gate-sentinel.sh and deploy-gate.sh need the same trick to fix the cwd-vs-target bug. The Skill/prompt hook events
+# only ever see the SESSION cwd, but the repo a `gh pr create`
 # actually targets is decided by a leading `cd` in the Bash command. So each
 # sentinel must mint into the TARGET repo's git dir on the Bash event, not the
-# session-cwd repo on the Skill event. To know a real /ship or /land-and-deploy is
+# session-cwd repo on the Skill event. To know a real ceremony is
 # in flight at Bash time, the Skill/prompt event leaves a session-scoped "armed"
 # marker that the later Bash event reads. This file is that arming primitive,
 # shared so the two gates can never drift apart on how arming works.

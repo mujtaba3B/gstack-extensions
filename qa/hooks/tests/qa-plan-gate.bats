@@ -329,40 +329,6 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 }
 
 # ========================================================================
-# Lockstep: qpg_is_bookkeeping (qa) and mc_is_bookkeeping (eng twin) agree
-# ========================================================================
-
-@test "lockstep: the two bookkeeping classifiers agree on a fixture set" {
-  ENG_LIB="$BATS_TEST_DIRNAME/../../../eng/hooks/scripts/merge-clearance-lib.sh"
-  [ -f "$ENG_LIB" ] || skip "eng twin lib not present at $ENG_LIB"
-  # shellcheck source=/dev/null
-  . "$ENG_LIB"
-  local fx q m qr mr bad=0
-  # Compare BOTH stdout token AND exit status: callers branch on rc too, so a twin
-  # that diverged on rc semantics (while agreeing on the token) must still fail.
-  for fx in "README.md" "CHANGELOG.md" "src/main.py" "settings.json" \
-            "automations/triage/buckets.yaml" "SKILL.md" "CLAUDE.md" "AGENTS.md" \
-            "where-things-run.json" "x/where-things-run.json" "" \
-            ".gitignore" "sub/.gitignore" ".gitattributes" ".editorconfig" \
-            ".dockerignore" ".npmignore" ".prettierignore" ".eslintignore" \
-            ".gcloudignore" "data/.keep" "assets/.gitkeep" \
-            "LICENSE" "LICENSE.txt" "LICENCE" "COPYING" "NOTICE" "AUTHORS" \
-            "CONTRIBUTORS" "CODEOWNERS" "requirements.txt" "requirements-dev.txt" \
-            "dev-requirements.txt" "runtime.txt" "constraints.txt" "public/robots.txt" \
-            ".coderabbit.yaml" ".python-version" "Gemfile.lock"; do
-    # errexit-safe rc capture: under bats' `set -e`, a bare `q=$(cmd)` whose cmd
-    # returns nonzero (the excluded / empty fixtures) would abort the test, so
-    # branch on the substitution instead of reading $? after a failed assignment.
-    if q=$(qpg_is_bookkeeping "$fx"); then qr=0; else qr=$?; fi
-    if m=$(mc_is_bookkeeping "$fx"); then mr=0; else mr=$?; fi
-    if [ "$q" != "$m" ] || [ "$qr" != "$mr" ]; then
-      echo "DISAGREE [$fx]: qpg=$q/rc$qr mc=$m/rc$mr"; bad=1
-    fi
-  done
-  [ "$bad" -eq 0 ]
-}
-
-# ========================================================================
 # Pure: qpg_marker_gates / qpg_gate_enabled / qpg_base_in_scope
 # ========================================================================
 
@@ -561,7 +527,7 @@ create_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "
 }
 
 @test "pr gate blocks: an EMPTY env-var prefix before gh pr create is still caught" {
-  # Regression, paired with pr-merge-gate.bats and ship-pr-gate.bats. This gate
+  # Regression, paired with ship-pr-gate.bats. This gate
   # carries a copy of the same command-position matcher; the empty-value case
   # bypassed all of them.
   opt_in

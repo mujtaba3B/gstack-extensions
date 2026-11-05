@@ -1,11 +1,9 @@
 #!/usr/bin/env bats
 # Tests for the pure decision logic of the after-ship watcher nudge
 # (ship-watch-nudge-lib.sh): swn_is_pr_create, swn_extract_pr_url,
-# swn_pr_num_from_url, swn_decide, swn_build_context, swn_already_nudged. No repo /
+# swn_pr_num_from_url, swn_build_context, swn_already_nudged. No repo /
 # session / network / hook plumbing needed - every function is a pure transform.
 #
-# One case also sources merge-clearance-lib.sh to prove the nudge and the merge gate
-# agree on the rate-limit signal (same mc_cr_rate_limited marker).
 
 setup() {
   # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
@@ -122,33 +120,6 @@ setup() {
 
 # ---- swn_decide -------------------------------------------------------------
 
-@test "swn_decide: not rate-limited -> watch" {
-  run swn_decide no no
-  [ "$output" = "watch" ]
-}
-
-@test "swn_decide: rate-limited + backstop -> land" {
-  run swn_decide yes yes
-  [ "$output" = "land" ]
-}
-
-@test "swn_decide: rate-limited + no backstop -> review_then_land" {
-  run swn_decide yes no
-  [ "$output" = "review_then_land" ]
-}
-
-@test "swn_decide: unknown rate_limited value defaults to watch (safe)" {
-  run swn_decide maybe yes
-  [ "$output" = "watch" ]
-}
-
-@test "swn_decide: rate-limited + non-yes backstop must NOT emit land (only backstop==yes clears)" {
-  run swn_decide yes maybe
-  [ "$output" = "review_then_land" ]
-  run swn_decide yes ''
-  [ "$output" = "review_then_land" ]
-}
-
 # ---- substring assertions ---------------------------------------------------
 #
 # WHY THESE EXIST INSTEAD OF `[[ "$output" == *"x"* ]]`. Measured on bats-core
@@ -182,7 +153,7 @@ assert_missing() {  # <haystack> <needle-that-must-not-appear>
 # ---- swn_build_context ------------------------------------------------------
 
 @test "swn_build_context: watch names /eng:pr-watcher and the URL" {
-  run swn_build_context watch 'https://github.com/o/r/pull/9' 9
+  run swn_build_context 'https://github.com/o/r/pull/9' 9
   assert_contains "$output" "/eng:pr-watcher https://github.com/o/r/pull/9"
   assert_contains "$output" "PR #9"
 }
@@ -190,38 +161,15 @@ assert_missing() {  # <haystack> <needle-that-must-not-appear>
 @test "swn_build_context: watch forbids presenting a land-choice menu" {
   # The standing default is "wait for CodeRabbit, then land" - the nudge must tell
   # the agent to just do it, not improvise a land-now / watch / pause question.
-  run swn_build_context watch 'https://github.com/o/r/pull/9' 9
+  run swn_build_context 'https://github.com/o/r/pull/9' 9
   assert_contains "$output" "Do NOT ask the user how to land"
   assert_contains "$output" "standing default"
 }
 
-@test "swn_build_context: land names /land-and-deploy and forbids watching" {
-  run swn_build_context land 'https://github.com/o/r/pull/9' 9
-  assert_contains "$output" "/land-and-deploy"
-  assert_contains "$output" "do NOT start /eng:pr-watcher"
-  assert_contains "$output" "rate limited by coderabbit.ai"
-  assert_contains "$output" "Do NOT ask the user how to land"
-}
-
-@test "swn_build_context: review_then_land names /eng:cr then /land-and-deploy" {
-  run swn_build_context review_then_land 'https://github.com/o/r/pull/9' 9
-  assert_contains "$output" "/eng:cr"
-  assert_contains "$output" "/land-and-deploy"
-  assert_contains "$output" "Do NOT open-endedly watch"
-  assert_contains "$output" "Do NOT ask the user how to land"
-}
-
-@test "swn_build_context: unknown mode falls back to the watch nudge" {
-  run swn_build_context banana 'https://github.com/o/r/pull/9' 9
-  assert_contains "$output" "/eng:pr-watcher"
-}
-
-@test "swn_build_context: no em-dash in any branch (global style rule)" {
+@test "swn_build_context: no em-dash (global style rule)" {
   local emdash; emdash=$(printf '\xe2\x80\x94')   # U+2014 UTF-8 bytes, so no literal em-dash lives in this file
-  for m in watch land review_then_land; do
-    run swn_build_context "$m" 'https://github.com/o/r/pull/9' 9
-    assert_missing "$output" "$emdash"
-  done
+  run swn_build_context 'https://github.com/o/r/pull/9' 9
+  assert_missing "$output" "$emdash"
 }
 
 # ---- swn_already_nudged -----------------------------------------------------
@@ -249,29 +197,4 @@ assert_missing() {  # <haystack> <needle-that-must-not-appear>
 @test "swn_already_nudged: substring is not a false match (whole-line only)" {
   run swn_already_nudged $'https://github.com/o/r/pull/12' 'https://github.com/o/r/pull/1'
   [ "$output" = "no" ]
-}
-
-# ---- consistency with the merge gate (AC4) ----------------------------------
-
-@test "rate-limit signal agrees with merge gate: mc_cr_rate_limited drives land" {
-  MCLIB="$BATS_TEST_DIRNAME/../scripts/merge-clearance-lib.sh"
-  # shellcheck source=/dev/null
-  . "$MCLIB"
-  comments='[{"author":"coderabbitai[bot]","body":"<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"}]'
-  run mc_cr_rate_limited "$comments"
-  [ "$output" = "yes" ]
-  # The same "yes" the hook feeds into swn_decide, with a current backstop, yields land.
-  run swn_decide yes yes
-  [ "$output" = "land" ]
-}
-
-@test "no rate-limit marker -> not rate-limited -> watch" {
-  MCLIB="$BATS_TEST_DIRNAME/../scripts/merge-clearance-lib.sh"
-  # shellcheck source=/dev/null
-  . "$MCLIB"
-  comments='[{"author":"coderabbitai[bot]","body":"Actionable comments posted: 0"}]'
-  run mc_cr_rate_limited "$comments"
-  [ "$output" = "no" ]
-  run swn_decide no no
-  [ "$output" = "watch" ]
 }
