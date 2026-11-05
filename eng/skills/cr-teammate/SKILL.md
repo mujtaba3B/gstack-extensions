@@ -1,7 +1,7 @@
 ---
 name: cr-teammate
 description: >-
-  Review a GitHub pull request authored by SOMEONE ELSE (a human teammate or an autonomous agent like a mu*/*-ai bot) and leave one author-tagged review comment on it. This is eng:cr's specialist for reviewing someone else's PR: same shared review engine and lenses, findings verified against the actual repo rather than the PR description, a quick chat summary, then exactly ONE structured comment posted via gh pr comment led by an @<author> mention, after a confirm gate on the wording. Never merges, pushes, resolves conversations, or mints the merge-clearance stamp (that is eng:cr's job). Use for "review this PR", "review the teammate's PR", "review the agent PR", "is this good to deploy?", "look at PR #N", or "/eng:cr-teammate" with a PR number or URL.
+  Review a GitHub pull request authored by SOMEONE ELSE (a human teammate or an autonomous agent like a mu*/*-ai bot) and leave one author-tagged review comment on it. This is eng:cr's specialist for reviewing someone else's PR: same shared review engine and lenses, findings verified against the actual repo rather than the PR description, a quick chat summary, then exactly ONE structured comment posted via gh pr comment led by an @<author> mention, after a confirm gate on the wording. Never merges, pushes, resolves conversations, or writes the review stamp (that is eng:cr's job). Use for "review this PR", "review the teammate's PR", "review the agent PR", "is this good to deploy?", "look at PR #N", or "/eng:cr-teammate" with a PR number or URL.
 ---
 
 ## Update check (run first)
@@ -35,7 +35,7 @@ The reference for "good" output is a verdict-first comment: **a clear merge / do
 - Push commits or apply fixes (this is review-only; if the user wants fixes applied, that is `/eng:pr-watcher` or a hands-on session).
 - Mark conversations resolved.
 - Change the PR's assignee, labels, or title.
-- Mint the merge-clearance stamp. That stamp records *your own* pre-merge review and belongs to `eng:cr`. (If you are the one about to merge this PR through the gate, run `eng:cr` in your local checkout to review and stamp; use this skill only to notify the author.)
+- Write the review stamp. That stamp records *your own* pre-merge review and belongs to `eng:cr`. (If you are the one about to merge this PR, run `eng:cr` in your local checkout to review and stamp; use this skill only to notify the author.)
 - Post the comment without showing the draft and getting a confirm. (The confirm is about *wording*, not *whether* to post.)
 
 If a finding needs code changes, describe the fix in the comment for the author to apply. Do not apply it.

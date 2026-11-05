@@ -549,7 +549,7 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
 }
 
 @test "block: an EMPTY env-var prefix before gh pr create is still caught" {
-  # Regression, paired with the same case in pr-merge-gate.bats. The shared
+  # Regression. The shared
   # command-position prefix required a non-empty assignment value, so
   # `FOO= gh pr create` matched neither the env-prefixed branch nor the bare one
   # and sailed past every gate carrying that matcher. Each consumer gets its own

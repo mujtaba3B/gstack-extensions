@@ -114,7 +114,7 @@ GITDIR=${RESOLVED#*$'\t'}
 # is gated exactly like its main checkout. Non-zero return means out of scope -> allow.
 MARKER=$(gp_gate_config "$TOP" ship) || exit 0
 
-# Cross-repo guard (mirrors pr-merge-gate.sh). If the command explicitly targets a
+# Cross-repo guard. If the command explicitly targets a
 # DIFFERENT repo (`--repo` / `-R` / a `GH_REPO=` env prefix), the marker + sentinel
 # here belong to WORKDIR's repo, not the target. Validating them would mis-evaluate
 # (a bypass: open an ungated PR in repo B by running `gh pr create --repo B` from
@@ -276,14 +276,13 @@ if [ "$VERDICT" = "valid" ]; then
   [ -n "$BREF" ] && [ -n "$HEADSHA" ] && _changed=$(git -C "$TOP" diff --name-only "$BREF...$HEADSHA" 2>/dev/null || echo "")
 
   # docs-only fast lane: when every changed path is a DOC (by extension), the
-  # changelog + version dims do not apply (na), mirroring merge-clearance's
-  # bookkeeping fast lane so a trivial docs PR pays no ceremony. Two guards keep
+  # changelog + version dims do not apply (na), so a trivial docs PR pays no ceremony. Two guards keep
   # it honest: (1) extension-only matching (no `^docs/` prefix, so code parked
   # under docs/ is not waved through); (2) behavior-contract instruction files
   # (SKILL.md / CLAUDE.md / AGENTS.md) are EXCLUDED even though they end in .md -
   # they change agent behavior, so a skill/instruction change cannot dodge the
   # required changelog/version by keeping its diff to markdown. Same exclusion set
-  # as merge-clearance's mc_is_bookkeeping.
+  # as qpg_is_bookkeeping in the qa plugin.
   _docs_only=no
   if [ -n "$_changed" ] \
      && ! printf '%s\n' "$_changed" | grep -qvE '(\.md$|\.mdx$|\.markdown$|\.txt$|\.rst$)' \

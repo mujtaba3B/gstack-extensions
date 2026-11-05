@@ -48,7 +48,7 @@ jq -r '{id:.id, host:.host, cmd:(.deploy.command // "scripts/deploy.sh"), on_mer
 
 ## Step 2: Refuse when there is a PR to merge
 
-This guard is what keeps this ceremony from becoming a merge-gate bypass.
+This guard is what keeps this ceremony from becoming a way around `/land-and-deploy`.
 
 ```bash
 gh pr view --json number,state,url 2>/dev/null || echo "NO_PR"

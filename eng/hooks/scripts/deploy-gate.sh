@@ -1,13 +1,10 @@
 #!/bin/bash
 # deploy-gate - make a deploy ceremony the only way code reaches a host.
 #
-# The merge side of this plugin has been gated for a while: pr-merge-gate.sh
-# refuses a bare `gh pr merge`, so /land-and-deploy is the single CLI merge path.
-# The DEPLOY side had nothing. Every PreToolUse guard on the machine matched
-# `gh pr merge` or `gh pr create`; a grep for deploy.sh / kickstart / deploy-mini
+# Before this gate no PreToolUse guard on the machine covered a deploy; a grep for deploy.sh / kickstart / deploy-mini
 # across every hooks/scripts dir returned zero files. So "/land-and-deploy is the
 # only way a PR reaches main AND production" was one sentence covering two things,
-# only the first of which was enforced.
+# only part of which was enforced.
 #
 # The cost, 2026-07-24: a hand-rolled ssh deploy to the Mac mini skipped the
 # upgrade-marker stamp, tripped nanoclaw's version tripwire, and the host
@@ -15,17 +12,14 @@
 # Nothing was bypassed, because nothing was in the path. The agent was in fact
 # FOLLOWING the repo's own CLAUDE.md, which documented the bare sequence.
 #
-# This hook is both the sentinel and the gate (like land-deploy-sentinel.sh it is
+# This hook is both the sentinel and the gate (it is
 # wired to three events, and the payload says which):
 #   - PreToolUse on Skill        (ARM) : /land-and-deploy or /eng:deploy invoked.
 #   - UserPromptSubmit           (ARM) : the user typed one of those at the prompt.
 #   - PreToolUse on Bash         (GATE): block a deploy-shaped command unless this
 #                                        session is armed; slide the window if it is.
 #
-# It arms its OWN kind ("deploy") rather than reusing land-deploy-sentinel.sh's
-# "land". That separation is load-bearing in one direction: a /eng:deploy must
-# never be able to authorize a `gh pr merge`. Arming "land" here would have let
-# the merge gate's Bash-mint path fire off a deploy-only ceremony.
+# It arms its OWN kind ("deploy").
 #
 # WHY /eng:deploy exists at all: gstack has no /deploy, and /land-and-deploy
 # hard-stops once a PR is merged ("nothing to deploy, run /canary"). Retry after a
@@ -125,8 +119,8 @@ fi
 CMD=$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty')
 [ -n "$CMD" ] || exit 0
 
-# Resolve the repo the command actually targets, the SAME way pr-merge-gate.sh and
-# land-deploy-sentinel.sh do, so the three can never disagree about which repo a
+# Resolve the repo the command actually targets, the SAME way ship-pr-gate.sh does,
+# so the two can never disagree about which repo a
 # `cd <dir> && ...` refers to. Out of ~/dev scope -> allow.
 WORKDIR=$(sg_workdir_from_cmd "$CMD" "$CWD")
 RESOLVED=$(sg_dev_repo_gitdir "$WORKDIR") || exit 0

@@ -24,8 +24,6 @@
 #   scripts/qa-plan-pr-gate.sh         - PreToolUse Bash: block `gh pr create`
 #                                        until the branch has an approval stamp.
 #   scripts/qa-plan-stamp.sh           - writes the stamp in the canonical shape.
-#   scripts/merge-clearance.sh         - reads the marker to require QA-passed at
-#                                        merge.
 #
 # Requires jq for the JSON helpers. Every gate fails OPEN (allowing the action)
 # before sourcing this when jq is absent, so a jq-less host never reaches here.
@@ -327,8 +325,7 @@ qpg_plan_digest() {
 #   next top-level `##` heading, or end of body. Echoes the section (heading
 #   included), or nothing when the body has no such section.
 #
-#   `###` subheadings (the Development / Production tables) stay INSIDE, matching
-#   how merge-clearance reads the same section. A body with no `## QA` section
+#   `###` subheadings (the Development / Production tables) stay INSIDE. A body with no `## QA` section
 #   yields empty, which callers treat as "could not read the plan".
 #
 #   A markdown THEMATIC BREAK (`---` alone on a line) also terminates it. gstack
@@ -484,8 +481,6 @@ qpg_is_bulk_artifact() {
 #   Deliberately TIGHTER than qpg_path_needs_plan's build-gate carve-out, which is
 #   lenient on all *.json/*.yaml because an edit is cheap to undo before it ships.
 #   A ship gate must be narrow: merging is the act that reaches production.
-#   Twin of mc_is_bookkeeping in the eng plugin's merge-clearance-lib.sh; keep the
-#   two allowlists in lockstep (each plugin is self-contained and binds its own).
 qpg_is_bookkeeping() {
   local paths="$1" p base any=0
   while IFS= read -r p; do

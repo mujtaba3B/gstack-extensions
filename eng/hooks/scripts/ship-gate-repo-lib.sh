@@ -53,7 +53,7 @@ sg_dev_repo_gitdir() {
   # sit outside ~/dev, and a worktree of the ~/dev repo itself HAS to, so judging
   # by <top>'s own path left those checkouts ungated: the policy said "governed"
   # while every gate said "not a ~/dev repo, allow", and the gate wins. Found when
-  # the land-deploy sentinel would not mint in ~/dev-gates (and, in the same breath,
+  # a sentinel would not mint in ~/dev-gates (and, in the same breath,
   # explained why that worktree's own `gh pr create` was never blocked).
   # <top> itself is still what gets returned, so sentinels stay keyed per-worktree.
   case "$top" in

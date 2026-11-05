@@ -46,7 +46,7 @@ PAYLOAD=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 
-# Shared libs (single source of truth with ship-pr-gate.sh / land-deploy-sentinel.sh):
+# Shared libs (single source of truth with ship-pr-gate.sh):
 # the repo resolver and the session-arming primitive. Resolve them relative to THIS
 # script so the executing copy binds its own deps. Without them we cannot mint for
 # the right repo, so exit quietly (the gate fails open too).

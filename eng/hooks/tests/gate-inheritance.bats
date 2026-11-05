@@ -26,7 +26,6 @@ setup() {
              "exclude_path_prefixes": ["legacy/"], "exclude_nested": true },
   "defaults": {
     "ship": { "base_branches": ["main"], "ttl_seconds": 1200 },
-    "merge-clearance": { "base_branches": ["main"], "required_checks": [] },
     "qa-plan": { "base_branches": ["main"], "gates": ["build","pr","deploy"] },
     "deploy": { "hosts": [] }
   },
@@ -67,12 +66,6 @@ bash_payload() {
   [ "$output" = "block" ]
 }
 
-@test "no markers anywhere: the merge gate blocks a bare gh pr merge" {
-  [ ! -f "$REPO/.merge-clearance.json" ]
-  run decision "$SCRIPTS/pr-merge-gate.sh" "$(bash_payload 'gh pr merge 1 --squash')"
-  [ "$output" = "block" ]
-}
-
 @test "no markers anywhere: the qa-plan PR gate blocks until a plan is approved" {
   [ ! -f "$REPO/.qa-plan-gate.json" ]
   run decision "$QASCRIPTS/qa-plan-pr-gate.sh" "$(bash_payload 'gh pr create --base main --title x --body y')"
@@ -100,27 +93,11 @@ bash_payload() {
   git -C "$REPO" worktree add -q -b wtbranch "$WT"
   # Exactly the state git leaves behind: no git-ignored files carried over.
   [ ! -f "$WT/.ship-gate.json" ]
-  [ ! -f "$WT/.merge-clearance.json" ]
+  [ ! -f "$WT/.deploy-gate.json" ]
   [ ! -f "$WT/.qa-plan-gate.json" ]
   out=$(cd "$WT" && bash_payload 'gh pr create --base main --title x --body y' "$WT" \
         | bash "$SCRIPTS/ship-pr-gate.sh" 2>/dev/null)
   printf '%s' "$out" | grep -q '"block"'
-}
-
-@test "a worktree resolves the repo's real required_checks, not a phantom ci" {
-  # The confusing half of PR #182: with no marker to read, required_checks fell back
-  # to a context literally named "ci" and the verdict looked like broken CI. Config
-  # now comes from the tracked policy, so the checkout you stand in is irrelevant.
-  jq '.overrides["testowner/repo"] = {"merge-clearance":{"required_checks":["tests","manifests"]}}' \
-    "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.tmp" && mv "$GATE_POLICY_FILE.tmp" "$GATE_POLICY_FILE"
-  WT="$ROOT/repo-worktree2"
-  git -C "$REPO" worktree add -q -b wtbranch2 "$WT"
-  # shellcheck source=/dev/null
-  . "$SCRIPTS/gate-policy-lib.sh"
-  run gp_gate_config "$WT" merge-clearance
-  [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"required_checks":\["tests","manifests"\]'
-  ! echo "$output" | grep -q '"required_checks":\["ci"\]'
 }
 
 @test "the ship sentinel mints for a marker-less repo, so the gate is clearable" {

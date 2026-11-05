@@ -3,8 +3,8 @@
 # config. Sourced by every gate in the eng and qa plugins so they can never
 # disagree about whether a repo is gated.
 #
-# WHY this exists: the four opt-in markers (.ship-gate.json / .qa-plan-gate.json /
-# .merge-clearance.json / .deploy-gate.json) are machine-local and git-ignored, and
+# WHY this exists: the old opt-in markers (.ship-gate.json / .qa-plan-gate.json /
+# .deploy-gate.json) are machine-local and git-ignored, and
 # the gates fail OPEN without them. Marker-presence-as-the-switch therefore had
 # three silent holes:
 #
@@ -12,10 +12,7 @@
 #      are by design not carried over. Every fresh worktree of a gated repo was an
 #      UN-gated copy and nothing said so. Observed live on mutwo-skills PR #182: a
 #      bare `gh pr create` succeeded where the ship gate should have blocked it, no
-#      QA plan was demanded, and `merge-clearance status` reported a phantom
-#      `ci=missing` because with no marker to read required_checks from it fell back
-#      to a context literally named "ci". That last one does not fail open, it fails
-#      CONFUSING: it looks like broken CI, so the reflex is to go debug CI.
+#      QA plan was demanded.
 #   2. REGISTRY DRIFT. The old ~/dev/gated-repos.json was keyed by filesystem path
 #      and listed 5 repos while 15 checkouts actually carried markers, so 10 were
 #      gated on disk but invisible to arm-gates.sh and the drift check.
@@ -316,11 +313,11 @@ EOF
 }
 
 # gp_known_gate <gate>
-#   Validate a gate name. The four gates are fixed; an unknown name is a caller bug
+#   Validate a gate name. The three gates are fixed; an unknown name is a caller bug
 #   and must not silently resolve to "no config" (which would read as "allowed").
 gp_known_gate() {
   case "$1" in
-    ship|qa-plan|merge-clearance|deploy) return 0 ;;
+    ship|qa-plan|deploy) return 0 ;;
     *) return 1 ;;
   esac
 }
