@@ -10,8 +10,8 @@
 # marker that the later Bash event reads. This file is that arming primitive,
 # shared so the two gates can never drift apart on how arming works.
 #
-# A marker is keyed by (kind, session_id): "ship" markers never satisfy a "land"
-# check and vice versa, so a /ship cannot authorize a merge mint. The accident-
+# A marker is keyed by (kind, session_id), so one ceremony cannot satisfy another's
+# check. The accident-
 # guard property holds because the marker is written ONLY by a genuine skill/prompt
 # invocation; an unarmed session mints nothing on the Bash path and the gate blocks.
 #
@@ -19,7 +19,7 @@
 # passed in so the freshness check is deterministic and testable.
 
 # ga_arm_file <kind> <session_id> <tmpdir>
-#   Echo the arm-marker path for <kind> ("ship" | "land") and <session_id>, or
+#   Echo the arm-marker path for <kind> ("ship" | "deploy") and <session_id>, or
 #   return 1 when the session id is empty / sanitizes to blank (arming
 #   unavailable -> the Bash mint path is skipped, degrading to cwd-only minting
 #   rather than misfiring). session_id is sanitized to a safe filename token, so a

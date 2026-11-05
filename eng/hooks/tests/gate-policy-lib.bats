@@ -19,9 +19,8 @@ setup() {
   },
   "defaults": {
     "ship": { "base_branches": ["main"], "ttl_seconds": 1200 },
-    "deploy": { "base_branches": ["main"], "required_checks": [] },
     "qa-plan": { "gates": ["build","pr","deploy"] },
-    "deploy": { "hosts": [] }
+    "deploy": { "hosts": [], "required_checks": [] }
   },
   "overrides": {
     "mujtaba3b/tuned": { "deploy": { "required_checks": ["tests"] } }

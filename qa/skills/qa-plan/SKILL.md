@@ -126,7 +126,7 @@ _<one plain-language line: how this phase confirms the change live, after deploy
 **QA posture:** Pre-merge -> state `QA_STATUS: dev_verified` + `EVIDENCE:` (in the PR body write the plain `QA_STATUS: verified`, the only spelling the CI qa-gate accepts) once every Dev QA `✓` box and every Definition-of-Done box is `[x]`. Post-deploy -> state `QA_STATUS: prod_verified` + `EVIDENCE:` once the Prod QA rows are verified live, or, once every agent-runnable Prod QA row is closed with evidence, `QA_STATUS: awaiting_human` + `DRIVER:` + `CHECK:` (only what no agent can do) + `PHASE: prod` + `EVIDENCE:` (citing the Production artifact) while a human-tester row is still open (write "I'll mark it verified once you confirm", not the literal prod_verified posture line).
 ```
 
-Format rules the gates depend on:
+Format rules:
 - The **`📄 Plan view:` line** carries the companion artifact URL (Step 4b). It is a plain link. It may be absent only on the first pass, before Step 4b has run; by the time Step 6 presents the plan it is always populated, because Step 4b is required and Step 6 needs the URL. The PR-body section, not the artifact, is the source of truth.
 - The **QA driver** line names who is on the hook to run the Dev QA, recommended by /qa:plan and approved by the human (roster: the qa plugin's `qa-roster.json`). It carries the driver's handle for the @-mention; for the agent (`claude`) write "the building agent (this session)" with no handle.
 - The **`Tester` column uses simple names**: `claude`, `mutwo`, `mujtaba` (or `muthree` / `mufour`), the roster `id`s. No handles or verbose phrasing in the cell: the handle lives once in the QA-driver line above.
@@ -135,7 +135,7 @@ Format rules the gates depend on:
 - A **Prod QA table has no `✓` column and NO `[ ]`** (it is verified post-deploy).
 - **Definition of Done stays `- [ ]` bullets**.
 - Never use an em-dash (U+2014). Use a hyphen `-` everywhere.
-- **No literal `[ ]` (or `[x]`) anywhere except a Dev QA `✓` cell or a Definition-of-Done bullet.** The strict CI qa-gate and anyone reading the plan treat ANY checkbox bracket as a box in the `## QA` section (its section runs to the next `##`, so the `###` sub-tables stay inside), so a literal `[ ]` in a `Check` / `Expect` / `Notes` cell, in the Prod QA table, in the QA-driver line, or in prose falsely reads as an unchecked box and blocks the merge. Describe such things in words ("an unchecked Dev QA box") instead of the glyph.
+- **No literal `[ ]` (or `[x]`) anywhere except a Dev QA `✓` cell or a Definition-of-Done bullet.** Readers treat ANY checkbox bracket in the `## QA` section as a box (the section runs to the next `##`, so the `###` sub-tables stay inside), so a literal `[ ]` in a `Check` / `Expect` / `Notes` cell, in the Prod QA table, in the QA-driver line, or in prose falsely reads as an unchecked box. Describe such things in words ("an unchecked Dev QA box") instead of the glyph.
 
 **Pick the QA driver** for the `**QA driver:**` line: read `../../qa-roster.json` (the plugin root, relative to this skill's base directory) and recommend one (a best guess; the human approves or refines it in Step 6). Heuristic: default `mutwo` (`@mutwo-ai`); a different Mu clone when it owns the repo/host; `mujtaba` (`@mujtaba3B`) when it needs his taste/judgment or only he holds the live session/data; `claude` (the building agent, no handle) when the flow is automatable and this session can drive it now. Write the chosen driver's label + handle into the line so the PR body names who is on the hook.
 
@@ -184,7 +184,7 @@ Publish a rendered view of the same plan as a Claude **artifact**. This runs on 
 ## Step 5: State what the plan enables
 
 Tell the user, in one tight readout:
-- The **Dev QA `✓` checkboxes** record Development QA. No local gate blocks a merge on them; the strict CI qa-gate reads the PR body in repos that run it. Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
+- The **Dev QA `✓` checkboxes** record Development QA. No gate blocks a merge on them; the strict CI qa-gate reads only the `QA_STATUS:` line, in repos that run it. Flipping them all to `[x]` is what lets you state `QA_STATUS: dev_verified`.
 - The **Prod QA rows** are the post-deploy plan `/canary` (or the named check) runs; verifying them live is `QA_STATUS: prod_verified`.
 - The **`📄 Plan view:` link** is the companion artifact (Step 4b), published on every run; point them at it. It is also the link carried in the approval modal, so it is the copy of the plan the human is guaranteed to be able to open.
 - Point at the posture contract (`docs/qa-status-postures.md` at the qa plugin's root).

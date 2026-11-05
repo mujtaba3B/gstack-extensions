@@ -23,9 +23,9 @@ Do not upgrade without asking. Ask at most once per session: if you have already
 
 **Read first:** Load `shared/core.md` (Engineer Ernie's identity and how he thinks about review) and `shared/review-engine.md` (the multi-lens review machinery: locate toolkit, depth tiers, lenses, verify-don't-trust). This skill is the *orchestrator*; `review-engine.md` is *how a review runs*.
 
-You are running `/eng:cr`, the **single master code-review path**. The point of this skill is control: there is one place every review goes through, so depth, verification, and the merge-gate stamp are decided in one consistent way instead of scattered across half a dozen look-alike tools. Anything that needs a real local review on `~/dev` runs through here.
+You are running `/eng:cr`, the **single master code-review path**. The point of this skill is control: there is one place every review goes through, so depth, verification, and the review stamp are decided in one consistent way instead of scattered across half a dozen look-alike tools. Anything that needs a real local review on `~/dev` runs through here.
 
-**Why this skill writes a review stamp.** `eng:cr` writes `<git-dir>/review-skill-head` at the end of a genuine review (Step 4). `eng:pr-watcher` reads it to decide whether a current review stands in for a rate-limited CodeRabbit.
+**Why this skill writes a review stamp.** `eng:cr` writes `<git-dir>/review-skill-head` at the end of a genuine review (Step 4). The ship gate reads it for its review dimension, and `eng:pr-watcher` reads it to decide whether a current review stands in for a rate-limited CodeRabbit.
 
 ---
 
@@ -42,9 +42,9 @@ gh api user --jq .login 2>/dev/null
 
 Resolve to one of three cases:
 
-1. **Your own uncommitted diff or your own PR/branch, headed for a merge you will perform** -> review it here and mint the stamp (Steps 1-4). This is the common case and the gated one.
+1. **Your own uncommitted diff or your own PR/branch, headed for a merge you will perform** -> review it here and mint the stamp (Steps 1-4). This is the common case.
 2. **Someone else's PR** (the PR author is not you: another human teammate, or an autonomous agent like a `mu*`/`*-ai` bot) where the job is to give *them* feedback -> this is `eng:cr-teammate`'s job (it runs the same engine and posts one author-tagged comment). Hand off: tell the user you are switching to `/eng:cr-teammate <PR>` and invoke it. Do NOT mint the stamp for a review whose purpose is to comment on another author's work.
-   - Exception: if you (in your local checkout) are about to *merge* someone else's PR through the gate, that is case 1 for your checkout, run the review here and stamp the local HEAD; you may also post a comment via `cr-teammate` if you want to notify the author.
+   - Exception: if you (in your local checkout) are about to *merge* someone else's PR, that is case 1 for your checkout, run the review here and stamp the local HEAD; you may also post a comment via `cr-teammate` if you want to notify the author.
 3. **There are existing review comments to work through, not fresh code to review** (CodeRabbit flagged things, a reviewer left comments) -> that is responding to a review, not reviewing. Point the user at:
    - `eng:address-pr-feedback` for a manual, one-comment-at-a-time pass with lesson capture, or
    - `eng:pr-watcher` for the autonomous CodeRabbit watch-and-fix loop.

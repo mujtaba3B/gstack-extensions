@@ -25,8 +25,7 @@
 # Output protocol (PostToolUse): this hook NEVER blocks (the tool already ran; there
 # is no decision to make). It either prints the additionalContext JSON and exits 0,
 # or exits 0 with empty stdout. Fail-OPEN everywhere: any missing dependency,
-# unresolved repo, absent sentinel, or missing PR URL => no nudge. A failed CR
-# rate-limit lookup degrades to the plain "watch" nudge, never to a wrong "land".
+# unresolved repo, absent sentinel, or missing PR URL => no nudge.
 # Past the point where we know this is a genuine ship PR (opted-in + fresh sentinel)
 # but then drop with no parseable PR URL, an audit line is written so that rot - e.g.
 # gh's output shape drifting so the URL parse stops matching - shows up in the log

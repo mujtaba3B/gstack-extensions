@@ -3,7 +3,6 @@
 # (ship-watch-nudge-lib.sh): swn_is_pr_create, swn_extract_pr_url,
 # swn_pr_num_from_url, swn_build_context, swn_already_nudged. No repo /
 # session / network / hook plumbing needed - every function is a pure transform.
-#
 
 setup() {
   # Hermetic: pin the gate-policy lookup at a path that cannot exist, so these
@@ -117,8 +116,6 @@ setup() {
   run swn_pr_num_from_url 'https://github.com/o/r/pull/1234'
   [ "$output" = "1234" ]
 }
-
-# ---- swn_decide -------------------------------------------------------------
 
 # ---- substring assertions ---------------------------------------------------
 #

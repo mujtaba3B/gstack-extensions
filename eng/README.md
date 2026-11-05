@@ -9,7 +9,7 @@ This directory is a Claude Code plugin named `eng` (installed from this repo's l
 | Invocation | What it does |
 |---|---|
 | `/eng:cr` | Master code review and the single local review path for `~/dev`. Reviews any code (your own or someone else's), risk-tiers the depth, runs the shared review engine, and records a review stamp. Routes to the specialists below rather than duplicating them. |
-| `/eng:cr-teammate` | Review a PR authored by someone else (a human teammate or an autonomous agent), run it through the shared review engine, verify the sharp findings, and post exactly one author-tagged comment. Does not mint the gate stamp. |
+| `/eng:cr-teammate` | Review a PR authored by someone else (a human teammate or an autonomous agent), run it through the shared review engine, verify the sharp findings, and post exactly one author-tagged comment. Does not write the review stamp. |
 | `/eng:address-pr-feedback` | Manually work through review comments on a PR you authored: diagnose what each comment wants and how the mistake got through, then patch, push back, or skip, and capture a durable lesson. |
 | `/eng:pr-watcher` | Autonomous watcher that pairs a dispatcher with a polling sensor to handle CodeRabbit feedback on a PR: classify, fix, test, commit, push, reply, repeat. The auto sibling of `address-pr-feedback`. |
 | `/eng:spike` | Cheaply prove or disprove a feature's riskiest unknown before committing to plan and build. Throwaway code on a `spike/<slug>` branch, verdict in `SPIKE.md`. |
@@ -24,7 +24,7 @@ The plugin ships its PR-lifecycle gates in `hooks/hooks.json`; installing the pl
 |---|---|---|
 | `ship-pr-gate.sh` | PreToolUse Bash | Blocks a bare `gh pr create` in a gated repo (default-on fleet-wide) unless a fresh `/ship` sentinel proves the create is part of a real `/ship` run. |
 | `ship-gate-sentinel.sh` | PreToolUse Skill + UserPromptSubmit | Mints the `/ship`-is-running sentinel the ship gate reads. Never blocks. |
-| `review-skill-stamp.sh` | PostToolUse Bash | Records the reviewed HEAD when a review skill logs completion; `eng:pr-watcher` reads it. |
+| `review-skill-stamp.sh` | PostToolUse Bash | Records the reviewed HEAD when a review skill logs completion; the ship gate and `eng:pr-watcher` read it. |
 
 Pure decision logic lives in `ship-pr-gate-lib.sh`, unit-tested by the bats suites in `hooks/tests/` (run them as individual files).
 

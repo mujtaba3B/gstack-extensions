@@ -4,7 +4,7 @@
 
 The merge gate was removed from the eng plugin (eng 3.0.0), so Dev QA boxes no
 longer block a merge locally. The docs now say so. The strict CI qa-gate still
-reads the PR body in repos that run it.
+reads the `QA_STATUS:` line in repos that run it.
 
 ## v2.8.0 (qa plugin 3.14.0)
 

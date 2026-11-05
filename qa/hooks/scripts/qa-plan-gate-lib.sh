@@ -506,7 +506,7 @@ qpg_is_bookkeeping() {
       # dead copies does not demand a QA plan per repo for a no-op diff. Note this
       # is DELETION-of-dead-config territory: if a future gate ever reads these
       # names again, take them back out of this list first.
-      .ship-gate.json|.qa-plan-gate.json|.deploy-gate.json) ;;
+      .ship-gate.json|.qa-plan-gate.json|.merge-clearance.json|.deploy-gate.json) ;;
       # legal / governance (LICENSE.txt / LICENSE.md ride the doc-extension arms)
       LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS) ;;
       *) echo "no"; return 1 ;;

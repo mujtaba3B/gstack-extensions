@@ -155,5 +155,6 @@ the posture itself never greens a merge; the matcher is anchored to the
 keyword right after `QA_STATUS:`, so a `CHECK:` line that mentions "verified"
 does not count. That is not a hard guarantee: the matcher also accepts
 `blocked`, and the Dev QA boxes can be ticked by anyone
-who edits the PR body. What actually keeps a pending human check from merging
-is the driver leaving its Dev QA box unchecked until the human reports back.)
+who edits the PR body. No local gate holds a merge for a pending human check: the
+driver leaves its Dev QA box unchecked and does not land until the human reports
+back.)
