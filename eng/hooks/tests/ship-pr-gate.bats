@@ -559,3 +559,52 @@ sentinel_bash_payload() { printf '{"hook_event_name":"PreToolUse","tool_name":"B
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
 }
+
+# ---- session directory: the hook process may run elsewhere -------------------
+
+cwd_payload() { jq -nc --arg c "$1" --arg d "$2" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+
+@test "payload cwd wins: allowed on the session repo's sentinel, from another repo" {
+  opt_in; write_sentinel "$NOW"
+  REPO2=$(mktemp -d "$HOME/dev/.sgtest.XXXXXX"); git -C "$REPO2" init -q
+  git -C "$REPO2" commit -q --allow-empty -m init
+  p=$(cwd_payload "gh pr create --base main" "$REPO")
+  run bash -c "cd '$REPO2' && printf '%s' '$p' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "payload cwd wins: blocked when only the hook process repo has a sentinel" {
+  opt_in
+  REPO2=$(mktemp -d "$HOME/dev/.sgtest.XXXXXX"); git -C "$REPO2" init -q
+  git -C "$REPO2" commit -q --allow-empty -m init
+  sentinel "$NOW" > "$(git -C "$REPO2" rev-parse --absolute-git-dir)/ship-pr-clearance"
+  p=$(cwd_payload "gh pr create --base main" "$REPO")
+  run bash -c "cd '$REPO2' && printf '%s' '$p' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "stale payload cwd: falls back to the hook process directory" {
+  opt_in
+  p=$(cwd_payload "gh pr create --base main" "$REPO/no-such-dir")
+  run bash -c "cd '$REPO' && printf '%s' '$p' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "relative cd resolves against the payload cwd, not the process directory" {
+  opt_in
+  REPO2=$(mktemp -d "$HOME/dev/.sgtest.XXXXXX"); git -C "$REPO2" init -q
+  git -C "$REPO2" commit -q --allow-empty -m init
+  sentinel "$NOW" > "$(git -C "$REPO2" rev-parse --absolute-git-dir)/ship-pr-clearance"
+  p=$(cwd_payload "cd . && gh pr create --base main" "$REPO")
+  run bash -c "cd '$REPO2' && printf '%s' '$p' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "no payload cwd: falls back to the hook process directory" {
+  opt_in; write_sentinel "$NOW"
+  run bash -c "cd '$REPO' && printf '%s' '$(bash_payload "gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}

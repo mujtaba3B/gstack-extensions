@@ -34,6 +34,9 @@ sg_workdir_from_cmd() {
     "~") wd="$HOME" ;;
     "~/"*) wd="${HOME}/${wd:2}" ;;
   esac
+  # A relative `cd` resolves against the fallback, which is the session directory,
+  # not this hook process's directory.
+  case "$wd" in ""|/*) ;; *) wd="$fallback/$wd" ;; esac
   { [ -n "$wd" ] && [ -d "$wd" ]; } || wd="$fallback"
   printf '%s' "$wd"
 }

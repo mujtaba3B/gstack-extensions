@@ -1021,3 +1021,54 @@ override_stamp() {  # <branch> <source> <expires_at_epoch|null>
   run qpg_stamp_valid '{"branch":"feat/thing","approval_source":"AskUserQuestion"}' feat/thing "" 1000000
   [ "$output" = "approval-expired" ]
 }
+
+# ---- session directory: the hook process may run elsewhere -------------------
+
+other_repo() {
+  OTHER=$(mktemp -d "$HOME/dev/.qpgtest.XXXXXX")
+  git -C "$OTHER" init -q
+  git -C "$OTHER" -c user.name=T -c user.email=t@example.com commit -q --allow-empty -m init
+  git -C "$OTHER" branch -M main
+  git -C "$OTHER" checkout -q -b feat/other
+}
+cwd_create_payload() { jq -nc --arg c "gh pr create --base main" --arg d "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+
+@test "pr gate: payload cwd wins, allowed on the session repo's stamp from another repo" {
+  opt_in; stamp_for "feat/thing"; other_repo
+  run bash -c "cd '$OTHER' && printf '%s' '$(cwd_create_payload "$REPO")' | bash '$PR_GATE'"
+  rm -rf "$OTHER"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "pr gate: payload cwd wins, blocked when only the hook process repo has a stamp" {
+  opt_in; other_repo
+  GITDIR=$(git -C "$OTHER" rev-parse --absolute-git-dir) stamp_for "feat/other"
+  run bash -c "cd '$OTHER' && printf '%s' '$(cwd_create_payload "$REPO")' | bash '$PR_GATE'"
+  rm -rf "$OTHER"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: stale payload cwd falls back to the hook process directory" {
+  opt_in
+  run bash -c "cd '$REPO' && printf '%s' '$(cwd_create_payload "$REPO/no-such-dir")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: relative cd resolves against the payload cwd" {
+  opt_in; other_repo
+  GITDIR=$(git -C "$OTHER" rev-parse --absolute-git-dir) stamp_for "feat/other"
+  p=$(jq -nc --arg c "cd . && gh pr create --base main" --arg d "$REPO" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
+  run bash -c "cd '$OTHER' && printf '%s' '$p' | bash '$PR_GATE'"
+  rm -rf "$OTHER"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: no payload cwd falls back to the hook process directory" {
+  opt_in; stamp_for "feat/thing"
+  p='{"tool_name":"Bash","tool_input":{"command":"gh pr create --base main"}}'
+  run bash -c "cd '$REPO' && printf '%s' '$p' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}

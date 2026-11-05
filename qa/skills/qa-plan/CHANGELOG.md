@@ -1,5 +1,10 @@
 # qa:plan CHANGELOG
 
+## qa plugin 3.17.1
+
+`qa-plan-pr-gate.sh` reads the session directory from the hook payload, so a
+worktree session is judged on its own branch and not the hook process directory.
+
 ## qa plugin 3.17.0
 
 Step 6 now asks the gate resolver first. Where the qa-plan gate is off the skill
