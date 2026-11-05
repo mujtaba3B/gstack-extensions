@@ -2,7 +2,7 @@
 name: qa-plan
 version: 2.5.0
 description: >-
-  QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Always publishes a companion Claude artifact rendering the same plan, on every run and at every change size, and links it from the approval modal (the PR body stays the machine source of truth the gates read); the sole exception is a genuinely headless run with no Artifact tool, which publishes nothing, cannot ask for approval, and stops with the plan unapproved. It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
+  QA Quincey's planning skill: turn a change's success criteria into a two-phase QA plan written into the PR body, BEFORE the PR is reviewed or merged. Produces a Development QA section (must pass in a dev/preview environment before merge), a Production QA section (verified live after deploy), and a Definition of Done, each item tracing to an acceptance criterion (Given/When/Then or EARS) and naming the tool that exercises it. Always publishes a companion Claude artifact rendering the same plan, on every run and at every change size, and links it from the approval modal (the PR body stays the machine source of truth the gates read); the sole exception is a genuinely headless run with no Artifact tool, which publishes nothing, cannot ask for approval, and stops with the plan unapproved. It PLANS QA, it does not execute it (/qa, qa:browser, qa:headless run Development QA; /canary runs Production QA). Ends by presenting the plan and a recommended QA driver for the human's approval, then writes the approval stamp the QA-plan gates read; where the qa-plan gate is off it presents the plan and asks nothing. Use for "qa plan", "write the qa plan", "plan the QA", "qa section for the PR", "dev and prod qa plan", "/qa:plan". (gstack-extensions)
 allowed-tools:
   - Bash
   - Read
@@ -191,6 +191,16 @@ Tell the user, in one tight readout:
 
 ## Step 6: Present the plan for approval, then write the approval stamp
 
+**First, check whether this repo wants an approval at all.** The qa-plan gate can be off for one repo or for every repo (`gate-policy.json`). Ask the resolver the gates themselves use, never a guess from a config file:
+
+```bash
+LIB="<this skill's base directory>/../../hooks/scripts/gate-policy-lib.sh"
+TOP=$(git -C <the-target-repo> rev-parse --show-toplevel)
+bash -c '. "$1"; gp_gate_config "$2" qa-plan >/dev/null' _ "$LIB" "$TOP" && echo "QA_PLAN_GATE=on" || echo "QA_PLAN_GATE=off"
+```
+
+**`QA_PLAN_GATE=off`: stop this step here.** Print the full plan in chat as item 1.1 describes, say in one line that the plan needs no approval in this repo, and carry on with the work. Do NOT fire the `"QA plan"` question and do NOT write a stamp: nothing reads one, and an approval modal nobody needs is the interruption this switch exists to remove. The plan still stands in the PR body, and Dev QA and Prod QA still run against it. Everything below applies only to `QA_PLAN_GATE=on`.
+
 The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-bash-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp. Source written through **Bash** (a heredoc-fed interpreter, `sed -i`, `tee`, `python3 -c`) is covered too, as of qa 3.13.0, but by a `PostToolUse` hook that fires AFTER the write and interrupts rather than preventing; it never reverts anything for you. `qa/docs/build-gate-coverage.md` states the full coverage and its limits.
 
 1. **Render the plan and ask in ONE turn.** Do not end the turn between them, and do not wait for the human to say anything first.
@@ -269,5 +279,5 @@ The load-bearing step: it makes QA approval come **before** building. The two-ph
 
 - It does not **execute** QA. Development QA is `/qa` / `qa:browser` / `qa:headless`; Production QA is `/canary`. This skill writes the plan they run against.
 - It does not **invent** criteria. It pulls them from `/spec`, the issue, the mockup, or the user.
-- It does not **merge or open the PR**. Opening the PR is `/ship`. The only stamp this skill writes is the QA-plan **approval** stamp (`<git-dir>/qa-plan-approved`), and only after the human approves in Step 6.
+- It does not **merge or open the PR**. Opening the PR is `/ship`. The only stamp this skill writes is the QA-plan **approval** stamp (`<git-dir>/qa-plan-approved`), and only after the human approves in Step 6. Where the qa-plan gate is off it writes no stamp and asks nothing.
 - It does not **mint its own approval**. The token that authorizes the stamp is written by a `PostToolUse` hook from the human's actual answer, which is a field the harness fills in and the model cannot emit. That is deliberate: this is the one stamp in the system that attests to a HUMAN act, so unlike the `/eng:cr` review stamp (which attests to an agent act and is rightly agent-written) it cannot be self-issued.

@@ -1,5 +1,12 @@
 # qa:plan CHANGELOG
 
+## qa plugin 3.17.0
+
+Step 6 now asks the gate resolver first. Where the qa-plan gate is off the skill
+prints the plan and moves on, with no approval question and no stamp. The gate
+being off used to stop the blocks but not the modal, so a session that ran
+`/qa:plan` anyway still interrupted the human for an approval nothing read.
+
 ## qa plugin 3.16.1
 
 The merge gate was removed from the eng plugin (eng 3.0.0), so Dev QA boxes no

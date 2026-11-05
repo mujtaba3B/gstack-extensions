@@ -79,6 +79,29 @@ bash_payload() {
   [ "$output" = "block" ]
 }
 
+# The same switch through the REAL hooks. The control is the two tests above: they
+# run on this same fixture with only the policy value different, and they block.
+disable_qa_plan_by_default() {
+  jq '.defaults["qa-plan"] = false' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+}
+
+@test "defaults.qa-plan=false: the PR gate allows, and the ship gate still blocks" {
+  disable_qa_plan_by_default
+  run decision "$QASCRIPTS/qa-plan-pr-gate.sh" "$(bash_payload 'gh pr create --base main --title x --body y')"
+  [ "$output" = "allow" ]
+  run decision "$SCRIPTS/ship-pr-gate.sh" "$(bash_payload 'gh pr create --base main --title x --body y')"
+  [ "$output" = "block" ]
+}
+
+@test "defaults.qa-plan=false: the build gate allows a source edit" {
+  disable_qa_plan_by_default
+  payload=$(jq -nc --arg f "$REPO/src/thing.py" --arg cwd "$REPO" \
+    '{hook_event_name:"PreToolUse",tool_name:"Edit",tool_input:{file_path:$f},cwd:$cwd}')
+  run decision "$QASCRIPTS/qa-plan-build-gate.sh" "$payload"
+  [ "$output" = "allow" ]
+}
+
 @test "the deploy gate is armed for a governed repo with no deploy.json" {
   echo '{"deploy":{"command":"scripts/deploy.sh"}}' > "$REPO/deploy.json"
   run decision "$SCRIPTS/deploy-gate.sh" "$(bash_payload 'scripts/deploy.sh')"
