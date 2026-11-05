@@ -1049,6 +1049,23 @@ cwd_create_payload() { jq -nc --arg c "gh pr create --base main" --arg d "$1" '{
   echo "$output" | grep -q '"decision":"block"'
 }
 
+@test "pr gate: stale payload cwd falls back to the hook process directory" {
+  opt_in
+  run bash -c "cd '$REPO' && printf '%s' '$(cwd_create_payload "$REPO/no-such-dir")' | bash '$PR_GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "pr gate: relative cd resolves against the payload cwd" {
+  opt_in; other_repo
+  GITDIR=$(git -C "$OTHER" rev-parse --absolute-git-dir) stamp_for "feat/other"
+  p=$(jq -nc --arg c "cd . && gh pr create --base main" --arg d "$REPO" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
+  run bash -c "cd '$OTHER' && printf '%s' '$p' | bash '$PR_GATE'"
+  rm -rf "$OTHER"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+}
+
 @test "pr gate: no payload cwd falls back to the hook process directory" {
   opt_in; stamp_for "feat/thing"
   p='{"tool_name":"Bash","tool_input":{"command":"gh pr create --base main"}}'

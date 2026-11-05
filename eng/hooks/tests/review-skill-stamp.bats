@@ -41,3 +41,20 @@ stamp_payload() {  # <cwd or empty>
   [ -f "$REPO/.git/review-skill-head" ]
   [ ! -e "$OTHER/.git/review-skill-head" ]
 }
+
+@test "stale payload cwd: falls back to the hook process directory" {
+  stamp_payload "$REPO/no-such-dir" > "$BATS_TEST_TMPDIR/p.json"
+  run bash -c "cd '$OTHER' && bash '$HOOK' < '$BATS_TEST_TMPDIR/p.json'"
+  [ "$status" -eq 0 ]
+  [ -f "$OTHER/.git/review-skill-head" ]
+  [ ! -e "$REPO/.git/review-skill-head" ]
+}
+
+@test "relative cd resolves against the payload cwd" {
+  CMD="cd . && $CMD"
+  stamp_payload "$REPO" > "$BATS_TEST_TMPDIR/p.json"
+  run bash -c "cd '$OTHER' && bash '$HOOK' < '$BATS_TEST_TMPDIR/p.json'"
+  [ "$status" -eq 0 ]
+  [ -f "$REPO/.git/review-skill-head" ]
+  [ ! -e "$OTHER/.git/review-skill-head" ]
+}

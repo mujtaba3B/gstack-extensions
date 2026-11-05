@@ -79,8 +79,8 @@ GPLIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
 # shellcheck source=/dev/null
 . "$GPLIB"
 
-# Resolve the repo the command targets. Hooks run from the session cwd, not the
-# cwd a leading `cd <dir>` switched into, so a worktree or cross-repo create would
+# Resolve the repo the command targets. A hook sees neither the cwd a leading
+# `cd <dir>` switched into nor, reliably, the session cwd, so a worktree or cross-repo create would
 # otherwise be evaluated against the wrong repo. sg_workdir_from_cmd honors a
 # leading `cd <dir>` (else the payload cwd); sg_dev_repo_gitdir yields the toplevel + the
 # per-worktree git dir, and returns non-zero when the target is not a ~/dev repo

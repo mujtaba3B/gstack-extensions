@@ -3,10 +3,7 @@
 # (it runs `gstack-review-log '{"skill":"review",...}'` at the end of a full
 # review pass), record the current HEAD as reviewed in <git-dir>/review-skill-head.
 #
-# Pairs with codex-review-gate.sh, which blocks `gh pr merge` in ~/dev repos
-# until the recorded SHA matches the PR HEAD. This is the forcing function for
-# the ~/dev independent-local-review mandate: you cannot forget to run /review,
-# because the merge is gated on it. Keying off the completion log line (not the
+# The ship gate reads this stamp for its review dimension. Keying off the completion log line (not the
 # Skill-tool invocation) means an interrupted /review does NOT stamp.
 #
 # Output protocol: exit 0 always (PostToolUse, no decision to make here).
@@ -31,8 +28,7 @@ printf '%s' "$CMD" | grep -q 'gstack-review-log' || exit 0
 # way; the \\? allows an optional backslash before each quote.
 printf '%s' "$CMD" | grep -Eq '\\?"skill\\?"[[:space:]]*:[[:space:]]*\\?"review\\?"' || exit 0
 
-# Resolve the repo the command actually targets. Hooks run from the session
-# cwd, not the cwd a leading `cd <dir> && ...` switched into, so a worktree or
+# Resolve the repo the command actually targets. Without this, a worktree or
 # cross-repo /review would otherwise stamp the wrong repo. Honor a leading
 # `cd <dir>` prefix; fall back to the payload cwd when there is none. --absolute-git-dir
 # keeps the stamp path correct even when WORKDIR differs from the hook cwd.
@@ -42,6 +38,8 @@ case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/
 # main checkout while the session sits in a worktree.
 CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 { [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
+# A relative `cd` resolves against the SESSION directory, not this hook process's.
+case "$WORKDIR" in ""|/*) ;; *) WORKDIR="$CWD/$WORKDIR" ;; esac
 { [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$CWD"
 
 GITDIR=$(git -C "$WORKDIR" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
