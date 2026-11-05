@@ -15,6 +15,10 @@ setup() {
   export GSTACK_LAND_DEPLOY_DIR="$D"
 }
 
+# The gated probes need a repo inside the governed ~/dev tree, outside
+# BATS_TEST_TMPDIR, so cleanup has to survive a failing assertion or setup step.
+teardown() { [ -z "${R:-}" ] || case "$R" in "$HOME/dev/.ldptest."*) rm -rf "$R" ;; esac; }
+
 count() { grep -c "$1" "$2" || true; }
 
 @test "check on an unpatched skill: missing, exit 1" {
@@ -219,7 +223,6 @@ gated_setup() {
   R=$(mktemp -d "$HOME/dev/.ldptest.XXXXXX")
   git -C "$R" init -q
   run bash -c "cd '$R' && '$MC' gated"
-  rm -rf "$R"
   [ "$status" -eq 0 ]
   [ "$output" = "gated" ]
 }
@@ -231,7 +234,6 @@ gated_setup() {
   R=$(mktemp -d "$HOME/dev/.ldptest.XXXXXX")
   git -C "$R" init -q
   run bash -c "cd '$R' && PATH='$BATS_TEST_TMPDIR/bin':\"\$PATH\" '$MC' gated"
-  rm -rf "$R"
   [ "$status" -eq 0 ]
 }
 
@@ -246,7 +248,6 @@ gated_setup() {
   printf '{not json' > "$GATE_POLICY_FILE"
   run bash -c "cd '$R' && '$MC' gated"
   bad=$status
-  rm -rf "$R"
   [ "$missing" -eq 2 ]
   [ "$bad" -eq 2 ]
 }

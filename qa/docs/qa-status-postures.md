@@ -1,17 +1,18 @@
 # QA_STATUS postures: the full contract
 
-The canonical home of the QA-posture contract enforced by `qa-status-gate.sh`
-(the Stop hook). The gate's block message is deliberately short and points
-here; this doc carries the details. Aligned to the two-phase QA-plan policy:
+The canonical home of the QA-posture contract. A posture is how an agent
+states, in its own words, what QA did and did not happen. Aligned to the two-phase QA-plan policy:
 the Development QA Plan must pass before the PR
 merges, the Production QA Plan is verified live after deploy. The plan itself
 lives in the PR body and is authored by `/qa:plan`; the posture line states
 which phase you have verified.
 
-The gate is a "did you decide?" gate, not a linter: any `QA_STATUS:` line
-allows the stop. It arms only when the branch has commits ahead of the base
-branch AND the final message makes a non-negated completion claim. A dirty
-working tree alone does not arm it.
+No hook enforces this at the end of a turn. The always-on Stop gate that once
+did was removed (qa 3.16.0): it had no per-repo switch and interrupted sessions
+with no code changes. What still checks QA is the merge-clearance QA dimension
+(the Dev QA boxes in the PR body) and, in repos that run it, the strict CI
+qa-gate described below. State a posture when you finish a QA run or hand QA
+off; nothing asks you to.
 
 ## The postures
 
@@ -58,9 +59,9 @@ and passed.
 - Artifact-evidence rule: if the approved QA plan in the PR body named a
   `Production artifacts:` field (an exact image:tag, sha256 digest, bundle id,
   or deploy id), the EVIDENCE must cite THAT artifact (this also applies to an
-  `awaiting_human` handoff unless it is plainly `PHASE: dev`). The gate rejects evidence
-  that names only a base / upstream / proxy artifact from the same family
-  (an image, or any colon-joined name the field gives, such as a host:port). This is incident hardening: a shared base image was once "verified"
+  `awaiting_human` handoff unless it is plainly `PHASE: dev`). Evidence that
+  names only a base / upstream / proxy artifact does not meet the bar. Nothing
+  checks this for you. It exists because of an incident: a shared base image was once "verified"
   directly while the derived per-agent images that production actually runs
   went silently stale.
 
@@ -90,58 +91,13 @@ finished: waiting on a named person for a named check.
   handoff may omit it. A production handoff (anything not plainly
   `PHASE: dev`) must cite the exact artifact the plan's `Production
   artifacts:` names, outside any code fence, even when the human's check is
-  the only row left (name the deployed artifact). When that field names a
-  citable ref or a sha256 digest (12+ hex characters; a shorter digest is
-  not matched), the gate blocks a handoff that does not cite
-  it as a whole token (every citable ref, when it names several), whatever its
-  EVIDENCE line says. Each artifact line of the field is checked on its own:
-  cite every citable ref on it, the image refs and any host or skill token
-  written beside them (mac-mini:8080, /mu:pause); citing its digests counts
-  instead only when that line names at most one citable ref (a digest-only
-  line is satisfied by its digest; a base's digest listed
-  beside the image's cannot stand in for it). When a line pins a ref to a
-  digest (team/agent:v1@sha256:...), citing that ref at another digest is a
-  stale image, not a citation, on either posture. The block names the missing
-  refs. A citable ref is any colon-joined `name:tag` token: image refs
-  (ghcr.io/acme/app:v1, agent:42; a registry with a port is part of the
-  ref, so cite registry.acme.io:5000/team/agent:v1 whole: a localhost:5000
-  build of the same path does not count), a host:port on a single-label host
-  (mini:22, mac-mini:8080), a skill (/mu:pause), or a colon-joined deploy or
-  run id (run:4567). Dropped, so never required: ISO times
-  (2026-10-13T14:05Z), all-digit names and time ranges (14:05, 14:05/15:30),
-  and dotted hostnames
-  (sms-hero.example.com:443) or localhost with a port-length tag (under 6
-  digits); an all-digit tag of 6+ digits is kept on any name
-  (registry.acme.io:20261013). A dotted image name with a short
-  all-digit tag (acme.agent:42) reads as a dotted host:port and is not
-  checked; give such an image a registry path or a non-numeric tag. A field
-  naming no citable ref or digest (only a bundle id, a deploy id written
-  without a colon, a dotted hostname or localhost) is not checked: there is
-  nothing the gate can match. The field is prose, so picking its image out is a heuristic; a
-  dedicated machine-readable line is a planned follow-up.
-- The gate enforces the Production bar: unless the message is plainly
-  `PHASE: dev` (at least one PHASE token such as `PHASE: dev` or `PHASE=dev`
-  anywhere in it, every such token `dev` or `development`, and nothing
-  pairing PHASE with
-  prod), the handoff is checked against the plan's `Production artifacts:`.
-  Unlike `prod_verified`, which is judged on its `EVIDENCE:` line, the whole
-  message outside code fences is matched (when the field names a citable ref
-  or digest, see above): it must name the exact artifact, and a handoff naming only a
-  base / proxy artifact is blocked. A missing or oddly formatted
-  `PHASE:` is checked too (fail closed), as is any line pairing `PHASE`
-  with prod. A plainly `PHASE: dev` handoff is not checked: dev QA runs a
-  preview artifact. The check reads `Production artifacts:` from the PR of
-  the current branch, so a handoff written from `main` (no PR) is not
-  checked; close those rows against the named artifact yourself. A block
-  names the text that engaged the check (a "Phase" table header, a
-  "PHASE: prod" remark). The fix is to re-verify through the production
-  artifact; restating as `PHASE: dev` is right only for a genuinely
-  pre-merge handoff, never for one whose change is merged or deployed.
+  the only row left (name the deployed artifact). Treat a missing or unclear
+  `PHASE:` as production. Relabelling a post-deploy handoff as `PHASE: dev` is
+  a false posture; `PHASE: dev` is right only for a genuinely pre-merge
+  handoff.
 - While awaiting, say "I'll mark it verified once you confirm" rather than
-  writing the literal `QA_STATUS: prod_verified` token: any unfenced
-  `QA_STATUS: prod_verified` also engages the artifact check, by design (a
-  rule that tried to tell a promise from a claim was beaten by markdown and
-  HTML shapes and reverted).
+  writing the literal `QA_STATUS: prod_verified` token, so a promise never
+  reads as a claim.
 - `PHASE: dev` is a pre-merge check only the human can do that involves no
   branch deploy (e.g. a local install exercised in his own app). If you
   deployed the feature branch to a host for him, use
@@ -180,14 +136,13 @@ The recorded human sign-off for a requested skip.
 This turn changed NO version-controlled files: only docs / memory / local-only
 edits (git-ignored LOG.md / INDEX.md, `~/.claude` memory), ops, or pure
 conversation. There is nothing to QA, so this ENDS the turn with no evidence
-and no human sign-off needed. Use it (not `skip_requested`) when the gate
-fired on a branch whose commits ahead carry no QA-able change of yours, e.g.
-docs-only commits.
+and no human sign-off needed. Use it (not `skip_requested`) for a branch
+whose commits ahead carry no QA-able change of yours, e.g. docs-only commits.
 
 ## Intermediate vs terminal postures (CI asymmetry)
 
-`deploy_branch_for_manual_qa`, `skip_requested`, and `awaiting_human` end the
-working turn at the Stop hook but are NOT accepted by the strict per-repo CI qa-gate
+`deploy_branch_for_manual_qa`, `skip_requested`, and `awaiting_human` are honest
+ways to end a working turn but are NOT accepted by the strict per-repo CI qa-gate
 (`.github/workflows/qa-gate.yml`), which greens only on `verified` / `blocked`
 / `skip_approved` (verified against the deployed workflow's matcher; note it
 does NOT match the longer `dev_verified` spelling, so the PR body must carry a

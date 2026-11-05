@@ -1,6 +1,6 @@
 # The QA posture contract (`QA_STATUS` / `EVIDENCE`)
 
-QA is a first-class, recorded decision, not something review has to catch. A `qa:browser` run ends by STATING its posture in a fixed format. That one posture feeds two enforcement points with DIFFERENT match rules. Satisfy both.
+QA is a first-class, recorded decision, not something review has to catch. A `qa:browser` run ends by STATING its posture in a fixed format. The PR qa-gate CI reads that posture with a strict match, so write it in the form below.
 
 The postures are **two-phase**: Development QA is verified in a dev / preview environment before the PR merges; Production QA is verified live after deploy. The legacy flat `verified` stays valid as an alias for `dev_verified`; in the PR body, write the plain `QA_STATUS: verified` spelling, which is the only one the CI qa-gate accepts. The two-phase QA plan itself (Development + Production checklists) is authored into the PR body by `/qa:plan`; the posture line below states which phase you verified.
 
@@ -30,16 +30,9 @@ QA_STATUS: skip_approved
 QA_SKIP_APPROVED_BY: <github-handle> <YYYY-MM-DD> <why QA is not feasible / not needed>
 ```
 
-## Gate 1: the build-time Stop hook (lenient)
+## The PR qa-gate CI (strict)
 
-The qa plugin's `hooks/scripts/qa-status-gate.sh` (shipped and wired by this plugin) is a Claude Code Stop hook. When your final assistant message claims coding work is done (`done`, `shipped`, `ready to merge`, ...) on a branch with shippable changes, it blocks the stop unless the message carries a `QA_STATUS:` line.
-
-- The match is lenient: ANY line containing `QA_STATUS:` (case-insensitive) anywhere in the final message satisfies it. It strips code fences and is negation-aware, and it fails OPEN on any doubt.
-- So: just end your final message with the posture line. That is all the Stop hook needs.
-
-## Gate 2: the PR qa-gate CI (strict)
-
-The per-repo `.github/workflows/qa-gate.yml` (e.g. hesco) re-checks the same posture in the PR BODY, as the audit trail that survives a forgotten hook. Its match is strict:
+No hook checks your final message; end it with the posture line anyway, because that is the record of what you did. The per-repo `.github/workflows/qa-gate.yml` (e.g. hesco) checks the posture in the PR BODY. Its match is strict:
 
 - The posture must be on its OWN line: `QA_STATUS: verified` (or `blocked` or `skip_approved`) as a SINGLE keyword, with NO `<` or `|` on the line, and not inside an HTML comment or code fence.
 - The unedited template menu line `QA_STATUS: <verified | blocked | skip_approved>` is REJECTED.
@@ -49,27 +42,27 @@ So the QA block you hand the user for the PR body must be CI-clean: a real singl
 
 ## The asymmetry that bites: intermediate postures
 
-| Posture | Stop hook | CI qa-gate |
-|---|---|---|
-| `verified` + `EVIDENCE` | passes | passes |
-| `dev_verified` + `EVIDENCE` (same posture, longer spelling) | passes | **fails** (the matcher takes only the plain `verified` keyword, so the PR body needs `QA_STATUS: verified`) |
-| `deploy_branch_for_manual_qa` + `DRIVER` + `DEPLOYED` | passes (stated) | **fails** (not an accepted keyword) |
-| `prod_verified` + `EVIDENCE` | passes | n/a (post-deploy, not a pre-merge gate) |
-| `awaiting_human` + `DRIVER` + `CHECK` + `PHASE` | passes (stated) | **fails** for `PHASE: dev` (a pending human check never greens a merge); n/a for `PHASE: prod` (post-deploy) |
-| `blocked` + `REASON` | passes | passes |
-| `skip_requested` + `REASON` | passes (stated) | **fails** (not an accepted keyword) |
-| `skip_approved` + `QA_SKIP_APPROVED_BY` | passes | passes |
-| `no_tracked_change` | passes (stated) | n/a (no tracked change to merge) |
+| Posture | CI qa-gate |
+|---|---|
+| `verified` + `EVIDENCE` | passes |
+| `dev_verified` + `EVIDENCE` (same posture, longer spelling) | **fails** (the matcher takes only the plain `verified` keyword, so the PR body needs `QA_STATUS: verified`) |
+| `deploy_branch_for_manual_qa` + `DRIVER` + `DEPLOYED` | **fails** (not an accepted keyword) |
+| `prod_verified` + `EVIDENCE` | n/a (post-deploy, not a pre-merge gate) |
+| `awaiting_human` + `DRIVER` + `CHECK` + `PHASE` | **fails** for `PHASE: dev` (a pending human check never greens a merge); n/a for `PHASE: prod` (post-deploy) |
+| `blocked` + `REASON` | passes |
+| `skip_requested` + `REASON` | **fails** (not an accepted keyword) |
+| `skip_approved` + `QA_SKIP_APPROVED_BY` | passes |
+| `no_tracked_change` | n/a (no tracked change to merge) |
 
 This table is a summary; the full contract for every posture is `docs/qa-status-postures.md` at the qa plugin's root.
 
-`skip_requested` is a valid stated posture for the Stop hook but the CI gate does NOT accept it. If QA is genuinely infeasible, you must escalate: state `skip_requested` + `REASON`, ask the human "ok to skip QA for <reason>", and on approval record `skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>` in the PR body. Emitting `skip_requested` alone passes the hook but leaves the PR red.
+`skip_requested` is a valid stated posture but the CI gate does NOT accept it. If QA is genuinely infeasible, you must escalate: state `skip_requested` + `REASON`, ask the human "ok to skip QA for <reason>", and on approval record `skip_approved` + `QA_SKIP_APPROVED_BY: <handle> <date> <reason>` in the PR body. Emitting `skip_requested` alone leaves the PR red.
 
-`awaiting_human` with `PHASE: dev` behaves the same way on purpose: it ends the turn honestly while the human's check is pending. Leave that check's Dev QA box unchecked until they report back: that box, not CI, is what blocks the merge. Run every check you can before handing off; `CHECK:` names only what no agent can do. Unless the handoff is plainly `PHASE: dev` (a missing, malformed or mixed `PHASE:` counts as prod), your handoff must cite the plan's exact production artifact outside any code fence (an `EVIDENCE:` line is the place for it), and one naming only a base / proxy artifact is blocked, and while awaiting you write "I'll mark it verified once you confirm", never the literal `QA_STATUS: prod_verified` line.
+`awaiting_human` with `PHASE: dev` behaves the same way on purpose: it ends the turn honestly while the human's check is pending. Leave that check's Dev QA box unchecked until they report back: that box, not CI, is what blocks the merge. Run every check you can before handing off; `CHECK:` names only what no agent can do. Unless the handoff is plainly `PHASE: dev` (a missing, malformed or mixed `PHASE:` counts as prod), your handoff must cite the plan's exact production artifact outside any code fence (an `EVIDENCE:` line is the place for it), and one naming only a base / proxy artifact does not meet the bar, and while awaiting you write "I'll mark it verified once you confirm", never the literal `QA_STATUS: prod_verified` line.
 
 ## Honesty (non-negotiable)
 
-The Stop hook only checks for the STRING `QA_STATUS:`; it never verifies your evidence. That makes honesty your job. Emit `QA_STATUS: verified` ONLY when you actually drove the real UI and observed the outcome. Never from a dry run, a code read, or an endpoint-only check. If you got partway, emit `blocked` with what you reached. A fabricated `verified` defeats the entire point of the gate.
+Nothing verifies your evidence. That makes honesty your job. Emit `QA_STATUS: verified` ONLY when you actually drove the real UI and observed the outcome. Never from a dry run, a code read, or an endpoint-only check. If you got partway, emit `blocked` with what you reached. A fabricated `verified` defeats the entire point of the gate.
 
 ## What good evidence looks like
 

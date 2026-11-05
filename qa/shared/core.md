@@ -213,7 +213,7 @@ The verdict is what Deployer Danny reads when deciding whether to ship.
 
 ## QA posture contract (every qa:* run states it)
 
-Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the build-time Stop hook and the PR qa-gate CI can both see. The postures are two-phase (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
+Beyond the human-readable verdict, every QA Quincey run ends by STATING a machine posture so QA is a first-class, recorded decision that the PR qa-gate CI can see. The postures are two-phase (Development QA before the PR, Production QA after deploy); the legacy flat `verified` stays valid as an alias. Map the verdict to the posture:
 
 - PASS in dev / preview (pre-merge) → `QA_STATUS: dev_verified` + `EVIDENCE:` (the commands, URLs, screenshots, or test names that prove you exercised it). `verified` is accepted as an alias, and is the spelling the PR body needs (the CI qa-gate rejects `dev_verified`).
 - PASS live in production (post-deploy) → `QA_STATUS: prod_verified` + `EVIDENCE:`.
@@ -223,7 +223,7 @@ Beyond the human-readable verdict, every QA Quincey run ends by STATING a machin
 
 Two more postures exist outside a qa:* run's verdict: `deploy_branch_for_manual_qa` (the feature branch deployed to its real host for QA) and `no_tracked_change` (nothing version-controlled changed). The full list, with every posture's required lines, is `docs/qa-status-postures.md` at the plugin root.
 
-End the final message with the posture line. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The canonical contract is `docs/qa-status-postures.md`; `qa:browser`'s `references/qa-contract.md` summarizes the two-gate format, the strict CI rules, and the skip escalation.
+End the final message with the posture line. A final message alone never reaches the PR qa-gate CI, which reads only the PR body: where a PR has that gate, also write the posture into the PR body, or hand the user the block to paste when you cannot edit it. Never state a `*_verified` posture without having actually exercised the thing. The two-phase plan itself (Development + Production) is authored by `/qa:plan` into the PR body. The canonical contract is `docs/qa-status-postures.md`; `qa:browser`'s `references/qa-contract.md` summarizes the two-gate format, the strict CI rules, and the skip escalation.
 
 ---
 

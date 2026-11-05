@@ -16,7 +16,7 @@
     {
       "name": "qa",
       "source": "./qa",
-      "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup, either in the browser (driving the gstack browse daemon and AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects); qa:qa-plan authors the two-phase QA plan. Also ships Quincey's enforcement hooks: the QA-plan gates (presentation / build / PR) and the QA-status Stop gate, active in opted-in repos (.qa-plan-gate.json). Skills: qa:browser, qa:headless, qa:qa-plan."
+      "description": "QA Quincey, the manual-QA persona. Verifies one defined flow against the spec or mockup, either in the browser (driving the gstack browse daemon and AI-comparing screenshots against Pencil mockups) or headless (capturing backend side effects); qa:qa-plan authors the two-phase QA plan. Also ships Quincey's enforcement hooks: the QA-plan gates (presentation / build / Bash-build / PR) and the approval-token minter, active in opted-in repos (.qa-plan-gate.json). Skills: qa:browser, qa:headless, qa:qa-plan."
     },
     {
       "name": "eng",

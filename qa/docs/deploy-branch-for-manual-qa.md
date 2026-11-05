@@ -1,8 +1,7 @@
 # Deploy a feature branch to a test host for manual QA
 
 The `deploy_branch_for_manual_qa` QA posture (full contract:
-[`qa-status-postures.md`](qa-status-postures.md), enforced by
-this plugin's `hooks/scripts/qa-status-gate.sh`) names
+[`qa-status-postures.md`](qa-status-postures.md)) names
 a real, often-skipped QA activity: deploy the unmerged feature branch to the host
 where the code is actually exercised, run the real flow against real data, and only
 then call it verified. It exists because automated tests pass on plenty of changes
@@ -49,8 +48,8 @@ where you put the branch on a host for him.
 
 ## It ends the turn, it does not clear the merge
 
-`deploy_branch_for_manual_qa` satisfies the build-time Stop hook (any `QA_STATUS:`
-line ends the turn), but it is an INTERMEDIATE posture, not a terminal one. Like
+`deploy_branch_for_manual_qa` is an honest way to end a working turn, but it is an
+INTERMEDIATE posture, not a terminal one. Like
 `skip_requested`, the strict per-repo CI qa-gate (`.github/workflows/qa-gate.yml`,
 where present) does NOT accept it: that gate only greens on `verified`, `blocked`,
 or `skip_approved` in the PR body. This is deliberate and does not weaken the merge
