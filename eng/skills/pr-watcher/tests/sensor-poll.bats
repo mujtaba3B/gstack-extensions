@@ -31,6 +31,48 @@ setup() {
   [ "$output" = "null" ]
 }
 
+# --- sp_emit: cr_limit_notice
+
+# limit_notice <issue_comments_json> [<reviews_json>]: the field as emitted.
+limit_notice() {
+  sp_emit new_cr_feedback 0 0 abc success "" n/a "$1" "${2:-[]}" '[]' | jq -c .cr_limit_notice
+}
+
+@test "limit notice: the older sentence is detected" {
+  run limit_notice '[{"id":"1","body":"Sorry, this was rate limited by coderabbit.ai today."}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: the Review limit reached warning is detected" {
+  run limit_notice '[{"id":"1","body":"<!-- x -->\n> [!WARNING]\n> ## Review limit reached\n> \n> Run on-demand review"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: an unquoted heading is detected" {
+  run limit_notice '[{"id":"1","body":"## Review limit reached\nwait 29 minutes"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: a review body counts as well as a comment" {
+  run limit_notice '[]' '[{"id":"9","body":"> ## Review limit reached"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: a review that quotes the phrase mid-sentence does not trip it" {
+  run limit_notice '[{"id":"1","body":"This PR handles the Review limit reached notice from CodeRabbit."}]'
+  [ "$output" = "false" ]
+}
+
+@test "limit notice: ordinary feedback is false, and a missing body is safe" {
+  run limit_notice '[{"id":"1","body":"Actionable comments posted: 2"},{"id":"2"}]'
+  [ "$output" = "false" ]
+}
+
+@test "limit notice: no new items is false" {
+  run limit_notice '[]'
+  [ "$output" = "false" ]
+}
+
 # --- sp_filter_new
 
 @test "filter_new keeps only unbaselined coderabbitai[bot] items, stringifies ids" {
