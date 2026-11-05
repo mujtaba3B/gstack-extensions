@@ -9,9 +9,8 @@ which phase you have verified.
 
 No hook enforces this at the end of a turn. The always-on Stop gate that once
 did was removed (qa 3.16.0): it had no per-repo switch and interrupted sessions
-with no code changes. What still checks QA is the merge-clearance QA dimension
-(the Dev QA boxes in the PR body) and, in repos that run it, the strict CI
-qa-gate described below. State a posture when you finish a QA run or hand QA
+with no code changes. What still checks QA is the strict CI qa-gate described
+below, in repos that run it. No local gate reads the Dev QA boxes at merge. State a posture when you finish a QA run or hand QA
 off; nothing asks you to.
 
 ## The postures
@@ -155,6 +154,7 @@ pre-merge condition; so is `awaiting_human PHASE: prod`, which CI never sees.
 the posture itself never greens a merge; the matcher is anchored to the
 keyword right after `QA_STATUS:`, so a `CHECK:` line that mentions "verified"
 does not count. That is not a hard guarantee: the matcher also accepts
-`blocked`, and the Dev QA boxes merge-clearance reads can be ticked by anyone
-who edits the PR body. What actually keeps a pending human check from merging
-is the driver leaving its Dev QA box unchecked until the human reports back.)
+`blocked`, and the Dev QA boxes can be ticked by anyone
+who edits the PR body. No local gate holds a merge for a pending human check: the
+driver leaves its Dev QA box unchecked and does not land until the human reports
+back.)

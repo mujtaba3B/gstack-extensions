@@ -3,7 +3,7 @@
 The multi-lens adversarial review machinery shared by `eng:cr` (review your own
 work before merge) and `eng:cr-teammate` (review another author's PR and comment).
 Both skills load this file; it owns *how* a review runs. Each skill owns its own
-*terminal act* (cr mints the merge-gate stamp; cr-teammate posts a comment).
+*terminal act* (cr writes the review stamp; cr-teammate posts a comment).
 
 The discipline below is the same one a careful human reviewer applies: pick depth
 by risk, run independent lenses, then verify the sharp findings against the real

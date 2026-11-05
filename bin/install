@@ -157,36 +157,9 @@ prune_unguarded_writers() {
 }
 prune_unguarded_writers
 
-# 4. Stable-path shim for merge-clearance.sh. The real script ships inside the
-#    eng plugin (eng/hooks/scripts/), but external callers invoke it by the
-#    long-standing fixed path ~/.claude/scripts/merge-clearance.sh: the gstack
-#    /land-and-deploy patch (eng/docs/land-and-deploy-merge-clearance.md) and
-#    the pr-merge-gate block message both name it. The shim execs the newest
-#    installed cache copy, so the path stays valid across version bumps.
-mkdir -p "$HOME/.claude/scripts"
-cat > "$HOME/.claude/scripts/merge-clearance.sh" <<'SHIM'
-#!/usr/bin/env bash
-# Shim installed by gstack-extensions bin/install. The real merge-clearance.sh
-# ships inside the eng plugin; exec the newest installed cache copy.
-set -euo pipefail
-CACHE="$HOME/.claude/plugins/cache/gstack-extensions/eng"
-# Highest installed version wins (sort -V), not newest mtime: deterministic
-# when multiple cache version dirs coexist.
-real=""
-for d in $(ls -d "$CACHE"/*/ 2>/dev/null | sort -rV); do
-  if [ -x "${d}hooks/scripts/merge-clearance.sh" ]; then
-    real="${d}hooks/scripts/merge-clearance.sh"
-    break
-  fi
-done
-if [ -z "$real" ] || [ ! -x "$real" ]; then
-  echo "merge-clearance shim: no installed eng plugin copy found under $CACHE; run gstack-extensions/bin/install" >&2
-  exit 1
-fi
-exec "$real" "$@"
-SHIM
-chmod +x "$HOME/.claude/scripts/merge-clearance.sh"
-echo "wrote shim: ~/.claude/scripts/merge-clearance.sh -> eng plugin cache"
+# 4. The merge gate was removed in eng 3.0.0. Clear the stable-path shim older
+#    installs left behind, because it would exec a script that no longer exists.
+rm -f "$HOME/.claude/scripts/merge-clearance.sh"
 
 # 5. Deploy the QA posture contract doc to its fixed path. Agents reach
 #    ~/.claude/docs/qa-status-postures.md from outside the plugin's own tree,

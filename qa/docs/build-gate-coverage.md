@@ -116,7 +116,7 @@ itself:
    no delta, no block, and no later call notices. The gate observes the working
    tree, not the commit graph. This is the largest remaining hole. The backstop
    is that `qa-plan-pr-gate.sh` still refuses `gh pr create` on an unstamped
-   branch and merge-clearance still requires a QA posture at merge.
+   branch.
 4. **The first call of a session on a branch establishes a baseline and never
    blocks.** Judging absolute dirty state would block every Bash call on an
    already-dirty branch, `ls` included, which is a gate the human removes on day

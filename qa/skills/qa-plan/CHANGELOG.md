@@ -1,5 +1,11 @@
 # qa:plan CHANGELOG
 
+## qa plugin 3.16.1
+
+The merge gate was removed from the eng plugin (eng 3.0.0), so Dev QA boxes no
+longer block a merge locally. The docs now say so. The strict CI qa-gate still
+reads the `QA_STATUS:` line in repos that run it.
+
 ## v2.8.0 (qa plugin 3.14.0)
 
 The approval binds to the plan's DECLARED target, not to whatever repo the

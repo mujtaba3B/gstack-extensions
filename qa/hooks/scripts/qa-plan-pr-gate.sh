@@ -72,8 +72,8 @@ BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 # Bookkeeping fast lane: a branch whose ENTIRE diff vs base is docs / the
 # cross-host inventory is a zero-risk, non-code change. Opening its PR does not
-# need an approved two-phase plan - the merge gate still runs CI + CodeRabbit on
-# it, only the plan ceremony is waived. Fails safe: if the base ref cannot be
+# need an approved two-phase plan - CI and CodeRabbit still run on it, only the
+# plan ceremony is waived. Fails safe: if the base ref cannot be
 # resolved or the diff is empty, we fall through to the normal stamp check below,
 # never to a false allow. The classifier (qpg_is_bookkeeping, sourced from LIB)
 # itself fails closed: any one non-allowlisted path means "no".

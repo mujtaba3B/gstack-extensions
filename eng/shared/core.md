@@ -50,9 +50,9 @@ When a lesson comes out of a review, it lives in one of these places depending o
 
 ## Post-ship default: wait for CodeRabbit, then land (don't ask)
 
-After `/ship` opens the PR, the ship -> land sequence is fixed and needs no per-run decision: run `/eng:pr-watcher` on the PR, wait for CodeRabbit to post and settle, handle its feedback, then `/land-and-deploy`. This walks HANDBOOK build stages 8 (code review) -> 9 (pass the merge gate, where CodeRabbit is a hard blocker) -> 10 (push to production).
+After `/ship` opens the PR, the ship -> land sequence is fixed and needs no per-run decision: run `/eng:pr-watcher` on the PR, wait for CodeRabbit to post and settle, handle its feedback, then `/land-and-deploy`. This walks HANDBOOK build stages 8 (code review) -> 9 (CI green and CodeRabbit settled) -> 10 (push to production).
 
-Do NOT present a "how do you want to land it?" choice (land-now / watch-first / pause). Waiting for CodeRabbit is always the answer, so just do it. The rate-limit case is already automated: when CodeRabbit is rate-limited, a current local `/eng:cr` review backstops it (the merge-clearance interlock) and the PR is clear to land, so there is no question there either.
+Do NOT present a "how do you want to land it?" choice (land-now / watch-first / pause). Waiting for CodeRabbit is always the answer, so just do it. The rate-limit case is already automated: when CodeRabbit is rate-limited, a current local `/eng:cr` review stands in for it and the PR is clear to land, so there is no question there either.
 
 Only stop to ask if the happy path actually breaks: CI is red, there is a merge conflict, CodeRabbit raises a blocker you cannot auto-resolve, or the user explicitly said to pause. Otherwise ship -> pr-watcher -> land runs uninterrupted. (The `ship-watch-nudge` hook injects this same policy automatically right after a `/ship` create; this section covers the case where you reach the land step in a later session, where that one-shot nudge is no longer in context.)
 
