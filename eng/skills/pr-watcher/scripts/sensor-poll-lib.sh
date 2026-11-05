@@ -104,6 +104,14 @@ sp_fingerprint() {
 #         [error_message]
 #   Assemble the sensor's single output JSON. cr_state/cr_updated_at may be
 #   empty (emitted as null). error_message is included only when non-empty.
+#   cr_limit_notice is true when a new CodeRabbit comment or review body is its
+#   limit notice. There are two wordings: the older sentence, and the newer
+#   warning headed "Review limit reached", which comes with a `skipping` check
+#   and no commit status. The heading is matched at the start of a line (blockquote
+#   marks allowed), so a review that merely quotes the phrase does not trip it.
+#   With no CR status on HEAD any notice counts, since CR never ran. With a status,
+#   CR ran, so only its NEWEST item counts: an old notice must not outrank a later
+#   real review. The outcome cr_failure carries no comments, so this is false there.
 sp_emit() {
   jq -cn \
     --arg outcome "$1" --argjson polled "$2" --argjson ticks "$3" \
@@ -120,7 +128,11 @@ sp_emit() {
       settled_via: $via,
       new_issue_comments: $ic,
       new_reviews: $rv,
-      new_review_comments: $rc
+      new_review_comments: $rc,
+      cr_limit_notice: (
+        def notice: (.body // "") | test("rate limited by coderabbit\\.ai|(^|\n)[> ]*#+ *review limit reached"; "i");
+        [($ic, $rv)[]] | sort_by(.updated_at // .submitted_at // "")
+        | if $state == "" then any(notice) else (last | notice) end)
     }
     + (if $err == "" then {} else {error_message: $err} end)
   '

@@ -31,6 +31,66 @@ setup() {
   [ "$output" = "null" ]
 }
 
+# --- sp_emit: cr_limit_notice
+
+# limit_notice <issue_comments_json> [<reviews_json>]: the field as emitted.
+limit_notice() {
+  sp_emit new_cr_feedback 0 0 abc "${3-success}" "" n/a "$1" "${2:-[]}" '[]' | jq -c .cr_limit_notice
+}
+
+@test "limit notice: the older sentence is detected" {
+  run limit_notice '[{"id":"1","body":"Sorry, this was rate limited by coderabbit.ai today."}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: the Review limit reached warning is detected" {
+  run limit_notice '[{"id":"1","body":"<!-- x -->\n> [!WARNING]\n> ## Review limit reached\n> \n> Run on-demand review"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: an unquoted heading is detected" {
+  run limit_notice '[{"id":"1","body":"## Review limit reached\nwait 29 minutes"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: a review body counts as well as a comment" {
+  run limit_notice '[]' '[{"id":"9","body":"> ## Review limit reached"}]'
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: a review that quotes the phrase mid-sentence does not trip it" {
+  run limit_notice '[{"id":"1","body":"This PR handles the Review limit reached notice from CodeRabbit."}]'
+  [ "$output" = "false" ]
+}
+
+@test "limit notice: ordinary feedback is false, and a missing body is safe" {
+  run limit_notice '[{"id":"1","body":"Actionable comments posted: 2"},{"id":"2"}]'
+  [ "$output" = "false" ]
+}
+
+NOTICE='{"id":"1","updated_at":"2020-01-01T00:00:00Z","body":"> ## Review limit reached"}'
+REVIEW='{"id":"9","submitted_at":"2020-01-01T00:05:00Z","body":"Actionable comments posted: 1"}'
+
+@test "limit notice: an old notice does not outrank a later real review" {
+  run limit_notice "[$NOTICE]" "[$REVIEW]"
+  [ "$output" = "false" ]
+}
+
+@test "limit notice: with no CR status on HEAD, a notice counts wherever it sits" {
+  run limit_notice "[$NOTICE]" "[$REVIEW]" ""
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: with a status, a notice newest of the batch counts" {
+  run limit_notice '[{"id":"2","updated_at":"2020-01-01T00:09:00Z","body":"## Review limit reached"}]' "[$REVIEW]" pending
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: no new items is false" {
+  run limit_notice '[]'
+  [ "$output" = "false" ]
+}
+
 # --- sp_filter_new
 
 @test "filter_new keeps only unbaselined coderabbitai[bot] items, stringifies ids" {
