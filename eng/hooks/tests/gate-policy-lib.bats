@@ -306,7 +306,35 @@ set_override() {
   [ "$output" = '{}' ]
 }
 
-@test "a default of null stays ON too: only a literal false disarms" {
+@test "a default of true stays ON: undoing the switch must not disarm the gate" {
+  jq '.defaults["qa-plan"] = true' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{}' ]
+}
+
+@test "a malformed gate value fails OPEN but LOGS it, and leaves other gates alone" {
+  jq '.defaults["qa-plan"] = "on"' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+  grep -q 'FAIL-OPEN gate=qa-plan repo=mujtaba3b/plain' "$GATE_POLICY_LOG"
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+}
+
+@test "a default of literal false is not logged as a failure: it is a decision" {
+  set_default_false qa-plan
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+  ! grep -q 'FAIL-OPEN' "$GATE_POLICY_LOG"
+}
+
+@test "a default of null stays ON too: null is absence, not a decision" {
   jq '.defaults["qa-plan"] = null' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
   mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
   d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)

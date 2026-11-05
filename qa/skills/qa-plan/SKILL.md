@@ -196,10 +196,12 @@ Tell the user, in one tight readout:
 ```bash
 LIB="<this skill's base directory>/../../hooks/scripts/gate-policy-lib.sh"
 TOP=$(git -C <the-target-repo> rev-parse --show-toplevel)
-bash -c '. "$1"; gp_gate_config "$2" qa-plan >/dev/null' _ "$LIB" "$TOP" && echo "QA_PLAN_GATE=on" || echo "QA_PLAN_GATE=off"
+if [ ! -f "$LIB" ] || [ -z "$TOP" ]; then echo "QA_PLAN_GATE=unknown"
+elif bash -c '. "$1"; gp_gate_config "$2" qa-plan >/dev/null' _ "$LIB" "$TOP"; then echo "QA_PLAN_GATE=on"
+else echo "QA_PLAN_GATE=off"; fi
 ```
 
-**`QA_PLAN_GATE=off`: stop this step here.** Print the full plan in chat as item 1.1 describes, say in one line that the plan needs no approval in this repo, and carry on with the work. Do NOT fire the `"QA plan"` question and do NOT write a stamp: nothing reads one, and an approval modal nobody needs is the interruption this switch exists to remove. The plan still stands in the PR body, and Dev QA and Prod QA still run against it. Everything below applies only to `QA_PLAN_GATE=on`.
+**`QA_PLAN_GATE=off`: stop this step here.** Print the full plan in chat as item 1.1 describes, say in one line that the plan needs no approval in this repo, and carry on with the work. Do NOT fire the `"QA plan"` question and do NOT write a stamp: nothing reads one, and an approval modal nobody needs is the interruption this switch exists to remove. The plan still stands in the PR body, and Dev QA and Prod QA still run against it. Everything below applies to `QA_PLAN_GATE=on` and to `unknown`, because a check that could not run is not a decision to skip the approval.
 
 The load-bearing step: it makes QA approval come **before** building. The two-phase QA-plan approval policy requires the plan to be presented to and approved by the human before implementation. The gates (`qa-plan-build-gate.sh` / `qa-plan-bash-build-gate.sh` / `qa-plan-pr-gate.sh`) enforce it: in an opted-in repo, source edits and `gh pr create` are blocked until the branch has an approval stamp. Source written through **Bash** (a heredoc-fed interpreter, `sed -i`, `tee`, `python3 -c`) is covered too, as of qa 3.13.0, but by a `PostToolUse` hook that fires AFTER the write and interrupts rather than preventing; it never reverts anything for you. `qa/docs/build-gate-coverage.md` states the full coverage and its limits.
 
