@@ -1,5 +1,10 @@
 # qa:plan CHANGELOG
 
+## qa plugin 3.16.2
+
+`qa-plan-pr-gate.sh` reads the session directory from the hook payload, so a
+worktree session is judged on its own branch and not the hook process directory.
+
 ## qa plugin 3.16.1
 
 The merge gate was removed from the eng plugin (eng 3.0.0), so Dev QA boxes no

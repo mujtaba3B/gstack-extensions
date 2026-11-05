@@ -35,7 +35,11 @@ printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[
 # from the session cwd, not the cwd a `cd ... &&` switched into).
 WORKDIR=$(printf '%s\n' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^[:space:];&|]+).*/\1/p' | head -1)
 case "$WORKDIR" in "~") WORKDIR="$HOME" ;; "~/"*) WORKDIR="${HOME}/${WORKDIR#\~/}" ;; esac
-{ [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$PWD"
+# The session's directory comes from the payload: a hook process can run from the
+# main checkout while the session sits in a worktree.
+CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
+{ [ -n "$CWD" ] && [ -d "$CWD" ]; } || CWD="$PWD"
+{ [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; } || WORKDIR="$CWD"
 
 TOP=$(git -C "$WORKDIR" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # No path pre-filter here: gp_gate_config below makes the whole scope decision,
