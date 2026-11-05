@@ -35,7 +35,7 @@ setup() {
 
 # limit_notice <issue_comments_json> [<reviews_json>]: the field as emitted.
 limit_notice() {
-  sp_emit new_cr_feedback 0 0 abc success "" n/a "$1" "${2:-[]}" '[]' | jq -c .cr_limit_notice
+  sp_emit new_cr_feedback 0 0 abc "${3-success}" "" n/a "$1" "${2:-[]}" '[]' | jq -c .cr_limit_notice
 }
 
 @test "limit notice: the older sentence is detected" {
@@ -66,6 +66,24 @@ limit_notice() {
 @test "limit notice: ordinary feedback is false, and a missing body is safe" {
   run limit_notice '[{"id":"1","body":"Actionable comments posted: 2"},{"id":"2"}]'
   [ "$output" = "false" ]
+}
+
+NOTICE='{"id":"1","updated_at":"2020-01-01T00:00:00Z","body":"> ## Review limit reached"}'
+REVIEW='{"id":"9","submitted_at":"2020-01-01T00:05:00Z","body":"Actionable comments posted: 1"}'
+
+@test "limit notice: an old notice does not outrank a later real review" {
+  run limit_notice "[$NOTICE]" "[$REVIEW]"
+  [ "$output" = "false" ]
+}
+
+@test "limit notice: with no CR status on HEAD, a notice counts wherever it sits" {
+  run limit_notice "[$NOTICE]" "[$REVIEW]" ""
+  [ "$output" = "true" ]
+}
+
+@test "limit notice: with a status, a notice newest of the batch counts" {
+  run limit_notice '[{"id":"2","updated_at":"2020-01-01T00:09:00Z","body":"## Review limit reached"}]' "[$REVIEW]" pending
+  [ "$output" = "true" ]
 }
 
 @test "limit notice: no new items is false" {
