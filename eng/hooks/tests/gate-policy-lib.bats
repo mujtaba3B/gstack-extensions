@@ -225,6 +225,124 @@ JSON
   [ "$status" -eq 0 ]
 }
 
+# Setting defaults.<gate> to false is how a gate goes off for every repo. Each test
+# below pairs the OFF with something that proves WHY: gp_gate_config returns 1 for
+# scope, for a jq failure and for a local opt-out too, so a bare non-zero status
+# would pass for the wrong reason.
+set_default_false() {
+  jq --arg g "$1" '.defaults[$g] = false' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+}
+set_override() {
+  jq --arg r "$1" --argjson v "$2" '.overrides[$r] = $v' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+}
+
+@test "a default of literal false disarms that gate for every repo, and only that gate" {
+  set_default_false qa-plan
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  # Same repo, same policy file: still in scope and jq still parsed it, so the
+  # non-zero above came from the false and not from either of those.
+  run gp_repo_in_scope "$d"
+  [ "$output" = "in" ]
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"ttl_seconds":1200'
+  run gp_gate_config "$d" deploy
+  [ "$status" -eq 0 ]
+}
+
+@test "an override object re-arms a gate under a false default, with only its own config" {
+  set_default_false qa-plan
+  set_override "mujtaba3b/backon" '{"qa-plan":{"gates":["pr"]}}'
+  d=$(mkrepo backon https://github.com/mujtaba3B/backon.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"gates":["pr"]}' ]
+  # A neighbour with no override is still off, so the re-arm is this repo's alone.
+  other=$(mkrepo other https://github.com/mujtaba3B/other.git)
+  run gp_gate_config "$other" qa-plan
+  [ "$status" -ne 0 ]
+}
+
+@test "an override of true re-arms under a false default instead of erroring into OFF" {
+  # `{} * true` is a jq error, and gp_gate_config turns a jq error into return 1,
+  # so without the normalization `true` would silently mean off.
+  set_default_false qa-plan
+  set_override "mujtaba3b/backon" '{"qa-plan":true}'
+  d=$(mkrepo backon https://github.com/mujtaba3B/backon.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{}' ]
+}
+
+@test "an override of true keeps the defaults when the default is an object" {
+  set_override "mujtaba3b/tuned" '{"ship":true}'
+  d=$(mkrepo tuned https://github.com/mujtaba3B/tuned.git)
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"ttl_seconds":1200'
+}
+
+@test "an override of false under a false default stays off" {
+  set_default_false qa-plan
+  set_override "mujtaba3b/plain" '{"qa-plan":false}'
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+}
+
+@test "a gate MISSING from defaults stays ON: absence is not false" {
+  # The fail-closed half of the switch. Deleting a block, or a typo in its name,
+  # must not read as a decision to disarm.
+  jq 'del(.defaults["qa-plan"])' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{}' ]
+}
+
+@test "a default of true stays ON: undoing the switch must not disarm the gate" {
+  jq '.defaults["qa-plan"] = true' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{}' ]
+}
+
+@test "a malformed gate value fails OPEN but LOGS it, and leaves other gates alone" {
+  jq '.defaults["qa-plan"] = "on"' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+  grep -q 'FAIL-OPEN gate=qa-plan repo=mujtaba3b/plain' "$GATE_POLICY_LOG"
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+}
+
+@test "a default of literal false is not logged as a failure: it is a decision" {
+  set_default_false qa-plan
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -ne 0 ]
+  ! grep -q 'FAIL-OPEN' "$GATE_POLICY_LOG"
+}
+
+@test "a default of null stays ON too: null is absence, not a decision" {
+  jq '.defaults["qa-plan"] = null' "$GATE_POLICY_FILE" > "$GATE_POLICY_FILE.t"
+  mv "$GATE_POLICY_FILE.t" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_gate_config "$d" qa-plan
+  [ "$status" -eq 0 ]
+  [ "$output" = '{}' ]
+}
+
 @test "GATE_POLICY_FILE is IGNORED without GATE_POLICY_TEST, and the ignore is logged" {
   # The override used to be a one-variable way to disarm every gate. It is test
   # plumbing, so it now requires an explicit second flag and says so in the log.

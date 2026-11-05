@@ -403,6 +403,15 @@ gp_gate_applicable() {
 #     2. policy .overrides["<owner>/<name>"][<gate>]
 #   Shallow merge (jq `*`), so an override sets only the keys it names.
 #
+#   A literal `false` switches a gate off, at either level: under overrides for one
+#   repo, or under defaults for every repo. A repo can opt back in under a false
+#   default with an override OBJECT, which then IS its whole config, or with `true`
+#   for an empty one; `true` under defaults is the same as an empty block. Absence
+#   is not false: a gate with no defaults entry stays ON, because a typo or a deleted
+#   block must never read as a decision to disarm. Any other shape (a string, a
+#   number, an array) is a broken policy: it fails open, loudly, like an unparseable
+#   file does.
+#
 #   FAIL-OPEN on a broken or absent policy, but LOUDLY. A gate that fails closed on
 #   its own bug across every repo gets ripped out, which is worse than the hole. The
 #   session-start drift check reports a missing or unparseable policy, so the
@@ -442,13 +451,20 @@ gp_gate_config() {
   }
 
   # Defaults, override lookup and the merge in ONE jq call (hot path). Override
-  # keys are folded to lowercase for the same reason as gp_local_entry. An override
-  # of literal false switches the gate off for that repo, so it is checked before
-  # the merge collapses it into an object.
+  # keys are folded to lowercase for the same reason as gp_local_entry. A literal
+  # false at either level is checked BEFORE `//` and the merge, both of which would
+  # collapse it into an object and silently leave the gate on. A true at either level
+  # has to be normalized for the same reason in reverse: `{} * true` is a jq error,
+  # which would read as off, the opposite of what it says.
   merged=$(jq -c --arg k "${id:-__none__}" --arg g "$gate" '
-      (.defaults[$g] // {}) as $d
+      def block: if . == true then {} else (. // {}) end;
+      .defaults[$g] as $d
       | (((.overrides // {} | with_entries(.key |= ascii_downcase))[$k] // {})[$g]) as $o
-      | if $o == false then "OFF" else $d * ($o // {}) end' "$pf" 2>/dev/null) || return 1
+      | if $o == false or ($d == false and $o == null) then "OFF"
+        else ($d | block) * ($o | block) end' "$pf" 2>/dev/null) || {
+    gp_log "FAIL-OPEN gate=$gate repo=${id:-unknown} has a value that is not an object or a boolean: $pf (allowing; fix it)"
+    return 1
+  }
   [ "$merged" = '"OFF"' ] && return 1
   [ -n "$merged" ] || return 1
   printf '%s' "$merged"

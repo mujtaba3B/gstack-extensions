@@ -1,9 +1,16 @@
 # qa:plan CHANGELOG
 
-## qa plugin 3.16.2
+## qa plugin 3.17.1
 
 `qa-plan-pr-gate.sh` reads the session directory from the hook payload, so a
 worktree session is judged on its own branch and not the hook process directory.
+
+## qa plugin 3.17.0
+
+Step 6 now asks the gate resolver first. Where the qa-plan gate is off the skill
+prints the plan and moves on, with no approval question and no stamp. The gate
+being off used to stop the blocks but not the modal, so a session that ran
+`/qa:plan` anyway still interrupted the human for an approval nothing read.
 
 ## qa plugin 3.16.1
 
