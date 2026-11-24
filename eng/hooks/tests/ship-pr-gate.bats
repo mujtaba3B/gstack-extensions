@@ -386,6 +386,23 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   rm -rf "$OUT"
 }
 
+@test "parser: prompt ship check does not leave nocasematch on (~/Dev scoping)" {
+  # Case-insensitive macOS folds ~/Dev onto ~/dev (cannot fixture both). Prove the
+  # bug directly: leaked nocasematch makes \$HOME/dev patterns match \$HOME/Dev.
+  run bash -c "
+    eval \"\$(sed -n '/^sg_prompt_starts_ship_invocation/,/^}/p' '$SENTINEL_HOOK')\"
+    sg_prompt_starts_ship_invocation '/ship' || true
+    shopt -q nocasematch && { echo nocasematch_leak; exit 1; }
+    demo=\"\$HOME/Dev/repo\"
+    case \"\$demo\" in
+      \"\$HOME/dev\"|\"\$HOME/dev/\"*) echo dev_matched; exit 1 ;;
+    esac
+    echo ok
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
+
 @test "writer + gate end to end: ship invocation then create is allowed" {
   opt_in
   bash -c "printf '%s' '$(skill_payload "ship" "$REPO")' | bash '$SENTINEL_HOOK'"

@@ -78,7 +78,12 @@ sg_prompt_starts_ship_invocation() {
   shopt -s nocasematch
   # After the command token: same-line args, end, or a newline then args on later lines.
   # Leading newlines are not [[:blank:]], so prose on line 1 cannot be skipped to /ship.
-  [[ "$p" =~ ^[[:blank:]]*/(ship|gstack-ship)([[:blank:]].*|[[:blank:]]*($'\n'.*)?)?$ ]]
+  if [[ "$p" =~ ^[[:blank:]]*/(ship|gstack-ship)([[:blank:]].*|[[:blank:]]*($'\n'.*)?)?$ ]]; then
+    shopt -u nocasematch
+    return 0
+  fi
+  shopt -u nocasematch
+  return 1
 }
 
 # Session arming (shared ship-gate-arm-lib.sh, kind "ship"). The marker lets the
