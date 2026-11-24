@@ -70,6 +70,15 @@ CWD=$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
 SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')
 
+# True when the entire prompt (not a later line) starts with /ship or /gstack-ship.
+# grep's ^ anchors per line; use bash =~ on the full string.
+sg_prompt_starts_ship_invocation() {
+  local p="${1:-}"
+  [ -n "$p" ] || return 1
+  shopt -s nocasematch
+  [[ "$p" =~ ^[[:space:]]*/(ship|gstack-ship)([[:space:]]|$) ]]
+}
+
 # Session arming (shared ship-gate-arm-lib.sh, kind "ship"). The marker lets the
 # later PreToolUse:Bash event know a real /ship is in flight.
 #
@@ -204,9 +213,8 @@ case "$EVENT" in
     ;;
   UserPromptSubmit)
     PROMPT=$(printf '%s' "$PAYLOAD" | jq -r '.prompt // empty')
-    # Require the prompt to START with `/ship` or `/gstack-ship` as a whole token
-    # (so "/shipment" or prose like "should I use /ship here?" does NOT mint).
-    printf '%s' "$PROMPT" | grep -Eiq '^[[:space:]]*/(ship|gstack-ship)([[:space:]]|$)' || exit 0
+    # Require the WHOLE prompt to start with `/ship` or `/gstack-ship` (not a later line).
+    sg_prompt_starts_ship_invocation "$PROMPT" || exit 0
     arm_session
     mint_for_dir "$CWD" "prompt"
     write_ledger "$CWD" "prompt"

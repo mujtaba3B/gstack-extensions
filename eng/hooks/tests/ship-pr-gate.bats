@@ -137,6 +137,30 @@ opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
   echo "$output" | grep -q '"decision":"block"'
 }
 
+@test "gate block: reason omits gstack-ship when alias skill is not installed" {
+  opt_in
+  fake_home=$(mktemp -d)
+  mkdir -p "$fake_home/.claude/skills"
+  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  reason=$(echo "$output" | jq -r .reason)
+  [[ "$reason" == *"/ship"* ]]
+  [[ "$reason" != *"gstack-ship"* ]]
+  rm -rf "$fake_home"
+}
+
+@test "gate block: reason mentions gstack-ship when alias skill is installed" {
+  opt_in
+  fake_home=$(mktemp -d)
+  mkdir -p "$fake_home/.claude/skills/gstack-ship"
+  printf '%s\n' '---' 'name: gstack-ship' '---' > "$fake_home/.claude/skills/gstack-ship/SKILL.md"
+  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  reason=$(echo "$output" | jq -r .reason)
+  [[ "$reason" == *"gstack-ship"* ]]
+  rm -rf "$fake_home"
+}
+
 @test "gate allow: opted-in repo with a fresh sentinel" {
   opt_in; write_sentinel "$NOW"
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
@@ -293,6 +317,22 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
 
 @test "writer: prompt merely MENTIONING /ship mid-sentence writes nothing" {
   run bash -c "printf '%s' '$(prompt_payload "should I use /ship here?" "$REPO")' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt with /ship only on a later line writes nothing" {
+  payload=$(jq -nc --arg cwd "$REPO" \
+    '{hook_event_name:"UserPromptSubmit",prompt:"please run first\n/ship now",cwd:$cwd}')
+  run bash -c "printf '%s' \"$payload\" | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt with /gstack-ship only on a later line writes nothing" {
+  payload=$(jq -nc --arg cwd "$REPO" \
+    '{hook_event_name:"UserPromptSubmit",prompt:"context\n/gstack-ship",cwd:$cwd}')
+  run bash -c "printf '%s' \"$payload\" | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
   [ ! -f "$GITDIR/ship-pr-clearance" ]
 }
