@@ -11,18 +11,18 @@
 
 # Owns itself. Without this, anyone with push could delete the rules below in a
 # PR that nothing gates, which is the same hole one level up.
-/.github/CODEOWNERS @mujtaba3B
+/.github/CODEOWNERS @muthree-ai @mutwo-ai
 
 # The gate scripts and the hook manifests that arm them.
-/eng/hooks/ @mujtaba3B
-/qa/hooks/ @mujtaba3B
+/eng/hooks/ @muthree-ai @mutwo-ai
+/qa/hooks/ @muthree-ai @mutwo-ai
 
 # The delivery mechanism, which outranks the gates it delivers. bin/install
 # copies the plugins into ~/.claude/plugins/cache, bin/gstack-extensions-upgrade
 # calls it, and 21 skills offer to run that upgrade, so an edit here executes on
 # the human's machine during a routine "Upgrade now".
-/bin/ @mujtaba3B
+/bin/ @muthree-ai @mutwo-ai
 
 # The root marketplace lists which plugins exist. Dropping eng or qa from it
 # stops their gates being installed at all, with no change to a gate script.
-/.claude-plugin/ @mujtaba3B
+/.claude-plugin/ @muthree-ai @mutwo-ai
