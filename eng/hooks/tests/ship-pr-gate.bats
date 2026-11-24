@@ -267,6 +267,18 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   [ -f "$GITDIR/ship-pr-clearance" ]
 }
 
+@test "writer: agent alias gstack-ship writes a sentinel" {
+  run bash -c "printf '%s' '$(skill_payload "gstack-ship" "$REPO")' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt starting with /gstack-ship writes a sentinel" {
+  run bash -c "printf '%s' '$(prompt_payload "/gstack-ship this branch" "$REPO")' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
+}
+
 @test "writer: look-alike skill (shipment / ownership) writes nothing" {
   run bash -c "printf '%s' '$(skill_payload "shipment" "$REPO")' | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
@@ -298,6 +310,13 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
 @test "writer + gate end to end: ship invocation then create is allowed" {
   opt_in
   bash -c "printf '%s' '$(skill_payload "ship" "$REPO")' | bash '$SENTINEL_HOOK'"
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "writer + gate end to end: gstack-ship agent alias then create is allowed" {
+  opt_in
+  bash -c "printf '%s' '$(skill_payload "gstack-ship" "$REPO")' | bash '$SENTINEL_HOOK'"
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }

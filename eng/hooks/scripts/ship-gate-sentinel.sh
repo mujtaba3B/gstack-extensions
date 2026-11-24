@@ -161,13 +161,14 @@ case "$EVENT" in
     case "$TOOL" in
       Skill)
         # The skill identifier may live under a few keys depending on harness
-        # version; check the likely ones and match the basename "ship" (exact, or
-        # namespaced as "<plugin>:ship" / a path ending in "/ship"). Liberal on
-        # purpose: a missed match false-BLOCKS a real /ship, the costlier error.
+        # version; match gstack ship basename "ship" OR agent alias "gstack-ship"
+        # (Claude Code's built-in /ship shadows flat "ship"), including namespaced
+        # "<plugin>:ship" / path suffix forms. Liberal on purpose: a missed match
+        # false-BLOCKS a real ship run, the costlier error.
         SKILL=$(printf '%s' "$PAYLOAD" | jq -r '
           (.tool_input.skill // .tool_input.name // .tool_input.command // "") | ascii_downcase' 2>/dev/null)
         case "$SKILL" in
-          ship|*:ship|*/ship) ;;
+          ship|gstack-ship|*:ship|*/ship|*:gstack-ship|*/gstack-ship) ;;
           *) exit 0 ;;
         esac
         # Arm the session (so a later `cd <target> && gh pr create` mints for the
@@ -203,9 +204,9 @@ case "$EVENT" in
     ;;
   UserPromptSubmit)
     PROMPT=$(printf '%s' "$PAYLOAD" | jq -r '.prompt // empty')
-    # Require the prompt to START with `/ship` as a whole token (so "/shipment" or
-    # prose like "should I use /ship here?" does NOT mint clearance).
-    printf '%s' "$PROMPT" | grep -Eiq '^[[:space:]]*/ship([[:space:]]|$)' || exit 0
+    # Require the prompt to START with `/ship` or `/gstack-ship` as a whole token
+    # (so "/shipment" or prose like "should I use /ship here?" does NOT mint).
+    printf '%s' "$PROMPT" | grep -Eiq '^[[:space:]]*/(ship|gstack-ship)([[:space:]]|$)' || exit 0
     arm_session
     mint_for_dir "$CWD" "prompt"
     write_ledger "$CWD" "prompt"

@@ -382,7 +382,7 @@ if [ "$VERDICT" = "valid" ]; then
   exit 0
 fi
 
-REASON="Ship gate: open PRs in this repo via /ship, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. /ship reconciles the base branch, runs tests/review, bumps VERSION, and opens the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, set this repo's overrides entry for \`ship\` to false in ~/dev/gate-policy.json, create the PR, then revert it."
+REASON="Ship gate: open PRs in this repo via /gstack-ship (agents) or /ship (human typing), not a bare \`gh pr create\` [sentinel: ${VERDICT}]. Either invocation runs gstack ship: reconcile the base branch, run tests/review, bump VERSION, and open the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /gstack-ship or /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, set this repo's overrides entry for \`ship\` to false in ~/dev/gate-policy.json, create the PR, then revert it."
 sg_log "BLOCK gh pr create in $TOP [sentinel: $VERDICT]"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0
