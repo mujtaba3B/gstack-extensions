@@ -161,6 +161,7 @@ sg_fake_home_gated_repo() { # <fake-home>
 
 @test "gate block: reason omits gstack-ship when alias skill is not installed" {
   fake_home=$(mktemp -d)
+  fake_home=$(cd -P "$fake_home" && pwd)   # match git's /private/var on macOS
   sg_fake_home_gated_repo "$fake_home"
   local_repo="$SG_FAKE_HOME_GATED_REPO"
   run env HOME="$fake_home" CLAUDE_CONFIG_DIR="$fake_home/.claude" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
@@ -174,6 +175,7 @@ sg_fake_home_gated_repo() { # <fake-home>
 
 @test "gate block: reason mentions gstack-ship when alias skill is installed" {
   fake_home=$(mktemp -d)
+  fake_home=$(cd -P "$fake_home" && pwd)   # match git's /private/var on macOS
   sg_fake_home_gated_repo "$fake_home"
   local_repo="$SG_FAKE_HOME_GATED_REPO"
   mkdir -p "$fake_home/.claude/skills/gstack-ship"
