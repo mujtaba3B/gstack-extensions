@@ -54,6 +54,25 @@ gp_write_policy() {  # <gate> <config-json>
 }
 opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
 
+sg_write_policy_for_root() { # <gate> <config-json> <dev-root>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$3" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+
+# Bats test locals are invisible inside $( ) subshells; publish the repo path.
+sg_fake_home_gated_repo() { # <fake-home>
+  local fh="$1" dev_root="$fh/dev" repo
+  mkdir -p "$fh/.claude/skills" "$dev_root"
+  repo=$(mktemp -d "$dev_root/.sgtest.XXXXXX")
+  git -C "$repo" init -q
+  git -C "$repo" commit -q --allow-empty -m init
+  sg_write_policy_for_root ship '{"base_branches":["main"]}' "$dev_root"
+  SG_FAKE_HOME_GATED_REPO="$repo"
+  export SG_FAKE_HOME_GATED_REPO
+}
+
 # ========================================================================
 # Pure validator: sg_sentinel_valid <json> <now> <default_ttl>
 # ========================================================================
@@ -138,11 +157,12 @@ opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
 }
 
 @test "gate block: reason omits gstack-ship when alias skill is not installed" {
-  opt_in
   fake_home=$(mktemp -d)
-  mkdir -p "$fake_home/.claude/skills"
-  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  sg_fake_home_gated_repo "$fake_home"
+  local_repo="$SG_FAKE_HOME_GATED_REPO"
+  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
   reason=$(echo "$output" | jq -r .reason)
   [[ "$reason" == *"/ship"* ]]
   [[ "$reason" != *"gstack-ship"* ]]
@@ -150,12 +170,14 @@ opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
 }
 
 @test "gate block: reason mentions gstack-ship when alias skill is installed" {
-  opt_in
   fake_home=$(mktemp -d)
+  sg_fake_home_gated_repo "$fake_home"
+  local_repo="$SG_FAKE_HOME_GATED_REPO"
   mkdir -p "$fake_home/.claude/skills/gstack-ship"
   printf '%s\n' '---' 'name: gstack-ship' '---' > "$fake_home/.claude/skills/gstack-ship/SKILL.md"
-  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
   reason=$(echo "$output" | jq -r .reason)
   [[ "$reason" == *"gstack-ship"* ]]
   rm -rf "$fake_home"
@@ -322,17 +344,22 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
 }
 
 @test "writer: prompt with /ship only on a later line writes nothing" {
-  payload=$(jq -nc --arg cwd "$REPO" \
-    '{hook_event_name:"UserPromptSubmit",prompt:"please run first\n/ship now",cwd:$cwd}')
-  run bash -c "printf '%s' \"$payload\" | bash '$SENTINEL_HOOK'"
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"please run first\\n/ship now\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
   [ ! -f "$GITDIR/ship-pr-clearance" ]
 }
 
 @test "writer: prompt with /gstack-ship only on a later line writes nothing" {
-  payload=$(jq -nc --arg cwd "$REPO" \
-    '{hook_event_name:"UserPromptSubmit",prompt:"context\n/gstack-ship",cwd:$cwd}')
-  run bash -c "printf '%s' \"$payload\" | bash '$SENTINEL_HOOK'"
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"context\\n/gstack-ship\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt with leading newline then /ship on second line writes nothing" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"\\n/ship now\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
   [ ! -f "$GITDIR/ship-pr-clearance" ]
 }

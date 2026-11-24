@@ -76,7 +76,7 @@ sg_prompt_starts_ship_invocation() {
   local p="${1:-}"
   [ -n "$p" ] || return 1
   shopt -s nocasematch
-  [[ "$p" =~ ^[[:space:]]*/(ship|gstack-ship)([[:space:]]|$) ]]
+  [[ "$p" =~ ^[[:blank:]]*/(ship|gstack-ship)([[:blank:]]|$) ]]
 }
 
 # Session arming (shared ship-gate-arm-lib.sh, kind "ship"). The marker lets the
