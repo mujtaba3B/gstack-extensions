@@ -63,7 +63,10 @@ sg_write_policy_for_root() { # <gate> <config-json> <dev-root>
 
 # Bats test locals are invisible inside $( ) subshells; publish the repo path.
 sg_fake_home_gated_repo() { # <fake-home>
-  local fh="$1" dev_root="$fh/dev" repo
+  # One local per line: `local fh=... dev_root=$fh/dev` leaves fh unset on bash 3.2.
+  local fh="$1"
+  local dev_root="$fh/dev"
+  local repo
   mkdir -p "$fh/.claude/skills" "$dev_root"
   repo=$(mktemp -d "$dev_root/.sgtest.XXXXXX")
   git -C "$repo" init -q
@@ -160,7 +163,7 @@ sg_fake_home_gated_repo() { # <fake-home>
   fake_home=$(mktemp -d)
   sg_fake_home_gated_repo "$fake_home"
   local_repo="$SG_FAKE_HOME_GATED_REPO"
-  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
+  run env HOME="$fake_home" CLAUDE_CONFIG_DIR="$fake_home/.claude" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
   reason=$(echo "$output" | jq -r .reason)
@@ -175,7 +178,7 @@ sg_fake_home_gated_repo() { # <fake-home>
   local_repo="$SG_FAKE_HOME_GATED_REPO"
   mkdir -p "$fake_home/.claude/skills/gstack-ship"
   printf '%s\n' '---' 'name: gstack-ship' '---' > "$fake_home/.claude/skills/gstack-ship/SKILL.md"
-  run env HOME="$fake_home" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
+  run env HOME="$fake_home" CLAUDE_CONFIG_DIR="$fake_home/.claude" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
   reason=$(echo "$output" | jq -r .reason)
@@ -362,6 +365,13 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
     '{hook_event_name:\"UserPromptSubmit\",prompt:\"\\n/ship now\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
   [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt starting with /ship then newline and args on next line writes a sentinel" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"/ship\\nthis branch\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
 }
 
 @test "writer: ship invoked outside ~/dev writes nothing" {
