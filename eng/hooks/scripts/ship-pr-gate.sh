@@ -41,6 +41,14 @@ sg_log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$*" >> "$LOGFILE" 2>/dev/null || true
 }
 
+# Agent alias from gstack setup (mutwo-tools#147); only cite it when present.
+sg_gstack_ship_alias_installed() {
+  local skills="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills"
+  local md="$skills/gstack-ship/SKILL.md"
+  [ -r "$md" ] || return 1
+  head -30 "$md" 2>/dev/null | grep -Eq '^name:[[:space:]]*gstack-ship([[:space:]]|$)'
+}
+
 PAYLOAD=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -382,7 +390,14 @@ if [ "$VERDICT" = "valid" ]; then
   exit 0
 fi
 
-REASON="Ship gate: open PRs in this repo via /ship, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. /ship reconciles the base branch, runs tests/review, bumps VERSION, and opens the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. Run /ship to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, set this repo's overrides entry for \`ship\` to false in ~/dev/gate-policy.json, create the PR, then revert it."
+if sg_gstack_ship_alias_installed; then
+  _SHIP_VIA="via /gstack-ship (agents) or /ship (human typing)"
+  _SHIP_RUN="Run /gstack-ship or /ship"
+else
+  _SHIP_VIA="via /ship"
+  _SHIP_RUN="Run /ship"
+fi
+REASON="Ship gate: open PRs in this repo ${_SHIP_VIA}, not a bare \`gh pr create\` [sentinel: ${VERDICT}]. Either invocation runs gstack ship: reconcile the base branch, run tests/review, bump VERSION, and open the PR consistently; a bare create skips all of that and can sweep unrelated commits off a stale checkout. ${_SHIP_RUN} to ship this change (it mints the clearance this gate checks). This is intentional: there is no agent-facing override. For a deliberate human one-off, set this repo's overrides entry for \`ship\` to false in ~/dev/gate-policy.json, create the PR, then revert it."
 sg_log "BLOCK gh pr create in $TOP [sentinel: $VERDICT]"
 jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0

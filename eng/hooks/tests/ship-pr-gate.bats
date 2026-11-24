@@ -54,6 +54,28 @@ gp_write_policy() {  # <gate> <config-json>
 }
 opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
 
+sg_write_policy_for_root() { # <gate> <config-json> <dev-root>
+  mkdir -p "$(dirname "$GATE_POLICY_FILE")"
+  jq -nc --arg g "$1" --argjson c "$2" --arg root "$3" \
+    '{scope:{root:$root, exclude_path_prefixes:[], exclude_nested:false},
+      defaults:{($g): $c}, overrides:{}}' > "$GATE_POLICY_FILE"
+}
+
+# Bats test locals are invisible inside $( ) subshells; publish the repo path.
+sg_fake_home_gated_repo() { # <fake-home>
+  # One local per line: `local fh=... dev_root=$fh/dev` leaves fh unset on bash 3.2.
+  local fh="$1"
+  local dev_root="$fh/dev"
+  local repo
+  mkdir -p "$fh/.claude/skills" "$dev_root"
+  repo=$(mktemp -d "$dev_root/.sgtest.XXXXXX")
+  git -C "$repo" init -q
+  git -C "$repo" commit -q --allow-empty -m init
+  sg_write_policy_for_root ship '{"base_branches":["main"]}' "$dev_root"
+  SG_FAKE_HOME_GATED_REPO="$repo"
+  export SG_FAKE_HOME_GATED_REPO
+}
+
 # ========================================================================
 # Pure validator: sg_sentinel_valid <json> <now> <default_ttl>
 # ========================================================================
@@ -135,6 +157,35 @@ opt_in()         { gp_write_policy ship '{"base_branches":["main"]}'; }
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q '"decision":"block"'
+}
+
+@test "gate block: reason omits gstack-ship when alias skill is not installed" {
+  fake_home=$(mktemp -d)
+  fake_home=$(cd -P "$fake_home" && pwd)   # match git's /private/var on macOS
+  sg_fake_home_gated_repo "$fake_home"
+  local_repo="$SG_FAKE_HOME_GATED_REPO"
+  run env HOME="$fake_home" CLAUDE_CONFIG_DIR="$fake_home/.claude" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+  reason=$(echo "$output" | jq -r .reason)
+  [[ "$reason" == *"/ship"* ]]
+  [[ "$reason" != *"gstack-ship"* ]]
+  rm -rf "$fake_home"
+}
+
+@test "gate block: reason mentions gstack-ship when alias skill is installed" {
+  fake_home=$(mktemp -d)
+  fake_home=$(cd -P "$fake_home" && pwd)   # match git's /private/var on macOS
+  sg_fake_home_gated_repo "$fake_home"
+  local_repo="$SG_FAKE_HOME_GATED_REPO"
+  mkdir -p "$fake_home/.claude/skills/gstack-ship"
+  printf '%s\n' '---' 'name: gstack-ship' '---' > "$fake_home/.claude/skills/gstack-ship/SKILL.md"
+  run env HOME="$fake_home" CLAUDE_CONFIG_DIR="$fake_home/.claude" bash -c "printf '%s' '$(bash_payload "cd $local_repo && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"decision":"block"'
+  reason=$(echo "$output" | jq -r .reason)
+  [[ "$reason" == *"gstack-ship"* ]]
+  rm -rf "$fake_home"
 }
 
 @test "gate allow: opted-in repo with a fresh sentinel" {
@@ -267,6 +318,18 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   [ -f "$GITDIR/ship-pr-clearance" ]
 }
 
+@test "writer: agent alias gstack-ship writes a sentinel" {
+  run bash -c "printf '%s' '$(skill_payload "gstack-ship" "$REPO")' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt starting with /gstack-ship writes a sentinel" {
+  run bash -c "printf '%s' '$(prompt_payload "/gstack-ship this branch" "$REPO")' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
+}
+
 @test "writer: look-alike skill (shipment / ownership) writes nothing" {
   run bash -c "printf '%s' '$(skill_payload "shipment" "$REPO")' | bash '$SENTINEL_HOOK'"
   [ "$status" -eq 0 ]
@@ -285,6 +348,34 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   [ ! -f "$GITDIR/ship-pr-clearance" ]
 }
 
+@test "writer: prompt with /ship only on a later line writes nothing" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"please run first\\n/ship now\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt with /gstack-ship only on a later line writes nothing" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"context\\n/gstack-ship\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt with leading newline then /ship on second line writes nothing" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"\\n/ship now\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ ! -f "$GITDIR/ship-pr-clearance" ]
+}
+
+@test "writer: prompt starting with /ship then newline and args on next line writes a sentinel" {
+  run bash -c "jq -nc --arg cwd '$REPO' \
+    '{hook_event_name:\"UserPromptSubmit\",prompt:\"/ship\\nthis branch\",cwd:\$cwd}' | bash '$SENTINEL_HOOK'"
+  [ "$status" -eq 0 ]
+  [ -f "$GITDIR/ship-pr-clearance" ]
+}
+
 @test "writer: ship invoked outside ~/dev writes nothing" {
   OUT=$(mktemp -d "/tmp/.sgtestout.XXXXXX")
   git -C "$OUT" init -q; git -C "$OUT" commit -q --allow-empty -m init
@@ -295,9 +386,33 @@ prompt_payload() { printf '{"hook_event_name":"UserPromptSubmit","prompt":"%s","
   rm -rf "$OUT"
 }
 
+@test "parser: prompt ship check does not leave nocasematch on (~/Dev scoping)" {
+  # Case-insensitive macOS folds ~/Dev onto ~/dev (cannot fixture both). Prove the
+  # bug directly: leaked nocasematch makes \$HOME/dev patterns match \$HOME/Dev.
+  run bash -c "
+    eval \"\$(sed -n '/^sg_prompt_starts_ship_invocation/,/^}/p' '$SENTINEL_HOOK')\"
+    sg_prompt_starts_ship_invocation '/ship' || true
+    shopt -q nocasematch && { echo nocasematch_leak; exit 1; }
+    demo=\"\$HOME/Dev/repo\"
+    case \"\$demo\" in
+      \"\$HOME/dev\"|\"\$HOME/dev/\"*) echo dev_matched; exit 1 ;;
+    esac
+    echo ok
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
+
 @test "writer + gate end to end: ship invocation then create is allowed" {
   opt_in
   bash -c "printf '%s' '$(skill_payload "ship" "$REPO")' | bash '$SENTINEL_HOOK'"
+  run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
+  [ "$status" -eq 0 ]; [ -z "$output" ]
+}
+
+@test "writer + gate end to end: gstack-ship agent alias then create is allowed" {
+  opt_in
+  bash -c "printf '%s' '$(skill_payload "gstack-ship" "$REPO")' | bash '$SENTINEL_HOOK'"
   run bash -c "printf '%s' '$(bash_payload "cd $REPO && gh pr create --base main")' | bash '$GATE'"
   [ "$status" -eq 0 ]; [ -z "$output" ]
 }
