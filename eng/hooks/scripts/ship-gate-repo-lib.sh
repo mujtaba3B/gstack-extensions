@@ -41,6 +41,40 @@ sg_workdir_from_cmd() {
   printf '%s' "$wd"
 }
 
+# sg_scope_roots
+#   The directory trees the gate policy governs, one per line: ~/dev plus any
+#   scope.extra_roots (~/agents). Asks gate-policy-lib.sh, the single source of
+#   truth, sourcing it from beside this file when the caller has not yet. Falls back
+#   to ~/dev alone when the lib is missing, which is the old behavior.
+sg_scope_roots() {
+  local lib
+  if ! command -v gp_policy_roots >/dev/null 2>&1; then
+    lib="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
+    # shellcheck source=/dev/null
+    [ -f "$lib" ] && . "$lib"
+  fi
+  if command -v gp_policy_roots >/dev/null 2>&1; then
+    gp_policy_roots
+  else
+    printf '%s\n' "$HOME/dev"
+  fi
+}
+
+# sg_under_scope_root <path>
+#   Return 0 when <path> is a governed root or sits under one.
+sg_under_scope_root() {
+  local path="$1" r rp
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    # git reports physical paths, so compare against the root's physical form too.
+    rp=$(cd -P "$r" 2>/dev/null && pwd) || rp="$r"
+    case "$path" in "$r"|"$r"/*|"$rp"|"$rp"/*) return 0 ;; esac
+  done <<EOF
+$(sg_scope_roots)
+EOF
+  return 1
+}
+
 # sg_dev_repo_gitdir <workdir>
 #   If <workdir> is inside a git repo whose toplevel is under ~/dev, echo
 #   "<toplevel><TAB><absolute-git-dir>" and return 0. Otherwise return 1 (not a
@@ -59,18 +93,12 @@ sg_dev_repo_gitdir() {
   # a sentinel would not mint in ~/dev-gates (and, in the same breath,
   # explained why that worktree's own `gh pr create` was never blocked).
   # <top> itself is still what gets returned, so sentinels stay keyed per-worktree.
-  case "$top" in
-    "$HOME/dev"|"$HOME/dev/"*) ;;
-    *)
-      main=$(git -C "$wd" rev-parse --git-common-dir 2>/dev/null) || return 1
-      case "$main" in /*) ;; *) main="$top/$main" ;; esac
-      main=$(cd -P "$main/.." 2>/dev/null && pwd) || return 1
-      case "$main" in
-        "$HOME/dev"|"$HOME/dev/"*) ;;
-        *) return 1 ;;
-      esac
-      ;;
-  esac
+  if ! sg_under_scope_root "$top"; then
+    main=$(git -C "$wd" rev-parse --git-common-dir 2>/dev/null) || return 1
+    case "$main" in /*) ;; *) main="$top/$main" ;; esac
+    main=$(cd -P "$main/.." 2>/dev/null && pwd) || return 1
+    sg_under_scope_root "$main" || return 1
+  fi
   gitdir=$(git -C "$wd" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   printf '%s\t%s' "$top" "$gitdir"
 }
@@ -144,7 +172,7 @@ sg_dev_checkout_for_repo() {
   # up and reports the PARENT repo's remote as if it were the candidate's.)
   while IFS= read -r top; do
     [ -n "$top" ] || continue
-    case "$top" in "$HOME/dev"|"$HOME/dev/"*) ;; *) continue ;; esac
+    sg_under_scope_root "$top" || continue
     url=$(git -C "$top" remote get-url origin 2>/dev/null) || continue
     [ "$(sg_norm_repo "$url")" = "$target" ] || continue
     # Governed? Ask the policy, the single source of truth. Absent the helper
@@ -164,7 +192,8 @@ sg_dev_checkout_for_repo() {
 }
 
 # sg_dev_repo_roots
-#   Echo every git checkout root under ~/dev, one per line, with NO depth limit.
+#   Echo every git checkout root under each governed root (~/dev and any
+#   scope.extra_roots), one per line, with NO depth limit.
 #
 #   A breadth-first walk rather than `find`, because find keeps descending INSIDE
 #   each repo after matching its .git, so it walks every source file on the machine:
@@ -173,8 +202,11 @@ sg_dev_checkout_for_repo() {
 #   skips repos nested inside another checkout, which the policy excludes anyway.
 #   node_modules is not descended.
 sg_dev_repo_roots() {
-  local queue="$HOME/dev" dir sub base restore
-  [ -d "$queue" ] || return 0
+  local roots queue dir sub base restore
+  # Every governed root is walked (~/dev, then ~/agents and any other extra root).
+  roots=$(sg_scope_roots)
+  queue="$roots"
+  [ -n "$queue" ] || return 0
   # dotglob: a plain */ glob does not match hidden directories, so a checkout under
   # one (or a temp repo in a test) was invisible to the walk. nullglob keeps a
   # childless directory from yielding the literal pattern. Both restored on exit.
@@ -189,7 +221,7 @@ sg_dev_repo_roots() {
     # would emit only ~/dev and hide every repo beneath it. Emit it, then descend.
     if [ -e "$dir/.git" ]; then
       printf '%s\n' "$dir"
-      [ "$dir" = "$HOME/dev" ] || continue
+      case $'\n'"$roots"$'\n' in *$'\n'"$dir"$'\n'*) ;; *) continue ;; esac
     fi
     for sub in "$dir"/*/; do
       [ -d "$sub" ] || continue
