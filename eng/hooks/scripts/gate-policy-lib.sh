@@ -184,13 +184,14 @@ _gp_load_scope() {
         ((.scope.owners // []) | map(ascii_downcase) | join("\n")),
         ((.scope.exclude_path_prefixes // []) | join("\n")),
         (if (.scope.exclude_nested // true) == false then "0" else "1" end),
-        ((.scope.extra_roots // []) as $x
+        ((.scope.extra_roots) as $x
           | if ($x | type) == "array" then $x else [] end
-          | map(select(type == "string" and (startswith("/") or startswith("~"))))
+          | map(select(type == "string" and (startswith("/") or . == "~" or startswith("~/"))))
           | join("\n")),
-        ((.scope.extra_roots // []) as $x
-          | if ($x | type) != "array" then "not-an-array"
-            elif ($x | all(type == "string" and (startswith("/") or startswith("~"))))
+        ((.scope.extra_roots) as $x
+          | if $x == null then ""
+            elif ($x | type) != "array" then "not-an-array"
+            elif ($x | all(type == "string" and (startswith("/") or . == "~" or startswith("~/"))))
             then "" else "bad-entries" end)
       ] | join("\u001f")' "$pf" 2>/dev/null) || return 0
   [ -n "$raw" ] || return 0
@@ -204,7 +205,7 @@ _gp_load_scope() {
   # disarm every gate, ~/dev included). The bad entries are dropped and logged;
   # the repos they named stay outside-root until the policy is fixed.
   [ -n "$GP_EXTRA_BAD" ] && gp_warn_once extra_roots \
-    "BAD scope.extra_roots in $pf ($GP_EXTRA_BAD): only absolute or ~ path strings count; the rest are ignored, so repos under them are NOT gated"
+    "BAD scope.extra_roots in $pf ($GP_EXTRA_BAD): only absolute or ~/ path strings count; the rest are ignored, so repos under them are NOT gated"
   GP_ROOT=$(_gp_expand_tilde "$GP_ROOT")
   GP_OK=1
 }

@@ -473,7 +473,7 @@ with_extra_root() {
 
 @test "relative, numeric and object extra_roots entries are dropped and logged" {
   mkagents
-  jq --arg r "$ROOT/agents" '.scope.extra_roots = ["agents", 1, null, {"a":"/x"}, $r]' \
+  jq --arg r "$ROOT/agents" '.scope.extra_roots = ["agents", "~agents", 1, null, {"a":"/x"}, $r]' \
     "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
   mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
   run gp_policy_roots
@@ -492,7 +492,9 @@ with_extra_root() {
   with_extra_root "$ROOT/agents"
   d=$(mkrepo devrepo https://github.com/mujtaba3B/devrepo.git)
   git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-  git -C "$d" worktree add -q -b parked "$ROOT/agents/mu4/fitness/wt" 2>/dev/null
+  git -C "$d" worktree add -q -b parked "$ROOT/agents/mu4/fitness/wt"
+  # Without a real worktree, the no-identity branch would also answer "in".
+  [ -f "$ROOT/agents/mu4/fitness/wt/.git" ]
   run gp_repo_in_scope "$ROOT/agents/mu4/fitness/wt"
   [ "$output" = "in" ]
   [ "$status" -eq 0 ]
@@ -505,4 +507,13 @@ with_extra_root() {
   . "${BATS_TEST_DIRNAME}/../scripts/ship-gate-repo-lib.sh"
   run sg_dev_repo_roots
   [ "$(printf '%s\n' "$output" | grep -cx "$ROOT/dev/inner/r1")" -eq 1 ]
+}
+
+@test "extra_roots: false is logged as malformed, not silently dropped" {
+  jq '.scope.extra_roots = false' "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_repo_in_scope "$d"
+  [ "$output" = "in" ]
+  grep -q "BAD scope.extra_roots.*not-an-array" "$GATE_POLICY_LOG"
 }

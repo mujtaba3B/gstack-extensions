@@ -43,9 +43,11 @@ sg_workdir_from_cmd() {
 
 # _sg_load_policy
 #   Make the gate policy lib available AND load its scope in the CALLER's shell.
-#   Called at the top of each public resolver, never inside $( ), so the memoized
-#   scope (GP_SCOPE_LOADED and friends) sticks and every later $(sg_scope_roots)
-#   subshell inherits it instead of re-running jq once per candidate repo.
+#   Called at the top of each public resolver, in the resolver's own shell, so the
+#   memoized scope (GP_SCOPE_LOADED and friends) is inherited by every
+#   $(sg_scope_roots) subshell the resolver runs, instead of jq running once per
+#   candidate repo. (Hooks call the resolvers inside $( ) themselves, so the memo
+#   lives for one resolver call; that is the scan that needed it.)
 _sg_load_policy() {
   local lib
   if ! command -v gp_policy_roots >/dev/null 2>&1; then
@@ -67,9 +69,11 @@ sg_scope_roots() {
   if command -v gp_policy_roots >/dev/null 2>&1; then
     gp_policy_roots
   else
-    # Every scope.extra_roots tree just fell out of scope (an allow). Say so.
-    command -v sg_log >/dev/null 2>&1 && \
-      sg_log "FAIL-OPEN gate-policy-lib.sh not loadable from ship-gate-repo-lib; scope is ~/dev only, extra_roots ignored"
+    # Every scope.extra_roots tree just fell out of scope (an allow). Say so, in
+    # the gate policy log, since gp_log is exactly what failed to load.
+    printf '%s FAIL-OPEN gate-policy-lib.sh not loadable from ship-gate-repo-lib; scope is ~/dev only, extra_roots ignored\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+      >> "${GATE_POLICY_LOG:-$HOME/.claude/gate-policy.log}" 2>/dev/null || true
     printf '%s\n' "$HOME/dev"
   fi
 }
