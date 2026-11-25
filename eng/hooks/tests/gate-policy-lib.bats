@@ -362,3 +362,158 @@ set_override() {
   GATE_POLICY_TEST="" run gp_local_file
   [ "$output" = "$HOME/dev/.gates/local.json" ]
 }
+
+# ---- scope.extra_roots: ~/agents beside ~/dev (mutwo-tools#152 step 0c) ----------
+# The agent repos move to ~/agents, a sibling of ~/dev. ~/agents is itself a repo
+# (mujtaba3B/agents) with tier folders, and persona repos nest in those folders.
+# Without extra_roots every one of them is outside-root, which is an ALLOW.
+
+# mkagents: the agents repo, a tier folder, and a persona repo nested in it.
+mkagents() {
+  mkdir -p "$ROOT/agents/mu4/fitness"
+  git -C "$ROOT/agents" init -q
+  git -C "$ROOT/agents" remote add origin https://github.com/mujtaba3B/agents.git
+  git -C "$ROOT/agents/mu4/fitness" init -q
+  git -C "$ROOT/agents/mu4/fitness" remote add origin https://github.com/mujtaba3B/fitness.git
+}
+
+with_extra_root() {
+  jq --arg r "$1" '.scope.extra_roots = [$r]' "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+}
+
+@test "without extra_roots a persona repo under ~/agents is outside-root (the hole)" {
+  mkagents
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness"
+  [ "$status" -eq 1 ]
+  [ "$output" = "outside-root" ]
+}
+
+@test "extra_roots gates a persona repo nested in a tier folder of the agents repo" {
+  mkagents
+  with_extra_root "$ROOT/agents"
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness"
+  [ "$status" -eq 0 ]
+  [ "$output" = "in" ]
+  run gp_gate_config "$ROOT/agents/mu4/fitness" ship
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '"ttl_seconds":1200'
+}
+
+@test "extra_roots gates the agents repo itself (the Base)" {
+  mkagents
+  with_extra_root "$ROOT/agents"
+  run gp_repo_in_scope "$ROOT/agents"
+  [ "$output" = "in" ]
+}
+
+@test "extra_roots keeps the owner and nested rules, judged against its own root" {
+  mkagents
+  with_extra_root "$ROOT/agents"
+  mkdir -p "$ROOT/agents/mu4/fitness/vendor/x"
+  git -C "$ROOT/agents/mu4/fitness/vendor/x" init -q
+  git -C "$ROOT/agents/mu4/fitness/vendor/x" remote add origin https://github.com/mujtaba3B/x.git
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness/vendor/x"
+  [ "$output" = "nested" ]
+  mkdir -p "$ROOT/agents/mu4/foreign"
+  git -C "$ROOT/agents/mu4/foreign" init -q
+  git -C "$ROOT/agents/mu4/foreign" remote add origin https://github.com/someone/foreign.git
+  run gp_repo_in_scope "$ROOT/agents/mu4/foreign"
+  [ "$output" = "foreign-owner" ]
+}
+
+@test "extra_roots accepts a ~ path and gp_policy_roots lists root first" {
+  with_extra_root "~/agents-test-root"
+  run gp_policy_roots
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$ROOT/dev" ]
+  [ "${lines[1]}" = "$HOME/agents-test-root" ]
+}
+
+@test "a repo outside every root stays outside with extra_roots set" {
+  mkagents
+  with_extra_root "$ROOT/agents"
+  d="$ROOT/elsewhere"; mkdir -p "$d"; git -C "$d" init -q
+  git -C "$d" remote add origin https://github.com/mujtaba3B/elsewhere.git
+  run gp_repo_in_scope "$d"
+  [ "$output" = "outside-root" ]
+}
+
+@test "the ship and deploy gates' repo resolver binds a repo under an extra root" {
+  # sg_dev_repo_gitdir is what ship-pr-gate, deploy-gate and the sentinel use to
+  # decide "is this a governed repo". It hard-coded ~/dev, so the policy alone
+  # was not enough: the gate would still have allowed.
+  mkagents
+  . "${BATS_TEST_DIRNAME}/../scripts/ship-gate-repo-lib.sh"
+  run sg_dev_repo_gitdir "$ROOT/agents/mu4/fitness"
+  [ "$status" -ne 0 ]
+  with_extra_root "$ROOT/agents"
+  unset GP_SCOPE_LOADED
+  run sg_dev_repo_gitdir "$ROOT/agents/mu4/fitness"
+  [ "$status" -eq 0 ]
+  want=$(cd -P "$ROOT/agents/mu4/fitness" && pwd)
+  [ "${output%%$'\t'*}" = "$want" ]
+  run sg_dev_repo_roots
+  echo "$output" | grep -qx "$ROOT/agents/mu4/fitness"
+  echo "$output" | grep -qx "$ROOT/agents"
+}
+
+@test "a malformed extra_roots (a string, not a list) does not disarm ~/dev" {
+  # One jq call reads the whole scope block, so a type error in extra_roots used
+  # to fail the read and turn every gate off, ~/dev included. Found in review.
+  jq '.scope.extra_roots = "~/agents"' "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_repo_in_scope "$d"
+  [ "$output" = "in" ]
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+  grep -q "BAD scope.extra_roots.*not-an-array" "$GATE_POLICY_LOG"
+}
+
+@test "relative, numeric and object extra_roots entries are dropped and logged" {
+  mkagents
+  jq --arg r "$ROOT/agents" '.scope.extra_roots = ["agents", "~agents", 1, null, {"a":"/x"}, $r]' \
+    "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  run gp_policy_roots
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[1]}" = "$ROOT/agents" ]
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness"
+  [ "$output" = "in" ]
+  grep -q "BAD scope.extra_roots.*bad-entries" "$GATE_POLICY_LOG"
+}
+
+@test "a ~/dev repo's worktree parked inside an extra root is judged by its main checkout" {
+  # Found in review: inside ~/agents the worktree's own path matched first, so
+  # one parked under a persona repo read as nested (an allow). Before
+  # extra_roots it fell back to the main checkout and read as in.
+  mkagents
+  with_extra_root "$ROOT/agents"
+  d=$(mkrepo devrepo https://github.com/mujtaba3B/devrepo.git)
+  git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$d" worktree add -q -b parked "$ROOT/agents/mu4/fitness/wt"
+  # Without a real worktree, the no-identity branch would also answer "in".
+  [ -f "$ROOT/agents/mu4/fitness/wt/.git" ]
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness/wt"
+  [ "$output" = "in" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "the repo walk emits each repo once when an extra root sits inside scope.root" {
+  mkdir -p "$ROOT/dev/inner/r1"
+  git -C "$ROOT/dev/inner/r1" init -q
+  with_extra_root "$ROOT/dev/inner"
+  . "${BATS_TEST_DIRNAME}/../scripts/ship-gate-repo-lib.sh"
+  run sg_dev_repo_roots
+  [ "$(printf '%s\n' "$output" | grep -cx "$ROOT/dev/inner/r1")" -eq 1 ]
+}
+
+@test "extra_roots: false is logged as malformed, not silently dropped" {
+  jq '.scope.extra_roots = false' "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_repo_in_scope "$d"
+  [ "$output" = "in" ]
+  grep -q "BAD scope.extra_roots.*not-an-array" "$GATE_POLICY_LOG"
+}

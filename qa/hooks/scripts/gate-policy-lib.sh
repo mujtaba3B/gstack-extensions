@@ -170,7 +170,8 @@ gp_repo_identity() {
 #   Read the ENTIRE scope block plus a parse check in ONE jq call, memoized for the
 #   life of the process. This is a hot path: qa-plan-build-gate.sh runs on every
 #   Edit/Write, so the naive version (a jq per field) cost ~70ms per keystroke-ish
-#   action. Sets GP_OK / GP_ROOT / GP_OWNERS / GP_PREFIXES / GP_NESTED.
+#   action. Sets GP_OK / GP_ROOT / GP_OWNERS / GP_PREFIXES / GP_NESTED /
+#   GP_EXTRA_ROOTS.
 _gp_load_scope() {
   [ -n "${GP_SCOPE_LOADED:-}" ] && return 0
   local pf raw
@@ -182,14 +183,77 @@ _gp_load_scope() {
       [ (.scope.root // "~/dev"),
         ((.scope.owners // []) | map(ascii_downcase) | join("\n")),
         ((.scope.exclude_path_prefixes // []) | join("\n")),
-        (if (.scope.exclude_nested // true) == false then "0" else "1" end)
+        (if (.scope.exclude_nested // true) == false then "0" else "1" end),
+        ((.scope.extra_roots) as $x
+          | if ($x | type) == "array" then $x else [] end
+          | map(select(type == "string" and (startswith("/") or . == "~" or startswith("~/"))))
+          | join("\n")),
+        ((.scope.extra_roots) as $x
+          | if $x == null then ""
+            elif ($x | type) != "array" then "not-an-array"
+            elif ($x | all(type == "string" and (startswith("/") or . == "~" or startswith("~/"))))
+            then "" else "bad-entries" end)
       ] | join("\u001f")' "$pf" 2>/dev/null) || return 0
   [ -n "$raw" ] || return 0
   GP_ROOT=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
   GP_OWNERS=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
-  GP_PREFIXES=${raw%%$'\x1f'*}; GP_NESTED=${raw##*$'\x1f'}
-  case "$GP_ROOT" in "~") GP_ROOT="$HOME" ;; "~/"*) GP_ROOT="$HOME/${GP_ROOT:2}" ;; esac
+  GP_PREFIXES=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
+  GP_NESTED=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
+  GP_EXTRA_ROOTS=${raw%%$'\x1f'*}; GP_EXTRA_BAD=${raw##*$'\x1f'}
+  # A malformed extra_roots must not take the rest of the policy down with it
+  # (one jq call reads the whole scope block, so a type error there used to
+  # disarm every gate, ~/dev included). The bad entries are dropped and logged;
+  # the repos they named stay outside-root until the policy is fixed.
+  [ -n "$GP_EXTRA_BAD" ] && gp_warn_once extra_roots \
+    "BAD scope.extra_roots in $pf ($GP_EXTRA_BAD): only absolute or ~/ path strings count; the rest are ignored, so repos under them are NOT gated"
+  GP_ROOT=$(_gp_expand_tilde "$GP_ROOT")
   GP_OK=1
+}
+
+# _gp_expand_tilde <path>
+#   Expand a leading "~" the way the policy file writes it.
+_gp_expand_tilde() {
+  # Literal "~/" is a match pattern here, not an expansion.
+  # shellcheck disable=SC2088
+  case "$1" in
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s' "$HOME/${1:2}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# gp_policy_roots
+#   Every directory tree the policy governs, one per line: scope.root first, then
+#   each scope.extra_roots entry. ~/agents sits beside ~/dev, not under it, and the
+#   agent repos there need the same gates; extra_roots is how a second tree joins
+#   while the policy file and the opt-out file stay under scope.root.
+gp_policy_roots() {
+  _gp_load_scope
+  local r
+  printf '%s\n' "${GP_ROOT:-$HOME/dev}"
+  while IFS= read -r r; do
+    [ -n "$r" ] && printf '%s\n' "$(_gp_expand_tilde "$r")"
+  done <<EOF
+${GP_EXTRA_ROOTS:-}
+EOF
+}
+
+# _gp_match_root <physical-path>
+#   Set GP_MATCHED_ROOT to the physical form of the governed root that contains
+#   <physical-path> (or equals it) and return 0, else return 1. It sets a variable
+#   rather than echoing so gp_repo_in_scope can call it in its own frame.
+_gp_match_root() {
+  local path="$1" r rp
+  GP_MATCHED_ROOT=""
+  _gp_load_scope
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    rp=$(gp_realpath "$r")
+    case "$path" in "$rp"|"$rp"/*) GP_MATCHED_ROOT="$rp"; return 0 ;; esac
+  done <<EOF
+$(gp_policy_roots)
+EOF
+  return 1
 }
 
 # gp_policy_root
@@ -226,7 +290,7 @@ gp_nested_in_other_repo() {
 #
 #   Every exclusion is derived from something already true about the repo, so there
 #   is no list to maintain and nothing that can go stale:
-#     - outside-root  : not under the policy root at all.
+#     - outside-root  : not under any policy root (scope.root or extra_roots).
 #     - excluded-path : a configured path prefix (legacy/ archives, third-party/).
 #     - foreign-owner : origin owner not in the policy's owners list. This is what
 #                       keeps someone else's upstream out: forcing /ship to bump a
@@ -250,24 +314,35 @@ gp_repo_in_scope() {
   # Physical form on BOTH sides of every containment test: gp_main_worktree answers
   # in physical paths, and on macOS /var vs /private/var would otherwise make a
   # perfectly in-root worktree read as outside-root (and so ungated).
-  root=$(gp_realpath "${GP_ROOT:-$HOME/dev}")
   top=$(gp_realpath "$top")
 
   # Containment is judged on the MAIN worktree, not on <top>. A linked worktree can
   # legitimately sit outside the root (a worktree of the root repo itself has to),
   # and judging it by its own path would let anyone escape every gate by parking a
   # worktree in /tmp. The repo, not the directory, is what is governed.
+  # Every governed root counts (scope.root plus scope.extra_roots). The exclusions
+  # and the nested test below are judged against the root that contains the repo.
   scope_top="$top"
-  case "$top" in
-    "$root"|"$root"/*) ;;
-    *)
-      scope_top=$(gp_main_worktree "$top") || { echo "outside-root"; return 1; }
-      case "$scope_top" in
-        "$root"|"$root"/*) ;;
-        *) echo "outside-root"; return 1 ;;
-      esac
-      ;;
-  esac
+  if ! _gp_match_root "$top"; then
+    scope_top=$(gp_main_worktree "$top") || { echo "outside-root"; return 1; }
+    _gp_match_root "$scope_top" || { echo "outside-root"; return 1; }
+  elif [ "$GP_MATCHED_ROOT" != "$(gp_realpath "${GP_ROOT:-$HOME/dev}")" ]; then
+    # Inside an EXTRA root, a linked worktree is still judged by its main checkout
+    # when that checkout sits under any root. Otherwise a worktree of a ~/dev repo
+    # parked at ~/agents/<tier>/<persona>/wt would read as nested (an allow), where
+    # before extra_roots it fell back to its main checkout and read as in. Under
+    # scope.root the old rule (judge <top> itself) is kept unchanged.
+    local main_wt
+    if main_wt=$(gp_main_worktree "$top") && [ "$main_wt" != "$top" ]; then
+      local extra_match="$GP_MATCHED_ROOT"
+      if _gp_match_root "$main_wt"; then
+        scope_top="$main_wt"
+      else
+        GP_MATCHED_ROOT="$extra_match"
+      fi
+    fi
+  fi
+  root="$GP_MATCHED_ROOT"
 
   rel="${scope_top#"$root"}"; rel="${rel#/}"
   excl="$GP_PREFIXES"
