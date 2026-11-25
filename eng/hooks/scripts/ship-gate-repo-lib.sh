@@ -41,21 +41,35 @@ sg_workdir_from_cmd() {
   printf '%s' "$wd"
 }
 
-# sg_scope_roots
-#   The directory trees the gate policy governs, one per line: ~/dev plus any
-#   scope.extra_roots (~/agents). Asks gate-policy-lib.sh, the single source of
-#   truth, sourcing it from beside this file when the caller has not yet. Falls back
-#   to ~/dev alone when the lib is missing, which is the old behavior.
-sg_scope_roots() {
+# _sg_load_policy
+#   Make the gate policy lib available AND load its scope in the CALLER's shell.
+#   Called at the top of each public resolver, never inside $( ), so the memoized
+#   scope (GP_SCOPE_LOADED and friends) sticks and every later $(sg_scope_roots)
+#   subshell inherits it instead of re-running jq once per candidate repo.
+_sg_load_policy() {
   local lib
   if ! command -v gp_policy_roots >/dev/null 2>&1; then
     lib="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-policy-lib.sh"
     # shellcheck source=/dev/null
     [ -f "$lib" ] && . "$lib"
   fi
+  command -v _gp_load_scope >/dev/null 2>&1 && _gp_load_scope
+  return 0
+}
+
+# sg_scope_roots
+#   The directory trees the gate policy governs, one per line: ~/dev plus any
+#   scope.extra_roots (~/agents). Asks gate-policy-lib.sh, the single source of
+#   truth, sourcing it from beside this file when the caller has not yet. Falls back
+#   to ~/dev alone when the lib is missing, which is the old behavior.
+sg_scope_roots() {
+  _sg_load_policy
   if command -v gp_policy_roots >/dev/null 2>&1; then
     gp_policy_roots
   else
+    # Every scope.extra_roots tree just fell out of scope (an allow). Say so.
+    command -v sg_log >/dev/null 2>&1 && \
+      sg_log "FAIL-OPEN gate-policy-lib.sh not loadable from ship-gate-repo-lib; scope is ~/dev only, extra_roots ignored"
     printf '%s\n' "$HOME/dev"
   fi
 }
@@ -85,6 +99,7 @@ EOF
 sg_dev_repo_gitdir() {
   local wd="$1" top gitdir main
   command -v git >/dev/null 2>&1 || return 1
+  _sg_load_policy
   top=$(git -C "$wd" rev-parse --show-toplevel 2>/dev/null) || return 1
   # Scope follows the REPO, not the directory. A linked worktree can legitimately
   # sit outside ~/dev, and a worktree of the ~/dev repo itself HAS to, so judging
@@ -164,6 +179,7 @@ sg_repo_from_flags() {
 sg_dev_checkout_for_repo() {
   local target top url gitdir
   command -v git >/dev/null 2>&1 || return 1
+  _sg_load_policy
   target=$(sg_norm_repo "$1")
   [ -n "$target" ] || return 1
   # sg_dev_repo_roots streams checkout ROOTS, not .git paths, so each line IS the
@@ -204,6 +220,7 @@ sg_dev_checkout_for_repo() {
 sg_dev_repo_roots() {
   local roots queue dir sub base restore
   # Every governed root is walked (~/dev, then ~/agents and any other extra root).
+  _sg_load_policy
   roots=$(sg_scope_roots)
   queue="$roots"
   [ -n "$queue" ] || return 0
@@ -232,6 +249,9 @@ sg_dev_repo_roots() {
       # hide a real checkout under one, the kind of quiet carve-out this change
       # exists to remove.
       case "$base" in node_modules|.git) continue ;; esac
+      # A root nested inside another root is already in the queue as a root of its
+      # own; enqueueing it again would emit every repo under it twice.
+      case $'\n'"$roots"$'\n' in *$'\n'"$sub"$'\n'*) continue ;; esac
       queue="${queue:+$queue$'\n'}$sub"
     done
   done

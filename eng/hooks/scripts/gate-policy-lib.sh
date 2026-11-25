@@ -184,13 +184,27 @@ _gp_load_scope() {
         ((.scope.owners // []) | map(ascii_downcase) | join("\n")),
         ((.scope.exclude_path_prefixes // []) | join("\n")),
         (if (.scope.exclude_nested // true) == false then "0" else "1" end),
-        ((.scope.extra_roots // []) | join("\n"))
+        ((.scope.extra_roots // []) as $x
+          | if ($x | type) == "array" then $x else [] end
+          | map(select(type == "string" and (startswith("/") or startswith("~"))))
+          | join("\n")),
+        ((.scope.extra_roots // []) as $x
+          | if ($x | type) != "array" then "not-an-array"
+            elif ($x | all(type == "string" and (startswith("/") or startswith("~"))))
+            then "" else "bad-entries" end)
       ] | join("\u001f")' "$pf" 2>/dev/null) || return 0
   [ -n "$raw" ] || return 0
   GP_ROOT=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
   GP_OWNERS=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
   GP_PREFIXES=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
-  GP_NESTED=${raw%%$'\x1f'*}; GP_EXTRA_ROOTS=${raw#*$'\x1f'}
+  GP_NESTED=${raw%%$'\x1f'*}; raw=${raw#*$'\x1f'}
+  GP_EXTRA_ROOTS=${raw%%$'\x1f'*}; GP_EXTRA_BAD=${raw##*$'\x1f'}
+  # A malformed extra_roots must not take the rest of the policy down with it
+  # (one jq call reads the whole scope block, so a type error there used to
+  # disarm every gate, ~/dev included). The bad entries are dropped and logged;
+  # the repos they named stay outside-root until the policy is fixed.
+  [ -n "$GP_EXTRA_BAD" ] && gp_warn_once extra_roots \
+    "BAD scope.extra_roots in $pf ($GP_EXTRA_BAD): only absolute or ~ path strings count; the rest are ignored, so repos under them are NOT gated"
   GP_ROOT=$(_gp_expand_tilde "$GP_ROOT")
   GP_OK=1
 }
@@ -311,6 +325,21 @@ gp_repo_in_scope() {
   if ! _gp_match_root "$top"; then
     scope_top=$(gp_main_worktree "$top") || { echo "outside-root"; return 1; }
     _gp_match_root "$scope_top" || { echo "outside-root"; return 1; }
+  elif [ "$GP_MATCHED_ROOT" != "$(gp_realpath "${GP_ROOT:-$HOME/dev}")" ]; then
+    # Inside an EXTRA root, a linked worktree is still judged by its main checkout
+    # when that checkout sits under any root. Otherwise a worktree of a ~/dev repo
+    # parked at ~/agents/<tier>/<persona>/wt would read as nested (an allow), where
+    # before extra_roots it fell back to its main checkout and read as in. Under
+    # scope.root the old rule (judge <top> itself) is kept unchanged.
+    local main_wt
+    if main_wt=$(gp_main_worktree "$top") && [ "$main_wt" != "$top" ]; then
+      local extra_match="$GP_MATCHED_ROOT"
+      if _gp_match_root "$main_wt"; then
+        scope_top="$main_wt"
+      else
+        GP_MATCHED_ROOT="$extra_match"
+      fi
+    fi
   fi
   root="$GP_MATCHED_ROOT"
 

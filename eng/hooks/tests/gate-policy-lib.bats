@@ -457,3 +457,52 @@ with_extra_root() {
   echo "$output" | grep -qx "$ROOT/agents/mu4/fitness"
   echo "$output" | grep -qx "$ROOT/agents"
 }
+
+@test "a malformed extra_roots (a string, not a list) does not disarm ~/dev" {
+  # One jq call reads the whole scope block, so a type error in extra_roots used
+  # to fail the read and turn every gate off, ~/dev included. Found in review.
+  jq '.scope.extra_roots = "~/agents"' "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  d=$(mkrepo plain https://github.com/mujtaba3B/plain.git)
+  run gp_repo_in_scope "$d"
+  [ "$output" = "in" ]
+  run gp_gate_config "$d" ship
+  [ "$status" -eq 0 ]
+  grep -q "BAD scope.extra_roots.*not-an-array" "$GATE_POLICY_LOG"
+}
+
+@test "relative, numeric and object extra_roots entries are dropped and logged" {
+  mkagents
+  jq --arg r "$ROOT/agents" '.scope.extra_roots = ["agents", 1, null, {"a":"/x"}, $r]' \
+    "$GATE_POLICY_FILE" > "$ROOT/p.tmp"
+  mv "$ROOT/p.tmp" "$GATE_POLICY_FILE"
+  run gp_policy_roots
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[1]}" = "$ROOT/agents" ]
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness"
+  [ "$output" = "in" ]
+  grep -q "BAD scope.extra_roots.*bad-entries" "$GATE_POLICY_LOG"
+}
+
+@test "a ~/dev repo's worktree parked inside an extra root is judged by its main checkout" {
+  # Found in review: inside ~/agents the worktree's own path matched first, so
+  # one parked under a persona repo read as nested (an allow). Before
+  # extra_roots it fell back to the main checkout and read as in.
+  mkagents
+  with_extra_root "$ROOT/agents"
+  d=$(mkrepo devrepo https://github.com/mujtaba3B/devrepo.git)
+  git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$d" worktree add -q -b parked "$ROOT/agents/mu4/fitness/wt" 2>/dev/null
+  run gp_repo_in_scope "$ROOT/agents/mu4/fitness/wt"
+  [ "$output" = "in" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "the repo walk emits each repo once when an extra root sits inside scope.root" {
+  mkdir -p "$ROOT/dev/inner/r1"
+  git -C "$ROOT/dev/inner/r1" init -q
+  with_extra_root "$ROOT/dev/inner"
+  . "${BATS_TEST_DIRNAME}/../scripts/ship-gate-repo-lib.sh"
+  run sg_dev_repo_roots
+  [ "$(printf '%s\n' "$output" | grep -cx "$ROOT/dev/inner/r1")" -eq 1 ]
+}
